@@ -119,11 +119,12 @@ ${past.map((p) => `- ${p.title} [${p.status}] $${p.price_usd} · views ${p.views
 }
 
 // ---------- Generate + clean + QA ----------
+// FLUX tends to draw sprite sheets when it hears "game asset" or "icons", so ask for ONE object, fully in frame.
 function promptFor(pack, item) {
-  const bg = item.keyed
-    ? 'single isolated subject centered with generous margin, on a perfectly flat solid pure magenta (#FF00FF) background, no shadow on the background, no ground, no text, no border'
-    : 'full-frame, no text, no watermark, no border';
-  return `${item.prompt}. ${pack.style}. ${bg}. game asset, high quality.`;
+  const style = String(pack.style || '').replace(/\b(icons?|sprites?|sheet|set|pack|collection)\b/gi, '').replace(/\s+,/g, ',').trim();
+  if (!item.keyed) return `${item.prompt}. ${style}. Full-frame illustration, no text, no letters, no watermark, no border.`;
+  return `A single ${item.name.toLowerCase()} (${item.prompt}), exactly one object, shown whole and fully inside the frame, small in the center with lots of empty space on every side. `
+    + `${style}. Plain flat solid pure magenta #FF00FF background filling the whole image, no floor, no cast shadow, no other objects, no text, no letters.`;
 }
 
 async function keyOut(jpg, dir, item) {
@@ -167,6 +168,10 @@ async function generateItems(ctx, pack, rules) {
       const g = await grade(ctx, pack, item, f.qa);
       item.grade = g.grade;
       item.issue = g.issue;
+      if (g.grade < 3) {
+        // Keep rejects so prompts can be tuned by looking at what went wrong.
+        await upload(BUCKET, `${pack.id}/rejects/${String(item.n).padStart(2, '0')}-try${item.attempts}.jpg`, Buffer.from(f.qa.split(',')[1], 'base64'), 'image/jpeg').catch(() => {});
+      }
       if (g.grade >= 3) {
         const base = `${pack.id}/items/${String(item.n).padStart(2, '0')}-${slug(item.name)}`;
         await upload(BUCKET, `${base}.png`, await readFile(f.big), 'image/png');
