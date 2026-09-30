@@ -46,7 +46,8 @@ export async function generateImage(prompt, { cap, steps = 4 } = {}) {
       throw new ImageCapReached(`Cloudflare free allowance: ${msg}`);
     }
     const err = new Error(`Cloudflare image ${msg}`);
-    err.systemic = res.status === 400 || res.status === 401 || res.status === 403 || /bad input|authentication|permission/i.test(msg);
+    // A content-filter refusal (8007 NSFW, often a false positive) is about this prompt only; skip the item, not the run.
+    err.systemic = !/nsfw|8007/i.test(msg) && (res.status === 400 || res.status === 401 || res.status === 403 || /bad input|authentication|permission/i.test(msg));
     throw err;
   }
   await bump();
