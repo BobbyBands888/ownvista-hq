@@ -24,7 +24,8 @@ export async function run(ctx) {
     kind: 'in.(business,venture)', status: 'in.(approved,launched)', select: '*,assets(id)', order: 'decided_at.asc', limit: 20,
   });
   const todo = approved.filter((i) => !i.assets_built_at || !(i.assets || []).length);
-  if (!todo.length) return 'nothing approved to build';
+  const pushed = await pushMissingDrafts(ctx);
+  if (!todo.length) return pushed ? `pushed ${pushed} missing Gmail draft(s)` : 'nothing approved to build';
   const { assets: _drop, ...idea } = todo[0];
   const n = await buildAssetsFor(ctx, idea);
   if (!n) throw new Error(`built 0 assets for "${truncate(idea.title, 60)}" — the model returned nothing usable; will retry next run`);
@@ -41,7 +42,7 @@ export async function buildAssetsFor(ctx, idea) {
 ${pb.text(['voice', 'guardrails', 'businesses', 'lab'])}
 
 Build the assets for this approved idea. Asset kinds to produce: ${kinds.join(', ')}.
-- landing_page: complete, self-contained HTML (inline CSS) Bobby can review; do not publish it.
+- landing_page: complete, self-contained HTML (inline CSS, no JavaScript, no forms). Every buy/order button links to {{BUY_URL}} exactly. The Launcher publishes it with a Stripe checkout; state the price.
 - outreach_draft: an email to a TYPE of recipient (no names/addresses); first line "Subject: …".
 - pricing_sheet: a markdown table with the real numbers from the idea's economics.
 - listing_copy: marketplace title, bullets and description that follow marketplace rules; no trademarks, no fake claims.
@@ -89,6 +90,33 @@ Bobby's note: ${idea.feedback || '(none)'}`;
   await db.update('ideas', { id: `eq.${idea.id}` }, { assets_built_at: new Date().toISOString() });
   ctx.log('assets', `Built ${made} asset(s) for "${truncate(idea.title, 80)}"`, { table: 'ideas', id: idea.id });
   return made;
+}
+
+// Outreach drafts built while Gmail was down never reached Gmail. Push up to 3 per run.
+async function pushMissingDrafts(ctx) {
+  const rows = await db.select('assets', {
+    kind: 'eq.outreach_draft', gmail_draft_id: 'is.null', select: 'id,title,body,ideas(business,title)', order: 'created_at.asc', limit: 10,
+  });
+  let n = 0;
+  for (const a of rows) {
+    if (n >= 3 || ctx.outOfTime(60000)) break;
+    const business = a.ideas?.business;
+    if (business === 'villa-cinema' || a.body.startsWith('> Guardrail')) continue;
+    const m = /^subject:\s*(.+)$/im.exec(a.body);
+    const subject = m ? m[1].trim() : a.title || a.ideas?.title || 'Draft';
+    const text = a.body.replace(/^subject:.*$/im, '').trim();
+    const from = business === 'followup' ? 'hello@getownvista.com' : GMAIL_USER();
+    try {
+      const { draftId } = await createDraft({ from, to: '', subject, body: `${text}\n\n${signoff(business)}` });
+      await db.update('assets', { id: `eq.${a.id}` }, { gmail_draft_id: draftId });
+      n++;
+    } catch (e) {
+      ctx.log('gmail_error', `Gmail draft push failed: ${truncate(e.message, 160)}`);
+      break;
+    }
+  }
+  if (n) ctx.log('assets', `Pushed ${n} missing outreach draft(s) to Gmail`);
+  return n;
 }
 
 // Models don't always use the exact keys asked for. Accept the common variants.

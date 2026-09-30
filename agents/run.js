@@ -22,6 +22,8 @@ const MODULES = {
   analyst: () => import('./lab/analyst.js'),
   builder: () => import('./lab/builder.js'),
   judge: () => import('./lab/judge.js'),
+  launcher: () => import('./lab/launcher.js'),
+  asset_studio: () => import('./lab/asset_studio.js'),
   learner: () => import('./learner.js'),
 };
 
@@ -49,7 +51,7 @@ async function plan() {
   const requested = args.agent && args.agent !== 'auto' ? String(args.agent) : null;
   if (requested) {
     const agents = requested === 'all' ? AGENT_IDS : [requested];
-    const needsFfmpeg = agents.includes('villa_studio') || requested === 'all';
+    const needsFfmpeg = agents.includes('villa_studio') || agents.includes('asset_studio') || requested === 'all';
     return { agents, needsFfmpeg, trigger: 'manual', next: null };
   }
   const { due, next } = await dueAgents();
@@ -58,7 +60,9 @@ async function plan() {
     if (scheduleFor(id).onlyIfWork && !(await studioHasWork())) continue;
     agents.push(id);
   }
-  return { agents, needsFfmpeg: agents.includes('villa_studio'), trigger: 'schedule', next };
+  // ffmpeg is installed only when Villa Studio has an order or the Asset Studio can still make images today.
+  const assetWork = agents.includes('asset_studio') && await (await import('./lab/asset_studio.js')).hasWork().catch(() => false);
+  return { agents, needsFfmpeg: agents.includes('villa_studio') || assetWork, trigger: 'schedule', next };
 }
 
 async function runAgent(id, { jobId, trigger }) {

@@ -5,23 +5,71 @@
   "outputDirectory": "dashboard",
   "cleanUrls": true,
   "rewrites": [
-    { "source": "/", "has": [{ "type": "host", "value": "films.villacinema.com" }], "destination": "/films" },
-    { "source": "/index", "has": [{ "type": "host", "value": "films.villacinema.com" }], "destination": "/films" },
-    { "source": "/unsubscribe", "has": [{ "type": "host", "value": "films.villacinema.com" }], "destination": "/api/unsubscribe" }
+    {
+      "source": "/",
+      "has": [
+        {
+          "type": "host",
+          "value": "films.villacinema.com"
+        }
+      ],
+      "destination": "/films"
+    },
+    {
+      "source": "/index",
+      "has": [
+        {
+          "type": "host",
+          "value": "films.villacinema.com"
+        }
+      ],
+      "destination": "/films"
+    },
+    {
+      "source": "/unsubscribe",
+      "has": [
+        {
+          "type": "host",
+          "value": "films.villacinema.com"
+        }
+      ],
+      "destination": "/api/unsubscribe"
+    },
+    {
+      "source": "/p/:slug",
+      "destination": "/api/p?slug=:slug"
+    }
   ],
   "headers": [
     {
       "source": "/(.*)",
       "headers": [
-        { "key": "X-Content-Type-Options", "value": "nosniff" },
-        { "key": "X-Frame-Options", "value": "DENY" },
-        { "key": "Referrer-Policy", "value": "no-referrer" },
-        { "key": "Permissions-Policy", "value": "camera=(), microphone=(), geolocation=()" }
+        {
+          "key": "X-Content-Type-Options",
+          "value": "nosniff"
+        },
+        {
+          "key": "X-Frame-Options",
+          "value": "DENY"
+        },
+        {
+          "key": "Referrer-Policy",
+          "value": "no-referrer"
+        },
+        {
+          "key": "Permissions-Policy",
+          "value": "camera=(), microphone=(), geolocation=()"
+        }
       ]
     },
     {
       "source": "/config.js",
-      "headers": [{ "key": "Cache-Control", "value": "no-store" }]
+      "headers": [
+        {
+          "key": "Cache-Control",
+          "value": "no-store"
+        }
+      ]
     }
   ]
 }

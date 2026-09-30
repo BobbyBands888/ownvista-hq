@@ -34,6 +34,8 @@ const CREW = {
   villa_studio:   { room: 'studio',  desk: [360, 240], color: '#ff7aa8' },
   villa_outreach: { room: 'studio',  desk: [430, 240], color: '#ffc24d' },
   learner:        { room: 'library', desk: [240, 250], color: '#c9a2ff' },
+  launcher:       { room: 'deck',    desk: [205, 150], color: '#5eead4' },
+  asset_studio:   { room: 'shop',    desk: [105, 238], color: '#f472b6' },
 };
 const DECK_SPOTS = [[200, 140], [240, 140], [280, 140], [200, 170], [280, 170]];
 

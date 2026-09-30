@@ -20,6 +20,8 @@ on:
           - analyst
           - builder
           - judge
+          - launcher
+          - asset_studio
           - villa_outreach
           - villa_studio
           - villa_preflight
@@ -63,6 +65,10 @@ jobs:
       VC_PRICE_USD: ${{ vars.VC_PRICE_USD || '149' }}
       VC_DKIM_SELECTORS: ${{ vars.VC_DKIM_SELECTORS || 'zmail,zoho,default' }}
       TAVILY_API_KEY: ${{ secrets.TAVILY_API_KEY }}
+      STRIPE_LAUNCH_KEY: ${{ secrets.STRIPE_LAUNCH_KEY }}
+      CF_ACCOUNT_ID: ${{ secrets.CF_ACCOUNT_ID }}
+      CF_API_TOKEN: ${{ secrets.CF_API_TOKEN }}
+      ITCH_API_KEY: ${{ secrets.ITCH_API_KEY }}
     steps:
       - name: Start clock
         run: echo "JOB_STARTED_AT=$(date +%s)" >> "$GITHUB_ENV"
@@ -83,7 +89,7 @@ jobs:
         if: env.AGENT_INPUT != 'captest'
         run: node agents/run.js --plan --agent="$AGENT_INPUT"
 
-      - name: Install ffmpeg (only when Villa Studio has work)
+      - name: Install ffmpeg (only when Villa Studio or the Asset Studio has work)
         if: steps.plan.outputs.needs_ffmpeg == 'true'
         run: command -v ffmpeg || (sudo apt-get update -qq && sudo apt-get install -y -qq --no-install-recommends ffmpeg fonts-dejavu-core)
 
