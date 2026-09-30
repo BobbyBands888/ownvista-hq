@@ -1184,7 +1184,7 @@ create index if not exists asset_packs_status_idx on public.asset_packs (status,
 
 -- 3. Ledger rows from Stripe/itch carry a unique reference so a sale is never counted twice.
 alter table public.ledger add column if not exists ref text;
-create unique index if not exists ledger_ref_key on public.ledger (ref) where ref is not null;
+create unique index if not exists ledger_ref_key on public.ledger (ref); -- NULLs stay allowed (manual rows)
 
 -- 4. Row-level security: Bobby only (agents use the service role).
 do $$
