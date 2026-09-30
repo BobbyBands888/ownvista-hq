@@ -296,7 +296,7 @@ export async function render(el) {
         <span class="st-swatch" style="background:${c}"></span>
         <span class="st-mid"><span class="row between"><strong>${esc(a.name)}</strong><span class="num small">Lv ${lv}</span></span>
           <span class="st-xp"><span style="width:${pctXp}%"></span></span>
-          <span class="small muted"><span class="dot ${STATE_TONE[st]}"></span> ${STATE_LABEL[st]}${st !== 'working' && st !== 'paused' && a.next_run_at ? ` · next ${ago(a.next_run_at)}` : ''}</span></span>
+          <span class="small muted"><span class="dot ${STATE_TONE[st]}"></span> ${STATE_LABEL[st]}${st !== 'working' && st !== 'paused' && a.next_run_at ? ` · next ${Date.parse(a.next_run_at) <= Date.now() ? 'any minute' : ago(a.next_run_at)}` : ''}</span></span>
       </button>`;
     }).join('');
 
