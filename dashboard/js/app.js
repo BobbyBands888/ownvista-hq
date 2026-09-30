@@ -2,6 +2,7 @@
 import { sb, cfg, esc, toast, count } from './core.js';
 
 const VIEWS = [
+  ['station', 'Station'],
   ['world', 'World'],
   ['needs', 'Needs you'],
   ['email', 'Email'],
@@ -57,8 +58,8 @@ function renderNav(active, needs) {
 
 let current = null;
 async function route() {
-  const id = (location.hash.slice(1) || 'world').split('/')[0];
-  const view = VIEWS.find(([v]) => v === id) ? id : 'world';
+  const id = (location.hash.slice(1) || 'station').split('/')[0];
+  const view = VIEWS.find(([v]) => v === id) ? id : 'station';
   current = view;
   renderNav(view, 0);
   // A fresh container per render so delegated listeners never stack up.
