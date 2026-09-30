@@ -18,12 +18,17 @@ const KINDS = {
 
 export async function run(ctx) {
   // Growth ideas are built by the Operator; the Builder handles business + venture ideas.
-  const ideas = await db.select('ideas', {
-    kind: 'in.(business,venture)', status: 'in.(approved,launched)', assets_built_at: 'is.null', order: 'decided_at.asc', limit: 1,
+  // Pick the oldest approved idea that has no assets yet. An idea marked built but holding
+  // zero assets (an earlier empty build) counts as not built, so it gets retried.
+  const approved = await db.select('ideas', {
+    kind: 'in.(business,venture)', status: 'in.(approved,launched)', select: '*,assets(id)', order: 'decided_at.asc', limit: 20,
   });
-  if (!ideas.length) return 'nothing approved to build';
-  const n = await buildAssetsFor(ctx, ideas[0]);
-  return `built ${n} asset(s) for "${truncate(ideas[0].title, 60)}"`;
+  const todo = approved.filter((i) => !i.assets_built_at || !(i.assets || []).length);
+  if (!todo.length) return 'nothing approved to build';
+  const { assets: _drop, ...idea } = todo[0];
+  const n = await buildAssetsFor(ctx, idea);
+  if (!n) throw new Error(`built 0 assets for "${truncate(idea.title, 60)}" — the model returned nothing usable; will retry next run`);
+  return `built ${n} asset(s) for "${truncate(idea.title, 60)}"`;
 }
 
 export async function buildAssetsFor(ctx, idea) {
@@ -52,11 +57,12 @@ Economics: ${JSON.stringify(idea.economics || {})}
 Experiment: ${JSON.stringify(experiment || idea.experiment || {})}
 Bobby's note: ${idea.feedback || '(none)'}`;
 
-  const { json } = await chat({ ctx, tier: 'smart', system, json: true, maxTokens: 4000, messages: [{ role: 'user', content: user }] });
+  const { json } = await chat({ ctx, tier: 'smart', system, json: true, maxTokens: 8000, messages: [{ role: 'user', content: user }] });
   let made = 0;
-  for (const a of (json.assets || []).slice(0, 8)) {
-    if (!a.body) continue;
-    let body = String(a.body);
+  for (const a of assetList(json).slice(0, 8)) {
+    const raw = assetBody(a);
+    if (!raw) continue;
+    let body = raw;
     const problems = checkCopy(body, { business: idea.business, villa });
     let draftId = null;
     if (problems.length) {
@@ -74,7 +80,23 @@ Bobby's note: ${idea.feedback || '(none)'}`;
     });
     made++;
   }
+  if (!made) return 0; // leave assets_built_at empty so the next run tries again
   await db.update('ideas', { id: `eq.${idea.id}` }, { assets_built_at: new Date().toISOString() });
   ctx.log('assets', `Built ${made} asset(s) for "${truncate(idea.title, 80)}"`, { table: 'ideas', id: idea.id });
   return made;
+}
+
+// Models don't always use the exact keys asked for. Accept the common variants.
+export function assetList(json) {
+  if (!json || typeof json !== 'object') return [];
+  const list = json.assets ?? json.Assets ?? json.items ?? json.deliverables;
+  if (Array.isArray(list)) return list.filter((a) => a && typeof a === 'object');
+  if (list && typeof list === 'object') return Object.entries(list).map(([kind, v]) => (typeof v === 'string' ? { kind, body: v } : { kind, ...v }));
+  return [];
+}
+
+export function assetBody(a) {
+  const v = a.body ?? a.content ?? a.html ?? a.markdown ?? a.text;
+  if (v == null) return '';
+  return (typeof v === 'string' ? v : JSON.stringify(v, null, 2)).trim();
 }
