@@ -8,6 +8,7 @@
 //   learn     → itch.io stats (views, downloads, sales) flow back into the plan and the ledger
 // Bobby creates the itch.io page and clicks Publish; agents never create accounts or publish.
 import { readFile, writeFile, mkdir } from 'node:fs/promises';
+import { spawn } from 'node:child_process';
 import { join } from 'node:path';
 import { db, kvGet, kvSet } from '../lib/db.js';
 import { env, hasEnv } from '../lib/env.js';
@@ -127,30 +128,75 @@ function promptFor(pack, item) {
     + `${style}. Plain flat solid pure magenta #FF00FF background filling the whole image, no floor, no cast shadow, no other objects, no text, no letters.`;
 }
 
+// Raw pixels from ffmpeg (small sizes only).
+async function rawPixels(file, w, h, vf = '') {
+  const out = await new Promise((resolve, reject) => {
+    const p = spawn('ffmpeg', ['-loglevel', 'error', '-i', file, '-vf', `${vf}${vf ? ',' : ''}scale=${w}:${h}`, '-f', 'rawvideo', '-pix_fmt', 'rgba', '-']);
+    const chunks = [];
+    p.stdout.on('data', (d) => chunks.push(d));
+    p.on('error', reject);
+    p.on('close', (code) => (code === 0 ? resolve(Buffer.concat(chunks)) : reject(new Error(`ffmpeg raw exited ${code}`))));
+  });
+  return out;
+}
+
+// The model rarely paints pure #FF00FF, so key out whatever flat color it actually used: sample the four corners.
+async function backgroundColor(file) {
+  const px = await rawPixels(file, 32, 32);
+  const at = (x, y) => { const i = (y * 32 + x) * 4; return [px[i], px[i + 1], px[i + 2]]; };
+  const samples = [];
+  for (const [x0, y0] of [[0, 0], [28, 0], [0, 28], [28, 28]]) for (let dx = 0; dx < 4; dx++) for (let dy = 0; dy < 4; dy++) samples.push(at(x0 + dx, y0 + dy));
+  const avg = [0, 1, 2].map((c) => Math.round(samples.reduce((n, s) => n + s[c], 0) / samples.length));
+  const spread = Math.max(...samples.map((s) => Math.abs(s[0] - avg[0]) + Math.abs(s[1] - avg[1]) + Math.abs(s[2] - avg[2])));
+  return { hex: avg.map((v) => v.toString(16).padStart(2, '0')).join(''), flat: spread < 60 };
+}
+
 async function keyOut(jpg, dir, item) {
   const inFile = join(dir, `${item.n}.jpg`);
   await writeFile(inFile, jpg);
   const big = join(dir, `${item.n}-512.png`), small = join(dir, `${item.n}-128.png`);
+  let bg = null;
+  if (item.keyed) bg = await backgroundColor(inFile);
   const vf = item.keyed
-    ? 'colorkey=0xFF00FF:0.30:0.12,format=rgba,scale=512:512:flags=lanczos'
+    ? `colorkey=0x${bg.hex}:0.16:0.10,format=rgba,scale=512:512:flags=lanczos`
     : 'scale=512:512:flags=lanczos';
   await sh('ffmpeg', ['-y', '-loglevel', 'error', '-i', inFile, '-vf', vf, big]);
   await sh('ffmpeg', ['-y', '-loglevel', 'error', '-i', big, '-vf', 'scale=128:128:flags=lanczos', small]);
   const qaFile = join(dir, `${item.n}-qa.jpg`);
   await sh('ffmpeg', ['-y', '-loglevel', 'error', '-i', inFile, '-vf', 'scale=384:384', '-q:v', '5', qaFile]);
-  return { big, small, qa: `data:image/jpeg;base64,${(await readFile(qaFile)).toString('base64')}` };
+
+  // Deterministic checks on the keyed image: flat background, subject fully inside the frame, sensible size.
+  let checks = { ok: true, issue: '' };
+  if (item.keyed) {
+    const a = await rawPixels(big, 64, 64);
+    let opaque = 0, edge = 0;
+    for (let y = 0; y < 64; y++) for (let x = 0; x < 64; x++) {
+      if (a[(y * 64 + x) * 4 + 3] > 128) { opaque++; if (x < 2 || y < 2 || x > 61 || y > 61) edge++; }
+    }
+    const cover = opaque / 4096;
+    if (!bg.flat) checks = { ok: false, issue: 'background not flat' };
+    else if (edge > 6) checks = { ok: false, issue: 'subject touches the edge' };
+    else if (cover < 0.03) checks = { ok: false, issue: 'subject too small or keyed away' };
+    else if (cover > 0.75) checks = { ok: false, issue: 'background not removed' };
+  }
+  return { big, small, checks, qa: `data:image/jpeg;base64,${(await readFile(qaFile)).toString('base64')}` };
 }
 
+// Vision check answers narrow yes/no questions; the pixel checks above handle framing and background.
 async function grade(ctx, pack, item, qaUri) {
   const { json } = await chat({
     ctx, tier: 'vision', json: true, maxTokens: 200, temperature: 0.1,
-    system: systemPrompt('the Asset Studio QA checker', `Grade this generated game asset 1–5 for a paid asset pack.
-5 = clean, clearly "${item.name}", matches the style, one subject, nothing cut off${item.keyed ? ', background is flat magenta' : ''}.
-Score 1–2 if: wrong subject, several subjects, cut off at the edge, garbled shapes, any text/letters/watermark, or looks like a known brand/character.
-JSON only: {"grade":4,"issue":"short or empty"}`),
-    messages: [{ role: 'user', content: [{ type: 'text', text: `Item: ${item.name}. Style: ${pack.style}` }, { type: 'image', url: qaUri }] }],
+    system: systemPrompt('the Asset Studio QA checker', `Look at the picture and answer honestly.
+matches: does it clearly show a ${item.name} (${item.prompt})?
+has_text: are there readable letters, words or a watermark anywhere?
+brand: does it look like a famous trademarked character or logo?
+quality: 1–5, how good would it look as a video game item image (5 = polished, 1 = garbled/broken).
+JSON only: {"matches":true,"has_text":false,"brand":false,"quality":4,"issue":"short or empty"}`),
+    messages: [{ role: 'user', content: [{ type: 'text', text: `Item: ${item.name}` }, { type: 'image', url: qaUri }] }],
   });
-  return { grade: Math.max(1, Math.min(5, Number(json.grade) || 3)), issue: truncate(json.issue || '', 120) };
+  const quality = Math.max(1, Math.min(5, Number(json.quality) || 3));
+  const bad = json.matches === false ? 'does not match the item' : json.has_text === true ? 'text in image' : json.brand === true ? 'looks like a brand' : '';
+  return { grade: bad ? Math.min(2, quality) : quality, issue: truncate(bad || json.issue || '', 120) };
 }
 
 async function generateItems(ctx, pack, rules) {
@@ -165,7 +211,7 @@ async function generateItems(ctx, pack, rules) {
       item.attempts++;
       made++;
       const f = await keyOut(jpg, dir, item);
-      const g = await grade(ctx, pack, item, f.qa);
+      const g = f.checks.ok ? await grade(ctx, pack, item, f.qa) : { grade: 1, issue: f.checks.issue };
       item.grade = g.grade;
       item.issue = g.issue;
       if (g.grade < 3) {
@@ -315,3 +361,4 @@ async function enforceKillRule(ctx, rules) {
   ctx.log('launch', `KILLED: ${why}`);
   return `paused by kill rule: ${why}`;
 }
+export const _test = { keyOut, backgroundColor };
