@@ -5,7 +5,7 @@ GitHub Actions secrets, Vercel environment variables, or your password manager.
 
 Checklist:
 
-- [ ] 1. Supabase project + one SQL paste + your login user
+- [ ] 1. Supabase project + one SQL paste + RLS check + your login user
 - [ ] 2. Groq API key
 - [ ] 3. GitHub private repo + push the code
 - [ ] 4. Gmail (Google Cloud Internal OAuth client + refresh token)
@@ -31,15 +31,31 @@ Checklist:
    ```
 
    Paste into the editor (Cmd+V) → **Run**. You should see "Success. No rows returned". It is safe to run again.
-4. **Authentication** → **Users** → **Add user** → **Create new user** → email `bobbybands888@gmail.com`,
+4. **Prove the lock works (RLS check).** Get three values from **Project Settings** → **API Keys**
+   (and **Data API** for the URL): Project URL, **Publishable key** (`sb_publishable_…`), **Secret key** (`sb_secret_…`,
+   click **Reveal**). Then run:
+
+   ```bash
+   cd ~/Documents/ownvista-hq && node scripts/rls-check.js
+   ```
+
+   Paste the three values when asked (keys are hidden while you type and never saved). It proves:
+   (a) the publishable/anon key reads **zero rows** from all 30 tables and can't write, call agent functions or touch
+   storage; (b) a throwaway signed-in user who isn't you also reads zero rows and changes nothing; (c) the secret key can
+   write and read every table and bucket. It plants a marked canary row in every table first so "zero rows" is real,
+   then deletes the canaries, test files and the throwaway user. It must end with **"N/N checks passed"**.
+   If anything fails, stop and send me the FAIL lines (never the keys).
+5. **Authentication** → **Users** → **Add user** → **Create new user** → email `bobbybands888@gmail.com`,
    any strong password (you won't use it), tick **Auto Confirm User** → **Create user**.
-5. **Authentication** → **Sign In / Providers** → **Email** stays enabled → turn **OFF** "Allow new users to sign up" → **Save**.
-6. **Authentication** → **URL Configuration** → Site URL `https://levelingclips.com` → **Redirect URLs** → **Add URL** →
+6. **Authentication** → **Sign In / Providers** → **Email** stays enabled → turn **OFF** "Allow new users to sign up" → **Save**.
+7. **Authentication** → **URL Configuration** → Site URL `https://levelingclips.com` → **Redirect URLs** → **Add URL** →
    `https://levelingclips.com/**` → **Save**.
-7. **Project Settings** (gear) → **API Keys**. You need three values later:
-   - **Project URL** (Project Settings → Data API) → `https://xxxx.supabase.co`
+8. Keep these three values for later:
+   - **Project URL** → `https://xxxx.supabase.co`
    - **Publishable key** (`sb_publishable_…`) → Vercel only
-   - **Secret key** (`sb_secret_…`, click **Reveal**) → GitHub secret + Vercel only. Treat it like a password.
+   - **Secret key** (`sb_secret_…`) → GitHub secret + Vercel only. Treat it like a password.
+
+   Clear your terminal after the RLS check (Cmd+K).
 
 ## 2. Groq (free tier)
 
@@ -93,8 +109,8 @@ Repo → **Settings** → **Secrets and variables** → **Actions**.
 
 | Secret | Value |
 |---|---|
-| `SUPABASE_URL` | Project URL from 1.7 |
-| `SUPABASE_SERVICE_ROLE_KEY` | Secret key `sb_secret_…` from 1.7 |
+| `SUPABASE_URL` | Project URL from 1.8 |
+| `SUPABASE_SERVICE_ROLE_KEY` | Secret key `sb_secret_…` from 1.8 |
 | `GROQ_API_KEY` | from 2.3 |
 | `GMAIL_CLIENT_ID` / `GMAIL_CLIENT_SECRET` | from 4.6 |
 | `GMAIL_REFRESH_TOKEN` | from 4.9 |

@@ -83,7 +83,7 @@ dashboard/         index.html + js/ (World, Needs you, Email, Villa, Lab, Ideas,
                    films.html + upload.html (films.villacinema.com)
 supabase/schema.sql  the one SQL block (schema, RLS, functions, seed)
 test/              offline tests (run before every job); live-tests/caps.js (dispatch "captest")
-scripts/           build-config.js (Vercel), zoho-token.js (one-time Zoho refresh token)
+scripts/           build-config.js (Vercel), zoho-token.js (one-time Zoho refresh token), rls-check.js (post-setup RLS proof)
 ```
 
 ## Local commands
