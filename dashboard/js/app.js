@@ -95,14 +95,24 @@ async function start() {
     $('login-msg').textContent = 'That account is not allowed here.';
     return;
   }
+  if (started) return;
+  started = true;
+  $('login').classList.add('hidden');
   $('app').classList.remove('hidden');
   window.addEventListener('hashchange', route);
   route();
 }
 
+// Boot once. Supabase fires SIGNED_IN on every page load that already has a session, so reloading on it
+// caused an endless reload loop. Instead, only boot the app when a sign-in arrives before it has started
+// (e.g. returning from the magic link), and defer the call: Supabase calls made inside this callback can deadlock.
+let started = false;
+let booting = null;
+const boot = () => (booting ||= start().catch((e) => toast(e.message, 6000)).finally(() => { booting = null; }));
+
 sb.auth.onAuthStateChange((evt) => {
-  if (evt === 'SIGNED_IN' && $('app').classList.contains('hidden')) location.reload();
+  if (evt === 'SIGNED_IN' && !started) setTimeout(boot, 0);
 });
 
 window.hqRefresh = () => route();
-start().catch((e) => toast(e.message, 6000));
+boot();
