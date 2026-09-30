@@ -8,8 +8,8 @@ export async function render(el) {
   const weekStart = new Date(); weekStart.setDate(weekStart.getDate() - ((weekStart.getDay() + 6) % 7)); weekStart.setHours(0, 0, 0, 0);
   const monthStart = new Date(); monthStart.setDate(1); monthStart.setHours(0, 0, 0, 0);
   const todayStart = new Date(); todayStart.setHours(0, 0, 0, 0);
-  const [enabled, paused, pauseReason, reviewMode, approvedFilms, footer, countries, regions, sampleMode, warmStart, preflight, searchEnabled] = await Promise.all(
-    ['vc_enabled', 'vc_paused', 'vc_pause_reason', 'vc_review_mode', 'vc_approved_films', 'vc_footer_address', 'vc_countries', 'vc_us_regions', 'vc_sample_mode', 'vc_warmup_start', 'vc_preflight', 'search_enabled'].map((k) => kvGet(k)));
+  const [enabled, paused, pauseReason, reviewMode, approvedFilms, footer, countries, regions, sampleMode, warmStart, preflight, searchEnabled, price] = await Promise.all(
+    ['vc_enabled', 'vc_paused', 'vc_pause_reason', 'vc_review_mode', 'vc_approved_films', 'vc_footer_address', 'vc_countries', 'vc_us_regions', 'vc_sample_mode', 'vc_warmup_start', 'vc_preflight', 'search_enabled', 'vc_price_usd'].map((k) => kvGet(k)));
   const [prospects, orders, spend, messages, stageCounts, sentToday, music, samples, directories, suppression] = await Promise.all([
     q(sb.from('vc_prospects').select('*').order('updated_at', { ascending: false }).limit(60)),
     q(sb.from('vc_orders').select('*').order('created_at', { ascending: false }).limit(30)),
@@ -53,6 +53,9 @@ export async function render(el) {
   <div class="section grid g2">
     <div class="card stack">
       <h2>Controls</h2>
+      <div class="field"><label for="vc-price">Price</label>
+        <div class="row"><input id="vc-price" value="${price != null ? `$${esc(price)} per film, one-time` : 'not synced yet'}" readonly style="flex:1"></div>
+        <div class="small muted" style="margin-top:4px">Used in every reply and delivery email; free samples stay free. To change it: GitHub → repo → Settings → Secrets and variables → Actions → Variables → <span class="mono">VC_PRICE_USD</span>. Villa Outreach shows the new value here after its next run. Keep your Stripe Payment Link at the same price.</div></div>
       <label class="toggle"><input type="checkbox" data-kv-bool="vc_enabled" ${enabled === true ? 'checked' : ''}> Outreach on (first emails + follow-ups)</label>
       <label class="toggle"><input type="checkbox" data-kv-review ${reviewMode === 'always' ? 'checked' : ''}> Review every film before delivery</label>
       <label class="toggle"><input type="checkbox" data-kv-sample ${sampleMode === 'auto' ? 'checked' : ''}> Offer free samples to hot prospects (within $25/week)</label>

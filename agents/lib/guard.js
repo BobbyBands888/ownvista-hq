@@ -44,7 +44,7 @@ const OTHER_BIZ = /(ownvista|nashville\s*buys|nashvillebuys|getownvista|follow-u
 
 /**
  * Check generated copy. Returns an array of problems (empty = ok).
- * ctx: { business, audience: 'vendor'|'customer'|'prospect'|..., villa: bool, allowLinks: [prefixes] }
+ * ctx: { business, audience: 'vendor'|'customer'|'prospect'|..., villa: bool, allowLinks: [prefixes], prices: [allowed USD amounts] }
  */
 export function checkCopy(text, ctx = {}) {
   const problems = [];
@@ -57,6 +57,11 @@ export function checkCopy(text, ctx = {}) {
   if (ctx.villa && OTHER_BIZ.test(t)) problems.push('Villa Cinema copy mentions another business');
   if (ctx.business === 'followup' && /nashville\s*buys/i.test(t)) problems.push('connects Follow-Up with Nashville Buys');
   if (ctx.business === 'nashville-buys' && /ownvista|follow-?up\s+service/i.test(t)) problems.push('connects Nashville Buys with Ownvista');
+  if (ctx.prices) {
+    const amounts = [...t.matchAll(/\$\s?(\d[\d,]*(?:\.\d{1,2})?)/g)].map((m) => Number(m[1].replace(/,/g, '')));
+    const bad = amounts.filter((a) => !ctx.prices.includes(a));
+    if (bad.length) problems.push(`mentions a price other than ${ctx.prices.map((p) => `$${p}`).join('/')}: $${bad.join(', $')}`);
+  }
   if (ctx.allowLinks) {
     const links = t.match(/https?:\/\/[^\s)>\]"']+/gi) || [];
     const bad = links.filter((l) => !ctx.allowLinks.some((p) => l.toLowerCase().startsWith(p.toLowerCase())));

@@ -60,6 +60,7 @@ jobs:
       VC_PAYMENT_LINK: ${{ secrets.VC_PAYMENT_LINK }}
       VC_PAYMENT_LINK_ID: ${{ secrets.VC_PAYMENT_LINK_ID }}
       VC_FILMS_BASE_URL: ${{ vars.VC_FILMS_BASE_URL || 'https://films.villacinema.com' }}
+      VC_PRICE_USD: ${{ vars.VC_PRICE_USD || '149' }}
       VC_DKIM_SELECTORS: ${{ vars.VC_DKIM_SELECTORS || 'zmail,zoho,default' }}
       TAVILY_API_KEY: ${{ secrets.TAVILY_API_KEY }}
     steps:

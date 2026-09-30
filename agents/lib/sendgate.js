@@ -2,7 +2,7 @@
 // Sends only from hello@villacinema.com via Zoho Mail REST, and only after the database
 // send gate (vc_reserve_send) approves: caps, warm-up, suppression, countries, role
 // addresses, no third touch, pause switch. Guard checks run here first as a second layer.
-import { requireEnv, VC_FROM, FILMS_BASE_URL } from './env.js';
+import { requireEnv, VC_FROM, FILMS_BASE_URL, VC_PRICE_USD } from './env.js';
 import { db, kvGet } from './db.js';
 import { checkCopy } from './guard.js';
 import { zohoBase, zohoToken, zohoAccount } from './zoho.js';
@@ -40,7 +40,7 @@ export async function send({ kind, to, subject, body, prospect = null, orderId =
   if (!fromAddr.endsWith('@villacinema.com')) return { ok: false, reason: 'sender must be @villacinema.com' };
 
   const full = `${body.trim()}\n${await footer(prospect)}`;
-  const problems = checkCopy(`${subject}\n${full}`, { villa: true, allowLinks: VILLA_LINK_PREFIXES() });
+  const problems = checkCopy(`${subject}\n${full}`, { villa: true, allowLinks: VILLA_LINK_PREFIXES(), prices: [VC_PRICE_USD()] });
   if (problems.length) return { ok: false, reason: `guard: ${problems.join('; ')}` };
 
   const gate = await db.rpc('vc_reserve_send', {

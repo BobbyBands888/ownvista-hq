@@ -1,3 +1,10 @@
+import { VC_PRICE_USD } from './env.js';
+
+// What customers pay for one film. $149 → "$149", 149.5 → "$149.50".
+export const filmPrice = () => VC_PRICE_USD();
+export const formatUsd = (n) => (Number.isInteger(n) ? `$${n}` : `$${n.toFixed(2)}`);
+export const priceLine = () => `${formatUsd(filmPrice())} per film, one-time`;
+
 // MiniMax pay-as-you-go prices, verified 2026-09-30 at platform.minimax.io/docs/pricing/overview.
 // Re-verify if MiniMax changes pricing; the spend caps are enforced in the database regardless.
 export const PRICES = {

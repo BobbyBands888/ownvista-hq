@@ -124,7 +124,8 @@ Repo → **Settings** → **Secrets and variables** → **Actions**.
 
 **Variables** tab (optional; defaults in brackets): `LLM_PROVIDER` [groq], `GMAIL_USER` [hello@nashvillebuys.com],
 `GMAIL_ALIASES` [hello@getownvista.com,quotes@getownvista.com], `ZOHO_DC` [com], `ZOHO_FROM` [hello@villacinema.com],
-`VC_DKIM_SELECTORS` [zmail,zoho,default].
+`VC_DKIM_SELECTORS` [zmail,zoho,default], `VC_PRICE_USD` [149] — the Villa Cinema film price used in every reply and
+delivery email (change it here, then change your Stripe Payment Link to match; a mismatched payment is flagged in Needs you).
 
 ## 6. Vercel
 
@@ -172,7 +173,7 @@ Vercel's Domains page turns green within minutes to an hour. HTTPS is automatic.
 
    The preflight checks all three through public DNS. If you used a DKIM selector other than zmail/zoho/default,
    set variable `VC_DKIM_SELECTORS`.
-4. **Stripe:** Product catalog → **+ Add product** "Villa Cinema film" with your price → **Payment Links** → **New** →
+4. **Stripe:** Product catalog → **+ Add product** "Villa Cinema film" → price **$149.00 USD, One-off** (must match `VC_PRICE_USD`) → **Payment Links** → **New** →
    that product → **Create link** → copy the URL → secret `VC_PAYMENT_LINK` (and the `plink_…` id → `VC_PAYMENT_LINK_ID`).
    **Developers** → **API keys** → **Create restricted key** → name `ownvista-hq read` → **Checkout Sessions: Read**,
    everything else **None** → **Create** → secret `STRIPE_RESTRICTED_KEY`. The agents can only read completed payments.

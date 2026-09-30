@@ -17,4 +17,11 @@ export function hasEnv(...names) {
 
 export const GMAIL_USER = () => env('GMAIL_USER', 'hello@nashvillebuys.com').toLowerCase();
 export const VC_FROM = () => env('ZOHO_FROM', 'hello@villacinema.com').toLowerCase();
+// Villa Cinema film price (one-time, USD). Set the GitHub Actions variable VC_PRICE_USD to change it.
+export function VC_PRICE_USD() {
+  const n = Number(env('VC_PRICE_USD', '149'));
+  if (!(n > 0 && n < 100000)) throw new Error(`VC_PRICE_USD must be a positive number (got "${env('VC_PRICE_USD')}")`);
+  return n;
+}
+
 export const FILMS_BASE_URL = () => env('VC_FILMS_BASE_URL', 'https://films.villacinema.com').replace(/\/$/, '');

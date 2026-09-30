@@ -1023,6 +1023,7 @@ insert into public.kv (key, value) values
   ('vc_review_mode', '"auto"'),
   ('vc_approved_films', '0'),
   ('vc_footer_address', '""'),
+  ('vc_price_usd', '149'),
   ('vc_sample_mode', '"auto"'),
   ('playbook_version', '1')
 on conflict (key) do nothing;
@@ -1086,6 +1087,8 @@ No trademarked or copyrighted designs (brands, teams, characters, lyrics). No fa
 ('villa', 'Villa Cinema voice & offer', 8,
 'Audience: luxury villa rental managers. Tone: calm, cinematic, confident, brief.
 Offer: a cinematic walkthrough film made from the property photos they already have. Every film carries a small "AI-generated from photos" note.
+Price: $149 per film, one-time (set by VC_PRICE_USD; the agents always use the configured value). Never quote any other price, discount or package.
+Free sample: prospects who reply with interest can get a short free sample first (within the weekly sample budget).
 First email: one specific observation about their portfolio, the offer in one sentence, one question. Under 110 words.
 Follow-up (once, 4+ days later): two sentences, no guilt, no "just bumping this".
 Replies: answer the question, then the single next step (Payment Link or upload link).

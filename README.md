@@ -70,6 +70,9 @@ Manual runs: Actions → Ownvista HQ → Run workflow → pick an agent, `villa_
 - 2K upgrade is `POST /v2/video_regeneration` (available on the direct API). Real price is $0.05/s output **plus** $0.05/s for the
   input video, so $0.10/s; a 10-clip paid film costs about $9 including the upgrade.
 - HEIC uploads are not accepted (the vision model can't read them); phones convert to JPEG on upload.
+- Villa Cinema price is **$149 per film, one-time**, set by the Actions variable `VC_PRICE_USD` (default 149). Replies,
+  sample deliveries and the playbook use it; Villa emails that mention any other dollar amount are blocked; Stripe payments
+  for a different amount are flagged. Free samples for prospects who reply with interest are unchanged.
 - `Outreach on` gates only cold first emails and follow-ups; replies, order emails and deliveries keep working. Pause stops everything.
 
 ## Layout

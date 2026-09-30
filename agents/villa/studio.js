@@ -13,7 +13,7 @@ import { systemPrompt } from '../lib/guard.js';
 import * as storage from '../lib/storage.js';
 import * as minimax from '../lib/minimax.js';
 import * as spend from '../lib/spend.js';
-import { plan, clipCost, upgradeCost, PRICES, CLIP_SECONDS } from '../lib/pricing.js';
+import { plan, clipCost, upgradeCost, PRICES, CLIP_SECONDS, priceLine } from '../lib/pricing.js';
 import { hasFfmpeg, workdir, framesAsDataUris, stitchFilm } from '../lib/ffmpeg.js';
 import { send } from '../lib/sendgate.js';
 import { paymentLinkFor } from '../lib/stripe.js';
@@ -343,7 +343,7 @@ async function deliver(ctx, o) {
       ? `Your free sample film for ${o.property_name || 'your property'} is ready: ${link}`
       : `Your Villa Cinema film for ${o.property_name || 'your property'} is ready: ${link}`,
     'The link works for 7 days — please download the file. The film carries a small "AI-generated from photos" note.',
-    sample && prospect ? `If you'd like the full-length 2K film, you can order here: ${paymentLinkFor(prospect)}` : null,
+    sample && prospect ? `If you'd like the full-length 2K film (${priceLine()}), you can order here: ${paymentLinkFor(prospect)}` : null,
     'If you have a moment, a sentence or two on how it turned out would mean a lot — just reply to this email.',
     signoff('villa-cinema'),
   ].filter(Boolean);
@@ -385,7 +385,7 @@ export async function createTestOrder(ctx) {
     kind: 'test', status: 'photos_received', customer_email: to, property_name: 'Test Villa',
     photos_prefix: '_samples', photos_submitted_at: new Date().toISOString(),
   });
-  ctx.log('vc_test', `Created test order ${order.id.slice(0, 8)} from ${samples.length} sample photos (budget ${plan('paid').total} est., cap $20)`, { table: 'vc_orders', id: order.id });
+  ctx.log('vc_test', `Created test order ${order.id.slice(0, 8)} from ${samples.length} sample photos (est. spend ${plan('paid').total} USD, per-order cap 20 USD)`, { table: 'vc_orders', id: order.id });
   return `test order ${order.id} created — Villa Studio will produce it on its next runs`;
 }
 

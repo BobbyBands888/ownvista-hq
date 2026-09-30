@@ -6,7 +6,8 @@ import { parseFeed } from '../agents/lib/feeds.js';
 import { parseRobots, isAllowed } from '../agents/lib/robots.js';
 import { editDistance, stripQuoted, extractEmails } from '../agents/lib/text.js';
 import { buildRaw } from '../agents/lib/gmail.js';
-import { plan, clipCost, upgradeCost } from '../agents/lib/pricing.js';
+import { plan, clipCost, upgradeCost, priceLine, formatUsd } from '../agents/lib/pricing.js';
+import { VC_PRICE_USD } from '../agents/lib/env.js';
 import { scoreOf } from '../agents/scout.js';
 import { parseJson } from '../agents/lib/llm.js';
 
@@ -87,6 +88,33 @@ test('film plans fit the spend caps with room for retries', () => {
   assert.equal(upgradeCost(), 0.5);
   assert.ok(paid.total <= 20 - 2 * 3 * clipCost(), `paid plan $${paid.total} leaves room for 6 retries`);
   assert.ok(sample.total * 1.5 <= 25, 'a sample with retries fits the weekly sample budget');
+});
+
+test('film price comes from VC_PRICE_USD (default $149)', () => {
+  const saved = process.env.VC_PRICE_USD;
+  try {
+    delete process.env.VC_PRICE_USD;
+    assert.equal(VC_PRICE_USD(), 149);
+    assert.equal(priceLine(), '$149 per film, one-time');
+    process.env.VC_PRICE_USD = '179';
+    assert.equal(priceLine(), '$179 per film, one-time');
+    process.env.VC_PRICE_USD = 'abc';
+    assert.throws(() => VC_PRICE_USD(), /positive number/);
+    assert.equal(formatUsd(149.5), '$149.50');
+  } finally {
+    if (saved === undefined) delete process.env.VC_PRICE_USD; else process.env.VC_PRICE_USD = saved;
+  }
+});
+
+test('Villa reply and delivery templates use the configured price', async () => {
+  const { readFileSync } = await import('node:fs');
+  const outreach = readFileSync(new URL('../agents/villa/outreach.js', import.meta.url), 'utf8');
+  const studio = readFileSync(new URL('../agents/villa/studio.js', import.meta.url), 'utf8');
+  assert.match(outreach, /Price: \$\{priceLine\(\)\}/, 'reply prompt states the price');
+  assert.match(outreach, /The film is \$\{priceLine\(\)\}\. You can order here/, 'payment-link next step');
+  assert.match(outreach, /free sample first — no charge/, 'free sample offer kept');
+  assert.match(studio, /full-length 2K film \(\$\{priceLine\(\)\}\)/, 'sample delivery upsell');
+  assert.doesNotMatch(outreach + studio, /\$\d/, 'no hard-coded dollar amounts in Villa templates');
 });
 
 test('Scout score clamps to the formula', () => {

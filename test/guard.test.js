@@ -31,6 +31,14 @@ test('link allowlist', () => {
   assert.ok(checkCopy('See https://evil.example/x', { allowLinks: allow }).length);
 });
 
+test('Villa copy may only state the configured price', () => {
+  assert.deepEqual(checkCopy('The film is $149 per film, one-time.', { villa: true, prices: [149] }), []);
+  assert.deepEqual(checkCopy('A short free sample first — no charge.', { villa: true, prices: [149] }), []);
+  assert.ok(checkCopy('Special deal: $99 this week.', { villa: true, prices: [149] }).some((p) => p.includes('other than $149')));
+  assert.ok(checkCopy('Normally $1,200, now $149.', { villa: true, prices: [149] }).length);
+  assert.deepEqual(checkCopy('Total $149.00', { villa: true, prices: [149] }), []);
+});
+
 test('advice phrasing is flagged', () => {
   assert.ok(checkCopy('You should deduct that as a business expense.').length);
   assert.ok(checkCopy('A 1031 exchange would help.').length);

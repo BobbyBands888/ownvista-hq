@@ -11,7 +11,7 @@ import { completedSessionsSince, paymentLinkFor } from '../lib/stripe.js';
 import { webSearch, searchAvailable } from '../lib/search.js';
 import { politeFetch } from '../lib/robots.js';
 import { playbook, signoff } from '../lib/context.js';
-import { plan } from '../lib/pricing.js';
+import { plan, filmPrice, formatUsd, priceLine } from '../lib/pricing.js';
 import { et, etDate, etToUtc } from '../lib/time.js';
 import { htmlToText, stripQuoted, extractEmails, truncate, sha256, randomToken } from '../lib/text.js';
 
@@ -44,6 +44,7 @@ export function configured() {
 
 export async function run(ctx) {
   if (!configured()) return 'Zoho is not configured yet — skipped';
+  await kvSet('vc_price_usd', filmPrice()); // show the configured price on the dashboard
   const out = [];
   out.push(`inbox: ${await inbox(ctx)}`);
   if (hasEnv('STRIPE_RESTRICTED_KEY')) out.push(`payments: ${await payments(ctx)}`);
@@ -200,7 +201,7 @@ async function handleInbound(ctx, m) {
 ${pb.text(['villa'])}
 
 Classify the prospect's latest message and, if it is a normal question or interest, answer it.
-Facts you may use: films are cinematic walkthroughs made from the property photos they already have (8–12 photos), delivered as a download link, every film carries a small "AI-generated from photos" note. Price and checkout are on the Payment Link. No calls — everything by email.
+Facts you may use: films are cinematic walkthroughs made from the property photos they already have (8–12 photos), delivered as a download link, every film carries a small "AI-generated from photos" note. Price: ${priceLine()} (the only price you may state; no discounts, packages or custom quotes). Checkout is on the Payment Link. No calls — everything by email.
 "unusual" = custom pricing, discounts, refunds, legal, contracts, complaints, partnerships, anything you are not sure about. Unusual messages get NO reply from you.
 Do not include links or a sign-off in "answer" — the next step link and sign-off are added automatically.
 JSON only: {"intent":"question|interested|wants_sample|ready_to_buy|photos_sent|not_interested|out_of_office|unusual","unusual_reason":"","answer":"reply body, under 120 words","property_name":""}`);
@@ -230,15 +231,18 @@ JSON only: {"intent":"question|interested|wants_sample|ready_to_buy|photos_sent|
     nextStep = `Upload 8–12 of your best photos here: ${await freshUploadLink(openOrder.id)}`;
   } else if (['interested', 'wants_sample', 'photos_sent'].includes(intent) && await canOfferSample(prospect)) {
     const { link } = await createOrder({ kind: 'sample', prospect, propertyName: json.property_name });
-    nextStep = `We'd be glad to make a short free sample first. Upload 8–12 photos of one property here: ${link}`;
+    nextStep = `We'd be glad to make a short free sample first — no charge. Upload 8–12 photos of one property here: ${link}\n\nIf you like it, the full film is ${priceLine()}.`;
   } else {
-    nextStep = `You can order here: ${paymentLinkFor(prospect)} — after checkout you'll get a link to upload your photos.`;
+    nextStep = `The film is ${priceLine()}. You can order here: ${paymentLinkFor(prospect)} — after checkout you'll get a link to upload your photos.`;
   }
   const body = `${String(json.answer).trim()}\n\n${nextStep}\n\n${SIGN}`;
   const r = await send({
     kind: 'reply', to: m.from, subject: /^re:/i.test(m.subject) ? m.subject : `Re: ${m.subject}`,
     body, prospect, replyTo: { messageId: m.messageId },
   });
+  if (!r.ok && /guard|cap/.test(r.reason)) {
+    await needsBobby('vc_reply', `Reply to ${prospect.company} held back`, `Reason: ${r.reason}\n\nTheir message: "${truncate(text, 800)}"\n\nDraft (not sent):\n${body}`, prospect.id);
+  }
   ctx.log(r.ok ? 'vc_reply' : 'vc_reply_refused', r.ok ? `Replied to ${prospect.company} (${intent})` : `Reply to ${prospect.company} not sent: ${r.reason}`, { table: 'vc_prospects', id: prospect.id });
 }
 
@@ -295,6 +299,10 @@ async function payments(ctx) {
     if (!prospect && s.email) prospect = await db.one('vc_prospects', { contact_email: `eq.${s.email}` });
     const { order, link } = await createOrder({ kind: 'paid', prospect, stripeSessionId: s.id, amount: s.amount, email: s.email || prospect?.contact_email });
     await db.insertOne('ledger', { line: 'villa-cinema', revenue: s.amount, note: `Stripe ${s.id}`, source: 'stripe' });
+    if (Math.abs(s.amount - filmPrice()) > 0.009) {
+      await needsBobby('vc_order', 'Payment amount differs from the film price',
+        `Stripe ${s.id} charged ${formatUsd(s.amount)} but VC_PRICE_USD is ${formatUsd(filmPrice())}. Check the Payment Link price.`, prospect?.id);
+    }
     if (prospect) {
       await db.update('vc_prospects', { id: `eq.${prospect.id}` }, { stage: 'paid', hot: true, updated_at: new Date().toISOString() });
       // A paid order replaces any free sample still waiting for photos.
