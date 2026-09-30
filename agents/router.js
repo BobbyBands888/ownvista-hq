@@ -16,7 +16,7 @@ export const SCHEDULE = [
   { id: 'analyst', type: 'daily', hour: 9, budgetMin: 4 },
   { id: 'builder', type: 'hourly', hours: range(0, 23), budgetMin: 4, label: 'Hourly, 24/7 when work exists' },
   { id: 'judge', type: 'weekly', days: [0], hour: 18, budgetMin: 4 },
-  { id: 'learner', type: 'daily', hour: 23, budgetMin: 5 },
+  { id: 'learner', type: 'hourly', hours: range(0, 23), budgetMin: 5, label: 'Hourly, 24/7 (grades the day at 11pm ET)' },
 ];
 
 export const AGENT_IDS = SCHEDULE.map((s) => s.id);

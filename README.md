@@ -24,7 +24,7 @@ Setup: **[docs/SETUP.md](docs/SETUP.md)**.
 | Analyst | daily 9am | one-page business cases with unit economics and a $0–25 experiment |
 | Builder | hourly, 24/7 when work exists | assets for approved ideas/experiments (no accounts, no payments, no publishing) |
 | Judge | Sundays 6pm | scale / continue / kill per running experiment, with numbers |
-| Learner | nightly 11pm | edits + feedback → playbook rules (dedupe, consolidate past 40, version history), grades drafts, self-review, daily metrics |
+| Learner | hourly, 24/7 (grades the day at 11pm) | edits + feedback → playbook rules (dedupe, consolidate past 40, version history), grades drafts, self-review, daily metrics |
 
 The router runs every due agent inside one job and catches up after delayed or dropped GitHub schedule runs.
 Manual runs: Actions → Ownvista HQ → Run workflow → pick an agent, `villa_preflight`, `villa_test_email`,

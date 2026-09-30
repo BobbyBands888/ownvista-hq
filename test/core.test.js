@@ -44,8 +44,8 @@ test('daily agents catch up after a dropped run, but not twice', () => {
   assert.ok(!isDue(s, at('2026-10-01T13:07:00Z'), errs), 'stops retrying after 2 errors');
 });
 
-test('Learner runs nightly; Scout Mon+Thu; Judge Sundays', () => {
-  assert.ok(isDue(S('learner'), new Date('2026-10-02T03:07:00Z'), []));
+test('Learner runs every hour; Scout Mon+Thu; Judge Sundays', () => {
+  for (const h of ['03', '08', '15']) assert.ok(isDue(S('learner'), new Date(`2026-10-02T${h}:07:00Z`), []), `learner due ${h}:07 UTC`);
   assert.ok(isDue(S('scout'), new Date('2026-10-01T12:07:00Z'), []), 'Thu 8:07am');
   assert.ok(!isDue(S('scout'), new Date('2026-09-30T12:07:00Z'), []), 'Wed');
   assert.ok(isDue(S('judge'), new Date('2026-10-04T22:07:00Z'), []), 'Sun 6:07pm');

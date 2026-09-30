@@ -998,7 +998,7 @@ insert into public.agents (id, name, description, schedule, sort) values
   ('scout',      'Scout',      'New business opportunities, scored 0–100, launch kit for #1', 'Mon + Thu 8am ET', 7),
   ('builder',    'Builder',    'Builds assets for approved ideas and experiments (no accounts, no payments)', 'Hourly, 24/7 when work exists', 8),
   ('judge',      'Judge',      'Reviews running experiments against kill metrics', 'Sundays 6pm ET', 9),
-  ('learner',    'Learner',    'Learns from Bobby''s edits and feedback, grades drafts, writes metrics', 'Nightly 11pm ET', 10)
+  ('learner',    'Learner',    'Learns from Bobby''s edits and feedback, grades drafts, writes metrics', 'Hourly, 24/7 (grades the day at 11pm ET)', 10)
 on conflict (id) do update set name = excluded.name, description = excluded.description,
   schedule = excluded.schedule, sort = excluded.sort;
 

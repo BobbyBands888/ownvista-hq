@@ -1,12 +1,14 @@
-// Learner — nightly 11pm ET. Compares drafts with what Bobby sent, turns edits, rejected
-// ideas and feedback into playbook rules (dedupe; consolidate past 40), keeps version
-// history, grades today's drafts, writes a self-review and the daily metrics row.
+// Learner — hourly, 24/7. Every hour: turns new edits (draft vs what Bobby sent), feedback,
+// rejected ideas and fresh agent failures into playbook rules (dedupe; consolidate past 40),
+// keeps version history and refreshes today's metrics row. The LLM is only called when there
+// is something new to learn from. Once a night (11pm ET, or a manual run) it also grades the
+// day's drafts and writes the self-review the other agents read.
 import { db, kvGet, kvSet } from './lib/db.js';
 import { chat } from './lib/llm.js';
 import { systemPrompt, untrusted } from './lib/guard.js';
 import { playbook, resetPlaybookCache } from './lib/context.js';
 import { similarTitle, truncate } from './lib/text.js';
-import { etDate, etToUtc, daysAgoIso } from './lib/time.js';
+import { et, etDate, etToUtc, daysAgoIso } from './lib/time.js';
 
 const CATEGORIES = ['voice', 'growth', 'scout', 'lab', 'villa', 'guardrails'];
 
@@ -14,33 +16,48 @@ export async function run(ctx) {
   const pb = await playbook();
   const learned = await learnRules(ctx, pb);
   resetPlaybookCache();
-  const graded = ctx.outOfTime(90000) ? 0 : await gradeAndReview(ctx);
+  // Nightly pass: grade the day and write the self-review (once per day).
+  let graded = null;
+  const nightly = et().hour === 23 || String(ctx.trigger || '').startsWith('manual');
+  if (nightly && !ctx.outOfTime(90000) && (await kvGet('learner_graded_day', null)) !== etDate()) {
+    graded = await gradeAndReview(ctx);
+    await kvSet('learner_graded_day', etDate());
+  }
   await writeMetrics();
-  return `new rules ${learned.added}${learned.consolidated ? `, consolidated to ${learned.consolidated}` : ''}, graded ${graded}`;
+  return `new rules ${learned.added}${learned.consolidated ? `, consolidated to ${learned.consolidated}` : ''}`
+    + `${learned.sources ? ` from ${learned.sources}` : ', nothing new to learn from'}${graded != null ? `, graded ${graded}` : ''}`;
 }
 
 async function learnRules(ctx, pb) {
-  const [pairs, feedback, rejected] = await Promise.all([
+  // Only look at what is new since the last pass, so hourly runs never re-learn the same thing.
+  const since = (await kvGet('learner_seen_at', null)) || daysAgoIso(2);
+  const [pairs, feedback, rejected, failures] = await Promise.all([
     db.select('drafts', { status: 'eq.sent', learned_at: 'is.null', order: 'sent_at.asc', limit: 12 }),
     db.select('feedback', { consumed_at: 'is.null', order: 'created_at.asc', limit: 30 }),
-    db.select('ideas', { status: 'eq.rejected', decided_at: `gte.${daysAgoIso(2)}`, limit: 15 }),
+    db.select('ideas', { status: 'eq.rejected', decided_at: `gt.${since}`, limit: 15 }),
+    db.select('agent_runs', { status: 'eq.error', agent: 'neq.learner', finished_at: `gt.${since}`, select: 'agent,error', order: 'finished_at.asc', limit: 10 }),
   ]);
+  const sources = [
+    pairs.length && `${pairs.length} sent email(s)`, feedback.length && `${feedback.length} note(s)`,
+    rejected.length && `${rejected.length} rejected idea(s)`, failures.length && `${failures.length} failed run(s)`,
+  ].filter(Boolean).join(', ');
   const edited = pairs.filter((p) => (p.edit_distance ?? 1) >= 0.05);
   const now = new Date().toISOString();
   let added = 0, consolidated = 0;
 
-  if (edited.length || feedback.length || rejected.length) {
+  if (edited.length || feedback.length || rejected.length || failures.length) {
     const system = systemPrompt('the Learner', `
 Current playbook and rules:
 ${pb.text(['voice', 'signoffs', 'growth', 'scout', 'lab', 'villa'])}
 
-Study how Bobby changed the agents' drafts, and his feedback. Write NEW rules that would have made the drafts match what he sent.
+Study how Bobby changed the agents' drafts, his feedback, and why agent runs failed. Write NEW rules that would have made the drafts match what he sent\nor prevented the failures (failures → category guardrails; skip failures caused only by missing keys, outages or rate limits).
 Rules are short imperatives (max 25 words), specific and testable ("Answer the question in the first sentence"), never vague ("be better").
 Do not restate an existing rule. Ignore one-off facts (names, dates). Categories: ${CATEGORIES.join(', ')}.
 JSON only: {"rules":[{"rule":"","category":"voice","evidence":"what in the data shows this"}]}`);
     const user = [
       edited.length ? `Draft vs what Bobby sent:\n${edited.map((p, i) => `#${i} (edit distance ${p.edit_distance})\n${untrusted('agent draft', truncate(p.body, 1200))}\n${untrusted('bobby sent', truncate(p.sent_body, 1200))}`).join('\n\n')}` : '',
       feedback.length ? `Bobby's feedback:\n${feedback.map((f) => `- [${f.kind}] ${truncate(f.text, 400)}`).join('\n')}` : '',
+      failures.length ? `Agent runs that failed:\n${failures.map((f) => `- ${f.agent}: ${truncate(String(f.error || '').split('\n')[0], 300)}`).join('\n')}` : '',
       rejected.length ? `Ideas Bobby rejected:\n${rejected.map((r) => `- ${r.title}${r.feedback ? ` — "${truncate(r.feedback, 200)}"` : ''}`).join('\n')}` : '',
     ].filter(Boolean).join('\n\n');
     const { json } = await chat({ ctx, tier: 'smart', system, json: true, maxTokens: 1500, messages: [{ role: 'user', content: user }] });
@@ -57,6 +74,7 @@ JSON only: {"rules":[{"rule":"","category":"voice","evidence":"what in the data 
   }
   if (pairs.length) await db.update('drafts', { id: `in.(${pairs.map((p) => p.id).join(',')})` }, { learned_at: now });
   if (feedback.length) await db.update('feedback', { id: `in.(${feedback.map((f) => f.id).join(',')})` }, { consumed_at: now });
+  await kvSet('learner_seen_at', now);
 
   const active = await db.select('playbook_rules', { active: 'eq.true', origin: 'neq.manual', order: 'created_at.asc' });
   if (active.length > 40 && !ctx.outOfTime(120000)) {
@@ -88,7 +106,7 @@ JSON only: {"rules":[{"rule":"","category":"${CATEGORIES.join('|')}"}]}`),
     await kvSet('playbook_version', version);
     ctx.log('learned', `Playbook v${version}: +${added} rule(s)${consolidated ? `, consolidated to ${consolidated}` : ''}`);
   }
-  return { added, consolidated };
+  return { added, consolidated, sources };
 }
 
 async function gradeAndReview(ctx) {
