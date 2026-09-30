@@ -990,13 +990,13 @@ grant execute on function public.vc_split_spend(uuid, numeric, text, uuid, text)
 ------------------------------------------------------------------------------
 insert into public.agents (id, name, description, schedule, sort) values
   ('villa_outreach', 'Villa Outreach', 'Villa Cinema inbox, replies, payments, follow-ups, first emails, prospect discovery', 'Hourly 6am–11pm ET', 1),
-  ('operator',   'Operator',   'Reads Gmail, drafts replies, flags what needs Bobby, works agent tasks, builds growth assets', 'Hourly 6am–11pm ET', 2),
+  ('operator',   'Operator',   'Reads Gmail, drafts replies, flags what needs Bobby, works agent tasks, builds growth assets', 'Hourly, 24/7', 2),
   ('villa_studio','Villa Studio','Selects photos, generates clips, QA, 2K upgrade, stitching, delivery', 'Hourly, only when an order is in production', 3),
   ('researcher', 'Researcher', 'Pulls feeds, summarizes, scores; Hunter extracts demand signals', 'Every 3 hours', 4),
   ('analyst',    'Analyst',    'Turns the best signals into one-page business cases with real numbers', 'Daily 9am ET', 5),
   ('strategist', 'Strategist', 'Growth ideas, agent tasks and new research sources', 'Daily 7am ET', 6),
   ('scout',      'Scout',      'New business opportunities, scored 0–100, launch kit for #1', 'Mon + Thu 8am ET', 7),
-  ('builder',    'Builder',    'Builds assets for approved ideas and experiments (no accounts, no payments)', 'Hourly 6am–11pm ET when work exists', 8),
+  ('builder',    'Builder',    'Builds assets for approved ideas and experiments (no accounts, no payments)', 'Hourly, 24/7 when work exists', 8),
   ('judge',      'Judge',      'Reviews running experiments against kill metrics', 'Sundays 6pm ET', 9),
   ('learner',    'Learner',    'Learns from Bobby''s edits and feedback, grades drafts, writes metrics', 'Nightly 11pm ET', 10)
 on conflict (id) do update set name = excluded.name, description = excluded.description,

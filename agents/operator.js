@@ -1,4 +1,4 @@
-// Operator — hourly 6am–11pm ET.
+// Operator — hourly, 24/7.
 // Reads the Workspace inbox, drafts replies as Gmail drafts (never sends), flags what needs
 // Bobby, records what Bobby actually sent, works agent tasks, builds assets for growth ideas.
 import { db } from './lib/db.js';

@@ -230,18 +230,21 @@ export async function render(el) {
   function move(sp) {
     const st = state(sp.agent);
     const r = ROOMS[sp.room];
-    if (st === 'working') {
+    // Working crew hustle around the room. Standby crew stay alive too: they potter about slowly
+    // (check a screen, water a plant) and drift back to their desk. Failed and paused crew stay put.
+    const busy = st === 'working';
+    if (busy || st === 'idle' || st === 'new') {
       if (Math.abs(sp.tx - sp.x) + Math.abs(sp.ty - sp.y) <= 0.5) {
         if (sp.wait-- <= 0) {
-          const home = Math.random() < 0.45;
+          const home = Math.random() < (busy ? 0.45 : 0.6);
           sp.tx = home ? sp.desk[0] : r.x + 10 + Math.random() * (r.w - 20);
           sp.ty = home ? sp.desk[1] : r.y + 22 + Math.random() * (r.h - 28);
-          sp.wait = 50 + Math.random() * 90;
+          sp.wait = busy ? 50 + Math.random() * 90 : 140 + Math.random() * 260;
         }
       }
     } else { sp.tx = sp.desk[0]; sp.ty = sp.desk[1]; }
     const dx = sp.tx - sp.x, dy = sp.ty - sp.y, d = Math.hypot(dx, dy);
-    if (d > 0.5) { const v = Math.min(0.45, d); sp.x += (dx / d) * v; sp.y += (dy / d) * v; sp.step++; }
+    if (d > 0.5) { const v = Math.min(busy ? 0.45 : 0.2, d); sp.x += (dx / d) * v; sp.y += (dy / d) * v; sp.step++; }
   }
 
   function draw() {
@@ -293,7 +296,7 @@ export async function render(el) {
         <span class="st-swatch" style="background:${c}"></span>
         <span class="st-mid"><span class="row between"><strong>${esc(a.name)}</strong><span class="num small">Lv ${lv}</span></span>
           <span class="st-xp"><span style="width:${pctXp}%"></span></span>
-          <span class="small muted"><span class="dot ${STATE_TONE[st]}"></span> ${STATE_LABEL[st]}</span></span>
+          <span class="small muted"><span class="dot ${STATE_TONE[st]}"></span> ${STATE_LABEL[st]}${st !== 'working' && st !== 'paused' && a.next_run_at ? ` · next ${ago(a.next_run_at)}` : ''}</span></span>
       </button>`;
     }).join('');
 

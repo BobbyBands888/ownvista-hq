@@ -115,7 +115,10 @@ async function main() {
   // Next-run times for the World view.
   const { next } = p.next ? p : await dueAgents();
   await Promise.all(Object.entries(next).map(([id, t]) =>
-    db.update('agents', { id: `eq.${id}` }, { next_run_at: t ? t.toISOString() : null }).catch(() => {})));
+    db.update('agents', { id: `eq.${id}` }, {
+      next_run_at: t ? t.toISOString() : null,
+      ...(scheduleFor(id)?.label ? { schedule: scheduleFor(id).label } : {}),
+    }).catch(() => {})));
 
   const minutes = await finishJob(jobId, { startedAtMs: JOB_START, agents: p.agents });
   await addMinutesToday(minutes);

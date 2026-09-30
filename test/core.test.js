@@ -19,8 +19,14 @@ test('New York time conversion handles DST', () => {
   assert.equal(et(new Date('2026-03-08T12:30:00Z')).hour, 8);
 });
 
-test('Operator and Villa Outreach run 6am–11pm ET only', () => {
-  for (const id of ['operator', 'villa_outreach']) {
+test('Operator and Builder run every hour, day and night', () => {
+  for (const id of ['operator', 'builder']) {
+    for (const h of [8, 10, 3]) assert.ok(isDue(S(id), new Date(`2026-10-01T${String(h).padStart(2, '0')}:07:00Z`), []), `${id} due ${h}:07 UTC`);
+  }
+});
+
+test('Villa Outreach (emails strangers) still runs 6am–11pm ET only', () => {
+  for (const id of ['villa_outreach']) {
     assert.ok(isDue(S(id), new Date('2026-10-01T10:07:00Z'), []), `${id} due 6:07am EDT`);
     assert.ok(isDue(S(id), new Date('2026-10-02T03:07:00Z'), []), `${id} due 11:07pm EDT`);
     assert.ok(!isDue(S(id), new Date('2026-10-01T08:07:00Z'), []), `${id} not due 4:07am EDT`);

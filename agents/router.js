@@ -8,13 +8,13 @@ const range = (a, b) => Array.from({ length: b - a + 1 }, (_, i) => a + i);
 // Order matters: runs top to bottom inside the single hourly job.
 export const SCHEDULE = [
   { id: 'villa_outreach', type: 'hourly', hours: range(6, 23), budgetMin: 5 },
-  { id: 'operator', type: 'hourly', hours: range(6, 23), budgetMin: 6 },
+  { id: 'operator', type: 'hourly', hours: range(0, 23), budgetMin: 6, label: 'Hourly, 24/7' },
   { id: 'villa_studio', type: 'hourly', hours: range(0, 23), budgetMin: 12, onlyIfWork: true },
   { id: 'researcher', type: 'interval', everyHours: 3, budgetMin: 6 },
   { id: 'strategist', type: 'daily', hour: 7, budgetMin: 4 },
   { id: 'scout', type: 'weekly', days: [1, 4], hour: 8, budgetMin: 5 },
   { id: 'analyst', type: 'daily', hour: 9, budgetMin: 4 },
-  { id: 'builder', type: 'hourly', hours: range(6, 23), budgetMin: 4 },
+  { id: 'builder', type: 'hourly', hours: range(0, 23), budgetMin: 4, label: 'Hourly, 24/7 when work exists' },
   { id: 'judge', type: 'weekly', days: [0], hour: 18, budgetMin: 4 },
   { id: 'learner', type: 'daily', hour: 23, budgetMin: 5 },
 ];

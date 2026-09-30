@@ -1,4 +1,4 @@
-// Builder — hourly 6am–11pm ET when there is work. For approved ideas/experiments it builds
+// Builder — hourly, 24/7, when there is work. For approved ideas/experiments it builds
 // everything that needs no account and no payment: listing copy, briefs, landing page,
 // outreach drafts (Gmail drafts, no recipient), pricing sheet, step plans. Never publishes.
 import { db } from '../lib/db.js';

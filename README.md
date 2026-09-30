@@ -16,13 +16,13 @@ Setup: **[docs/SETUP.md](docs/SETUP.md)**.
 | Agent | When (America/New_York) | What it does |
 |---|---|---|
 | Villa Outreach | hourly 6am–11pm | Zoho inbox (bounces, unsubscribes, complaints, replies), Stripe payments, follow-ups, first emails, prospect discovery |
-| Operator | hourly 6am–11pm | Gmail → drafts in the thread (never sends), flags money/contract/legal-tax/complaint/press/pricing, records what Bobby sent, works agent tasks, builds growth-idea assets |
+| Operator | hourly, 24/7 | Gmail → drafts in the thread (never sends), flags money/contract/legal-tax/complaint/press/pricing, records what Bobby sent, works agent tasks, builds growth-idea assets |
 | Villa Studio | hourly when an order is in production | photo pick (vision) → MiniMax-H3 768P clips → vision QA (≤2 retries/clip) → 2K regeneration for paid → ffmpeg film → review → delivery |
 | Researcher (+ Hunter) | every 3 hours | public feeds + approved searches → relevant knowledge (business tags, usefulness 1–5); retires useless sources; Hunter extracts demand signals in 6 lanes |
 | Strategist | daily 7am | ≤3 growth ideas, ≤3 agent tasks, ≤3 new research queries |
 | Scout | Mon + Thu 8am | ≤3 new businesses scored 0–100 with real source links; launch kit for #1 |
 | Analyst | daily 9am | one-page business cases with unit economics and a $0–25 experiment |
-| Builder | hourly 6am–11pm when work exists | assets for approved ideas/experiments (no accounts, no payments, no publishing) |
+| Builder | hourly, 24/7 when work exists | assets for approved ideas/experiments (no accounts, no payments, no publishing) |
 | Judge | Sundays 6pm | scale / continue / kill per running experiment, with numbers |
 | Learner | nightly 11pm | edits + feedback → playbook rules (dedupe, consolidate past 40, version history), grades drafts, self-review, daily metrics |
 
