@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex, nofollow">
+  <meta name="referrer" content="no-referrer">
+  <title>Upload photos · Villa Cinema</title>
+  <link rel="stylesheet" href="/films.css">
+  <script src="/config.js"></script>
+</head>
+<body>
+  <main class="wrap">
+    <p class="brand">Villa Cinema</p>
+    <h1>Upload your property photos</h1>
+    <p>Choose 8–12 of your best photos: wide shots of the living areas, bedrooms, kitchen, pool and views work best. Photos without people look best on film. JPG, PNG or WEBP, up to 20&nbsp;MB each.</p>
+    <div class="drop">
+      <label for="files">Select photos</label>
+      <input id="files" type="file" accept="image/jpeg,image/png,image/webp" multiple>
+    </div>
+    <ul class="files" id="list"></ul>
+    <button id="go" disabled>Upload and submit</button>
+    <p class="msg" id="msg"></p>
+    <p class="small">By uploading you confirm you have the right to use these photos for your film.</p>
+  </main>
+  <script src="/upload.js"></script>
+</body>
+</html>

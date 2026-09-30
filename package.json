@@ -1,0 +1,14 @@
+{
+  "name": "ownvista-hq",
+  "private": true,
+  "version": "1.0.0",
+  "description": "Ownvista HQ — scheduled AI agents, dashboard and Villa Cinema pipeline. Zero npm dependencies.",
+  "type": "module",
+  "engines": { "node": ">=20" },
+  "scripts": {
+    "agents": "node agents/run.js",
+    "test": "node --test test/*.test.js",
+    "test:live": "node --test live-tests/caps.js",
+    "build": "node scripts/build-config.js"
+  }
+}

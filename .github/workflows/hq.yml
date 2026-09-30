@@ -1,0 +1,91 @@
+name: Ownvista HQ
+
+on:
+  schedule:
+    - cron: '7 * * * *'   # hourly at :07 UTC; the router picks agents by the New York hour
+  workflow_dispatch:
+    inputs:
+      agent:
+        description: Run one agent (or command) now
+        type: choice
+        default: auto
+        options:
+          - auto
+          - all
+          - operator
+          - researcher
+          - strategist
+          - scout
+          - learner
+          - analyst
+          - builder
+          - judge
+          - villa_outreach
+          - villa_studio
+          - villa_preflight
+          - villa_test_email
+          - villa_test_order
+          - captest
+
+concurrency:
+  group: ownvista-hq
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      AGENT_INPUT: ${{ inputs.agent || 'auto' }}
+      LLM_PROVIDER: ${{ vars.LLM_PROVIDER || 'groq' }}
+      GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+      SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+      SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+      GMAIL_CLIENT_ID: ${{ secrets.GMAIL_CLIENT_ID }}
+      GMAIL_CLIENT_SECRET: ${{ secrets.GMAIL_CLIENT_SECRET }}
+      GMAIL_REFRESH_TOKEN: ${{ secrets.GMAIL_REFRESH_TOKEN }}
+      GMAIL_USER: ${{ vars.GMAIL_USER || 'hello@nashvillebuys.com' }}
+      GMAIL_ALIASES: ${{ vars.GMAIL_ALIASES || 'hello@getownvista.com,quotes@getownvista.com' }}
+      ZOHO_CLIENT_ID: ${{ secrets.ZOHO_CLIENT_ID }}
+      ZOHO_CLIENT_SECRET: ${{ secrets.ZOHO_CLIENT_SECRET }}
+      ZOHO_REFRESH_TOKEN: ${{ secrets.ZOHO_REFRESH_TOKEN }}
+      ZOHO_DC: ${{ vars.ZOHO_DC || 'com' }}
+      ZOHO_FROM: ${{ vars.ZOHO_FROM || 'hello@villacinema.com' }}
+      MINIMAX_API_KEY: ${{ secrets.MINIMAX_API_KEY }}
+      STRIPE_RESTRICTED_KEY: ${{ secrets.STRIPE_RESTRICTED_KEY }}
+      VC_PAYMENT_LINK: ${{ secrets.VC_PAYMENT_LINK }}
+      VC_PAYMENT_LINK_ID: ${{ secrets.VC_PAYMENT_LINK_ID }}
+      VC_FILMS_BASE_URL: ${{ vars.VC_FILMS_BASE_URL || 'https://films.villacinema.com' }}
+      VC_DKIM_SELECTORS: ${{ vars.VC_DKIM_SELECTORS || 'zmail,zoho,default' }}
+      TAVILY_API_KEY: ${{ secrets.TAVILY_API_KEY }}
+    steps:
+      - name: Start clock
+        run: echo "JOB_STARTED_AT=$(date +%s)" >> "$GITHUB_ENV"
+
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Guardrail tests (no send paths, guard rules, caps math)
+        run: node --version && node --test test/*.test.js
+
+      - name: Live cap tests (tries to exceed spend and send caps)
+        if: env.AGENT_INPUT == 'captest'
+        run: node --test live-tests/caps.js
+
+      - name: Plan
+        id: plan
+        if: env.AGENT_INPUT != 'captest'
+        run: node agents/run.js --plan --agent="$AGENT_INPUT"
+
+      - name: Install ffmpeg (only when Villa Studio has work)
+        if: steps.plan.outputs.needs_ffmpeg == 'true'
+        run: command -v ffmpeg || (sudo apt-get update -qq && sudo apt-get install -y -qq --no-install-recommends ffmpeg fonts-dejavu-core)
+
+      - name: Run agents
+        if: env.AGENT_INPUT != 'captest'
+        run: node agents/run.js --agent="$AGENT_INPUT"
