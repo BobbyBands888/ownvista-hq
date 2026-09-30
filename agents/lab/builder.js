@@ -72,7 +72,12 @@ Bobby's note: ${idea.feedback || '(none)'}`;
       const subject = m ? m[1].trim() : a.title || idea.title;
       const text = body.replace(/^subject:.*$/im, '').trim();
       const from = idea.business === 'followup' ? 'hello@getownvista.com' : GMAIL_USER();
-      ({ draftId } = await createDraft({ from, to: '', subject, body: `${text}\n\n${signoff(idea.business)}` }));
+      try {
+        ({ draftId } = await createDraft({ from, to: '', subject, body: `${text}\n\n${signoff(idea.business)}` }));
+      } catch (e) {
+        // Keep the asset even when Gmail is down; the draft text is still in the dashboard.
+        ctx.log('gmail_error', `Gmail draft skipped: ${truncate(e.message, 160)}`, { table: 'ideas', id: idea.id });
+      }
     }
     await db.insertOne('assets', {
       idea_id: idea.id, experiment_id: experiment?.id ?? null, kind: a.kind || 'copy',
