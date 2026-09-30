@@ -29,13 +29,14 @@ async function bump(extra = {}) {
 }
 
 // Returns a JPEG Buffer (1024x1024).
-export async function generateImage(prompt, { cap, seed, steps = 4 } = {}) {
+// (FLUX.1 schnell on Workers AI accepts only prompt + steps; no seed.)
+export async function generateImage(prompt, { cap, steps = 4 } = {}) {
   if (!cfReady()) throw new ImageCapReached('Cloudflare not connected yet (CF_ACCOUNT_ID / CF_API_TOKEN)');
   if ((await imagesLeftToday(cap)) <= 0) throw new ImageCapReached('daily free image allowance used');
   const res = await fetch(`https://api.cloudflare.com/client/v4/accounts/${requireEnv('CF_ACCOUNT_ID')}/ai/run/${MODEL}`, {
     method: 'POST',
     headers: { Authorization: `Bearer ${requireEnv('CF_API_TOKEN')}`, 'Content-Type': 'application/json' },
-    body: JSON.stringify({ prompt: prompt.slice(0, 2000), steps: Math.min(8, steps), ...(seed != null ? { seed } : {}) }),
+    body: JSON.stringify({ prompt: prompt.slice(0, 2000), steps: Math.min(8, steps) }),
   });
   const data = await res.json().catch(() => ({}));
   if (!res.ok || !data.success) {
@@ -44,7 +45,9 @@ export async function generateImage(prompt, { cap, seed, steps = 4 } = {}) {
       await bump({ exhausted: true });
       throw new ImageCapReached(`Cloudflare free allowance: ${msg}`);
     }
-    throw new Error(`Cloudflare image ${msg}`);
+    const err = new Error(`Cloudflare image ${msg}`);
+    err.systemic = res.status === 400 || res.status === 401 || res.status === 403 || /bad input|authentication|permission/i.test(msg);
+    throw err;
   }
   await bump();
   return Buffer.from(data.result.image, 'base64');

@@ -155,13 +155,12 @@ JSON only: {"grade":4,"issue":"short or empty"}`),
 async function generateItems(ctx, pack, rules) {
   const dir = await workdir();
   const items = pack.items.map((i) => ({ ...i }));
-  const seedBase = Number.parseInt(pack.id.replace(/-/g, '').slice(0, 7), 16);
   let made = 0, stop = '';
   for (const item of items) {
     if (item.done || item.attempts >= 2) continue;
     if (ctx.outOfTime(100000)) { stop = 'out of time'; break; }
     try {
-      const jpg = await generateImage(promptFor(pack, item), { cap: rules.images_per_day, seed: seedBase + item.n * 7 + item.attempts * 101 });
+      const jpg = await generateImage(promptFor(pack, item), { cap: rules.images_per_day });
       item.attempts++;
       made++;
       const f = await keyOut(jpg, dir, item);
@@ -178,6 +177,8 @@ async function generateItems(ctx, pack, rules) {
     } catch (e) {
       if (e instanceof ImageCapReached) { stop = e.message; break; }
       if (e instanceof CapError) { stop = `LLM cap: ${e.message}`; break; }
+      // A setup problem (bad request, auth) is not the item's fault: don't burn its attempt, stop and report.
+      if (e.systemic) { stop = truncate(e.message, 160); ctx.log('assets', `Asset Studio stopped: ${stop}`); break; }
       item.attempts++;
       item.issue = truncate(e.message, 120);
       ctx.note(`item ${item.n}: ${truncate(e.message, 100)}`);
