@@ -1,10 +1,16 @@
 import { sb, q, esc, ago, money, badge, on, act, md } from '../core.js';
 
 const TABS = [['growth', 'Growth'], ['business', 'New business'], ['venture', 'Venture Lab']];
-let tab = 'growth';
+let tab = null; // picked on first render: the first tab with ideas waiting
 let statusFilter = 'proposed';
 
 export async function render(el) {
+  // Count ideas waiting for a decision per tab, so the page opens where the work is
+  // and each tab shows how many are waiting.
+  const waiting = await q(sb.from('ideas').select('kind').eq('status', 'proposed').limit(500));
+  const counts = Object.fromEntries(TABS.map(([k]) => [k, waiting.filter((w) => w.kind === k).length]));
+  if (!tab) tab = (TABS.find(([k]) => counts[k] > 0) || TABS[0])[0];
+
   const ideas = await q(sb.from('ideas').select('*, assets(id,kind,title,body,gmail_draft_id)').eq('kind', tab)
     .in('status', statusFilter === 'all' ? ['proposed', 'approved', 'rejected', 'launched'] : [statusFilter])
     .order('created_at', { ascending: false }).limit(40));
@@ -12,7 +18,7 @@ export async function render(el) {
   el.innerHTML = `
   <div class="head"><h1>Ideas</h1>
     <div class="row"><select id="status">${['proposed', 'approved', 'launched', 'rejected', 'all'].map((s) => `<option ${s === statusFilter ? 'selected' : ''}>${s}</option>`).join('')}</select></div></div>
-  <div class="tabs">${TABS.map(([k, v]) => `<button data-tab="${k}" class="${k === tab ? 'active' : ''}">${v}</button>`).join('')}</div>
+  <div class="tabs">${TABS.map(([k, v]) => `<button data-tab="${k}" class="${k === tab ? 'active' : ''}">${v}${counts[k] ? ` (${counts[k]})` : ''}</button>`).join('')}</div>
   <div class="list">${ideas.map((i) => `
     <div class="card stack" data-id="${i.id}">
       <div class="row between"><h2>${esc(i.title)}</h2>
