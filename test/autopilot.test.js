@@ -94,9 +94,10 @@ test('Marketer never calls AI art hand-made and always discloses AI on asset pac
   }, pack);
   assert.ok(kit.listing);
   assert.equal(kit.pins.length, 1);
-  assert.deepEqual(kit.reddit.map((r) => r.subreddit), ['aigamedev']);
+  assert.deepEqual(kit.reddit.map((r) => r.subreddit), ['gamedev', 'aigamedev']);
+  assert.match(kit.reddit[0].body, /AI-generated/);
   assert.deepEqual(kit.hooks, ['Sixteen potions']);
-  assert.equal(vetKit({ listing: { title: 'P', description: 'Sixteen potion icons.' } }, pack).kit.listing, undefined);
+  assert.match(vetKit({ listing: { title: 'P', description: 'Sixteen potion icons.' } }, pack).kit.listing.description, /AI-generated/);
   const fresh = new Date().toISOString();
   assert.equal(pickTargets([{ key: 'a' }], { a: { made_at: fresh } }).length, 1, 'old-version kits are rewritten');
   assert.equal(pickTargets([{ key: 'a' }], { a: { made_at: fresh, v: KIT_VERSION } }).length, 0);
