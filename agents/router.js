@@ -19,6 +19,7 @@ export const SCHEDULE = [
   { id: 'asset_studio', type: 'hourly', hours: range(0, 23), budgetMin: 8, label: 'Hourly, 24/7 (free daily image allowance)' },
   { id: 'judge', type: 'weekly', days: [0], hour: 18, budgetMin: 4 },
   { id: 'learner', type: 'hourly', hours: range(0, 23), budgetMin: 5, label: 'Hourly, 24/7 (grades the day at 11pm ET)' },
+  { id: 'paper_trader', type: 'hourly', hours: range(10, 16), weekdays: [1, 2, 3, 4, 5], budgetMin: 5, label: 'Weekdays hourly 10am–4pm ET (paper money)' },
 ];
 
 export const AGENT_IDS = SCHEDULE.map((s) => s.id);
@@ -39,9 +40,9 @@ function lastSlot(s, now) {
 function nextSlot(s, now, lastOk) {
   const n = et(now);
   if (s.type === 'hourly') {
-    for (let i = 1; i <= 48; i++) {
+    for (let i = 1; i <= 96; i++) {
       const t = new Date(now.getTime() + i * 3600000);
-      if (s.hours.includes(et(t).hour)) return etToUtc(et(t).date, et(t).hour, 7);
+      if (s.hours.includes(et(t).hour) && (!s.weekdays || s.weekdays.includes(et(t).weekday))) return etToUtc(et(t).date, et(t).hour, 7);
     }
   }
   if (s.type === 'interval') {
@@ -69,6 +70,7 @@ export function isDue(s, now, runs) {
   if (s.type === 'hourly') {
     // Two triggers in the same hour (GitHub's schedule + the Supabase backup) must not run an agent twice.
     if (lastOk) { const a = et(lastOk), b = et(now); if (a.date === b.date && a.hour === b.hour) return false; }
+    if (s.weekdays && !s.weekdays.includes(et(now).weekday)) return false;
     return s.hours.includes(et(now).hour);
   }
   if (s.type === 'interval') return !lastOk || now - lastOk >= s.everyHours * 3600000 - 20 * 60000;

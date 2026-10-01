@@ -9,6 +9,7 @@ const VIEWS = [
   ['shop', 'Shop'],
   ['villa', 'Villa Cinema'],
   ['lab', 'Venture Lab'],
+  ['trader', 'Trader'],
   ['ideas', 'Ideas'],
   ['tasks', 'Tasks'],
   ['knowledge', 'Knowledge'],

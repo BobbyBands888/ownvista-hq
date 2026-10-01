@@ -25,6 +25,7 @@ const MODULES = {
   launcher: () => import('./lab/launcher.js'),
   asset_studio: () => import('./lab/asset_studio.js'),
   learner: () => import('./learner.js'),
+  paper_trader: () => import('./trader/paper.js'),
 };
 
 // Extra manual-only commands.
@@ -32,6 +33,7 @@ const COMMANDS = {
   villa_test_email: { agent: 'villa_outreach', fn: 'testEmail' },
   villa_test_order: { agent: 'villa_studio', fn: 'createTestOrder' },
   villa_preflight: { agent: 'villa_outreach', fn: 'preflight' },
+  trader_probe: { agent: 'paper_trader', fn: 'probe' },
 };
 
 const args = Object.fromEntries(process.argv.slice(2).map((a) => {

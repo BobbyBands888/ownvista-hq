@@ -22,6 +22,8 @@ on:
           - judge
           - launcher
           - asset_studio
+          - paper_trader
+          - trader_probe
           - villa_outreach
           - villa_studio
           - villa_preflight
