@@ -12,6 +12,7 @@ import { db, kvGet } from './db.js';
 import { checkCopy, realEstateRisk } from './guard.js';
 import { truncate } from './text.js';
 import { daysAgoIso, etToUtc, etDate } from './time.js';
+import { refreshFailures, repeatOf, AUTO_PREFIX } from './failures.js';
 
 // Hard pause set by Bobby (Oct 1, 2026, 9am) while the real-estate filter and daily cap were fixed.
 // Overrides the kv switch. Set back to false only when Bobby says to unpause.
@@ -66,9 +67,23 @@ export async function autoApprove(ctx) {
     status: 'eq.proposed', created_at: `gte.${daysAgoIso(14)}`, order: 'score.desc.nullslast,created_at.asc', limit: 40,
     select: 'id,kind,business,title,summary,steps,score,created_by',
   });
-  const approved = [], skipped = [];
+  // Failure backlog: an idea that repeats a rejected/killed/failed one is rejected, with the reason logged.
+  let failures = [];
+  try { failures = (await refreshFailures())?.items || []; } catch { failures = []; }
+  const approved = [], skipped = [], repeats = [];
   for (const idea of ideas) {
-    if (!left) break;
+    const rep = repeatOf(idea, failures);
+    if (rep) {
+      const note = `${AUTO_PREFIX}repeats "${truncate(rep.title, 80)}" (${rep.category}: ${truncate(rep.why, 100)})`;
+      const rows = await db.update('ideas', { id: `eq.${idea.id}`, status: 'eq.proposed' }, { status: 'rejected', decided_at: new Date().toISOString(), feedback: note });
+      if (rows?.length) {
+        repeats.push(idea.title);
+        await db.insertOne('feedback', { kind: 'idea_repeat', text: `${idea.created_by || 'An agent'} proposed "${truncate(idea.title, 100)}", which repeats a failure: "${truncate(rep.title, 80)}" (${rep.category}: ${truncate(rep.why, 100)}). Stop proposing this kind of idea.`, ref_table: 'ideas', ref_id: idea.id }).catch(() => {});
+        await ctx.log('autopilot', `Rejected repeat idea "${truncate(idea.title, 100)}" — same as failed "${truncate(rep.title, 80)}" (${rep.category})`, { table: 'ideas', id: idea.id });
+      }
+      continue;
+    }
+    if (!left) continue;
     const why = skipReason(idea, r);
     if (why) { skipped.push(why); continue; }
     const now = new Date().toISOString();
@@ -78,6 +93,7 @@ export async function autoApprove(ctx) {
     approved.push(idea.title);
     await ctx.log('autopilot', `Auto-approved ${idea.kind} idea "${truncate(idea.title, 120)}" (from ${idea.created_by || 'an agent'}${idea.score != null ? `, score ${idea.score}` : ''}) → ${idea.kind === 'growth' ? 'assets' : 'Builder → Launcher'}`, { table: 'ideas', id: idea.id });
   }
-  if (!approved.length && !skipped.length) return 'no new ideas';
-  return `approved ${approved.length}${skipped.length ? `, skipped ${skipped.length} (${truncate([...new Set(skipped)].join('; '), 160)})` : ''}`;
+  const rep = repeats.length ? `, rejected ${repeats.length} repeat(s) of past failures` : '';
+  if (!approved.length && !skipped.length) return repeats.length ? `approved 0${rep}` : 'no new ideas';
+  return `approved ${approved.length}${rep}${skipped.length ? `, skipped ${skipped.length} (${truncate([...new Set(skipped)].join('; '), 160)})` : ''}`;
 }

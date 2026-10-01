@@ -15,6 +15,7 @@ import { etsyListings, etsyReady } from '../lib/etsy.js';
 import { ipRisk } from '../lib/autopilot.js';
 import { addToRadar } from '../lib/radar.js';
 import { similarTitle, truncate } from '../lib/text.js';
+import { KV_KEY as FAILURES_KEY, repeatOf } from '../lib/failures.js';
 
 // A written product (guide/template/checklist) only counts as proven when the evidence itself is a paid written product.
 export const WRITTEN = /\b(templates?|guides?|checklists?|planners?|worksheets?|e-?books?|playbooks?|swipe files?|workbooks?|spreadsheets?|printables?|notion|course|scripts? pack)\b/i;
@@ -76,6 +77,9 @@ export async function run(ctx) {
   const allowed = new Set(evidence.map((e) => e.url));
   const recent = await db.select('ideas', { created_at: `gte.${daysAgoIso(45)}`, select: 'title,status', limit: 400 });
   const rejected = recent.filter((r) => r.status === 'rejected').map((r) => r.title).slice(0, 15);
+  // Failure backlog with audited reasons (rejected ideas, killed launches, failed packs).
+  const failLog = await kvGet(FAILURES_KEY, null).catch(() => null);
+  const failures = failLog?.items || [];
 
   const results = String((await kvGet(RESULTS_KEY, null).catch(() => null))?.text || '').slice(0, 1200);
   const system = systemPrompt('the Product Scout', `
@@ -98,19 +102,20 @@ team/celebrity names, no real-estate themes). "est_cost" = the supplier's typica
 type "other": printables/graphics, physical goods or anything needing shipping — these go on a radar for later.
 Each needs at least one evidence URL copied exactly from the list, a one-time price, and an honest score 0–100
 (demand evidence 40, ease to make it excellent as a web page 30, low competition 30).
-Avoid ideas like these rejected ones: ${rejected.join('; ') || '(none)'}.
+${failLog?.text ? truncate(failLog.text, 2500) : `Avoid ideas like these rejected ones: ${rejected.join('; ') || '(none)'}.`}
 ${results ? `${results}\n` : ''}JSON only: {"products":[{"type":"text|asset_pack|pod|other","title":"","buyer":"who buys it","deliverable":"exactly what they get","price_usd":19,
 "why_now":"the evidence in one sentence","score":0,"evidence":["url"],"channel":"etsy|itch|web|amazon|other","est_cost":0}]}`);
   const user = evidence.slice(0, 60).map((e) => untrusted(e.url, e.text, 300)).join('\n');
   const { json } = await chat({ ctx, tier: 'smart', json: true, maxTokens: 2000, system, messages: [{ role: 'user', content: user }] });
 
-  let ideas = 0, onRadar = [], packHints = 0, gated = 0;
+  let ideas = 0, onRadar = [], packHints = 0, gated = 0, repeats = 0;
   const byUrl = new Map(evidence.map((e) => [e.url, e.text]));
   for (const p of (json.products || []).slice(0, 4)) {
     const urls = (p.evidence || []).filter((u) => allowed.has(u));
     if (!p.title || !urls.length || ipRisk(`${p.title} ${p.deliverable}`)) continue;
     if (realEstateRisk(`${p.title} ${p.deliverable} ${p.buyer}`)) continue; // Bobby's rule: no real estate
     if (recent.some((r) => similarTitle(r.title, p.title))) continue;
+    if (repeatOf(p, failures)) { repeats++; continue; } // repeats a past failure
     const price = Number(p.price_usd);
     const score = Math.max(0, Math.min(100, Math.round(Number(p.score) || 0)));
     if (p.type === 'asset_pack') {
@@ -137,7 +142,7 @@ ${results ? `${results}\n` : ''}JSON only: {"products":[{"type":"text|asset_pack
   }
   const radarAdded = onRadar.length ? await addToRadar(onRadar) : 0;
   if (ideas || radarAdded || packHints) ctx.log('scout', `Product Scout: ${ideas} sellable product idea(s) sent to Autopilot, ${packHints} pack niche(s) to the Asset Studio, ${radarAdded} to the Radar`);
-  return [`evidence ${evidence.length}`, `ideas ${ideas}`, `pack niches ${packHints}`, `radar ${radarAdded}`, gated && `guide ideas without proof ${gated}`, ...notes].filter(Boolean).join(' · ');
+  return [`evidence ${evidence.length}`, `ideas ${ideas}`, `pack niches ${packHints}`, `radar ${radarAdded}`, gated && `guide ideas without proof ${gated}`, repeats && `repeats of past failures dropped ${repeats}`, ...notes].filter(Boolean).join(' · ');
 }
 
 // Manual: check the Etsy key with one tiny read-only search. No AI, so it works even when the daily token cap is hit.

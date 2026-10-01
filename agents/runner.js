@@ -28,6 +28,7 @@ export const MODULES = {
   marketer: () => import('./lab/marketer.js'),
   book_studio: () => import('./lab/book_studio.js'),
   ceo_review: () => import('./ceo_review.js'),
+  smart_score: () => import('./smart_score.js'),
 };
 
 // Extra manual-only commands.
@@ -47,6 +48,7 @@ const NEW_ROWS = {
   autopilot: { name: 'Autopilot', description: 'Approves new ideas on Bobby\'s behalf (caps, IP and copy checks) so they build and go live without waiting.', sort: 36 },
   marketer: { name: 'Marketer', description: 'Writes draft-only marketing kits for live offers and itch.io packs: better listing, tags, Pinterest pins, Reddit drafts, search text. Bobby posts; it never does.', sort: 37 },
   ceo_review: { name: 'CEO Review', description: 'Sundays: scores every selling lane on real results (sales, views, revenue, kills), saves the scoreboard the product agents read, and writes up to 3 results lessons into the Playbook. Steers what gets made; never sends, publishes, spends or approves.', sort: 39 },
+  smart_score: { name: 'Smart Score', description: 'Daily: measures whether the agents are getting smarter (ideas you reject, rule-breaking ideas, emails you edit, quality-bar and image QA pass rates, launches, revenue). No AI tokens; reads only.', sort: 40 },
   book_studio: { name: 'Book Studio', description: 'Amazon KDP paperbacks: plans seasonal and evergreen coloring books (max 2 new titles a week), builds print-ready PDFs, writes the listing and an upload pack. Claude uploads; Bobby clicks Publish. Never logs into Amazon.', sort: 38 },
 };
 const ensured = new Set();

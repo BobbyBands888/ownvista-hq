@@ -4,6 +4,7 @@ import { sb, cfg, esc, toast, count } from './core.js';
 const VIEWS = [
   ['station', 'Station'],
   ['world', 'World'],
+  ['smart', 'Smarter?'],
   ['needs', 'Needs you'],
   ['email', 'Email'],
   ['economy', 'Economy'],

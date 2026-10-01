@@ -19,7 +19,7 @@ export const LANES = {
   assets: { name: 'itch.io asset packs', agents: ['asset_studio'], earns: true },
   villa: { name: 'Villa Cinema', agents: ['villa_outreach', 'villa_studio'], earns: true },
   email: { name: 'Inbox + Bobby\'s businesses', agents: ['operator'], earns: true },
-  growth: { name: 'Research & ideas (overhead)', agents: ['researcher', 'strategist', 'scout', 'analyst', 'judge', 'learner', 'economist', 'architect', 'dropship_scout', 'ceo_review'], earns: false },
+  growth: { name: 'Research & ideas (overhead)', agents: ['researcher', 'strategist', 'scout', 'analyst', 'judge', 'learner', 'economist', 'architect', 'dropship_scout', 'ceo_review', 'smart_score'], earns: false },
 };
 
 // Paper Trader is outside the economy: it can never earn real money, so it keeps a fixed allowance.
@@ -27,7 +27,7 @@ export const OUTSIDE = ['paper_trader'];
 
 // These keep running no matter what: Bobby's inbox, learning, revenue tracking (Launcher syncs sales and
 // kills losers), Villa replies/payments, and the economy itself.
-export const PROTECTED = ['operator', 'learner', 'launcher', 'villa_outreach', 'economist', 'architect', 'paper_trader'];
+export const PROTECTED = ['operator', 'learner', 'launcher', 'villa_outreach', 'economist', 'architect', 'paper_trader', 'smart_score'];
 
 // Today's daily token shares are the base. The economy multiplies them by the lane factor.
 export const BASE_TOKENS = {
@@ -35,7 +35,7 @@ export const BASE_TOKENS = {
   operator: 60000, villa_outreach: 40000, villa_studio: 150000, researcher: 100000, strategist: 15000, scout: 15000,
   product_scout: 20000, dropship_scout: 15000, autopilot: 1000,
   analyst: 20000, builder: 20000, judge: 10000, learner: 20000, launcher: 30000, asset_studio: 20000,
-  economist: 6000, architect: 15000, paper_trader: 30000, book_studio: 8000, ceo_review: 6000,
+  economist: 6000, architect: 15000, paper_trader: 30000, book_studio: 8000, ceo_review: 6000, smart_score: 1000,
 };
 export const BASE_IMAGES = 100;
 

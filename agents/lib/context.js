@@ -2,6 +2,7 @@
 import { db, kvGet } from './db.js';
 import { truncate } from './text.js';
 import { KV_KEY as RESULTS_KEY } from './review.js';
+import { KV_KEY as FAILURES_KEY } from './failures.js';
 
 export const BUSINESSES = ['nashville-buys', 'followup', 'ma-real-estate', 'clearance', 'villa-cinema', 'venture-lab'];
 export const LANES = ['reselling', 'pod', 'dropshipping', 'local-services', 'b2b', 'digital'];
@@ -10,12 +11,13 @@ let cache = null;
 
 export async function playbook() {
   if (cache) return cache;
-  const [sections, rules, review, version, results] = await Promise.all([
+  const [sections, rules, review, version, results, failures] = await Promise.all([
     db.select('playbook', { order: 'sort.asc' }),
     db.select('playbook_rules', { active: 'eq.true', order: 'created_at.asc', limit: 60 }),
     db.one('self_reviews', { order: 'day.desc' }),
     kvGet('playbook_version', 1),
     kvGet(RESULTS_KEY, null).catch(() => null),
+    kvGet(FAILURES_KEY, null).catch(() => null),
   ]);
   const by = Object.fromEntries(sections.map((s) => [s.section, s.content]));
   const rulesText = rules.map((r, i) => `${i + 1}. [${r.category}] ${r.rule}`).join('\n');
@@ -26,10 +28,13 @@ export async function playbook() {
     review: review?.text || '',
     // CEO Review's weekly scoreboard of real sales by lane ('' until its first run).
     results: typeof results?.text === 'string' ? truncate(results.text, 1200) : '',
+    // Failure backlog (rejected ideas, killed launches, failed packs) with audited reasons ('' if none).
+    failures: typeof failures?.text === 'string' ? truncate(failures.text, 2500) : '',
     // Compact text block for prompts. Ask for 'results' to include the scoreboard.
     text(sectionsWanted = ['voice', 'signoffs', 'guardrails', 'businesses']) {
       const parts = sectionsWanted.filter((s) => by[s]).map((s) => `## ${s}\n${by[s]}`);
       if (rulesText) parts.push(`## Learned rules (from Bobby's edits and feedback)\n${rulesText}`);
+      if (sectionsWanted.includes('results') && this.failures) parts.push(`## Failed before — don't repeat\n${this.failures}`);
       if (sectionsWanted.includes('results') && this.results) parts.push(`## Results so far\n${this.results}`);
       if (this.review) parts.push(`## Yesterday's self-review\n${truncate(this.review, 800)}`);
       return parts.join('\n\n');

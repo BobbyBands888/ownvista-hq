@@ -31,6 +31,7 @@ on:
           - marketer
           - book_studio
           - ceo_review
+          - smart_score
           - trader_probe
           - trader_backtest
           - etsy_check

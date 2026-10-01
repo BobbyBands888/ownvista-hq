@@ -31,6 +31,7 @@ export const SCHEDULE = [
   { id: 'economist', type: 'daily', hour: 23, budgetMin: 3, label: 'Daily 11pm ET (books, budgets)' },
   { id: 'ceo_review', type: 'weekly', days: [0], hour: 20, budgetMin: 3, label: 'Sundays 8pm ET (scores every lane on real sales, writes results lessons)' },
   { id: 'architect', type: 'hourly', hours: range(0, 23), budgetMin: 4, label: 'Hourly check for new gaps; full crew review Sundays 7pm ET' },
+  { id: 'smart_score', type: 'daily', hour: 23, budgetMin: 2, label: 'Daily 11pm ET (are the agents getting smarter? no AI tokens)' },
 ];
 
 export const AGENT_IDS = SCHEDULE.map((s) => s.id);
