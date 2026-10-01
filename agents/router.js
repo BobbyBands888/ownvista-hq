@@ -11,7 +11,12 @@ export const SCHEDULE = [
   { id: 'villa_outreach', type: 'hourly', hours: range(6, 23), budgetMin: 5 },
   { id: 'operator', type: 'hourly', hours: range(0, 23), budgetMin: 6, label: 'Hourly, 24/7' },
   { id: 'villa_studio', type: 'hourly', hours: range(0, 23), budgetMin: 12, onlyIfWork: true },
-  { id: 'researcher', type: 'hourly', hours: range(0, 23), budgetMin: 6, label: 'Hourly, 24/7 (learns and briefs the crew)' },
+  // Researcher, scouts and autopilot run continuously on the Vercel tick (api/tick.js, every 5 min).
+  // Here they are a backup: the hourly job only runs them if the tick hasn't for about an hour.
+  { id: 'researcher', type: 'interval', everyHours: 1, budgetMin: 6, label: 'Every 5 min, 24/7 (Vercel tick; hourly backup here)' },
+  { id: 'autopilot', type: 'interval', everyHours: 1, budgetMin: 2, label: 'Every 15 min (approves ideas so they go live)' },
+  { id: 'product_scout', type: 'interval', everyHours: 2, budgetMin: 4, label: 'Hourly (Etsy, itch.io, Product Hunt)' },
+  { id: 'dropship_scout', type: 'interval', everyHours: 3, budgetMin: 4, label: 'Every 90 min (dropship products → Radar)' },
   { id: 'strategist', type: 'daily', hour: 7, budgetMin: 4 },
   { id: 'scout', type: 'weekly', days: [1, 4], hour: 8, budgetMin: 5 },
   { id: 'analyst', type: 'daily', hour: 9, budgetMin: 4 },

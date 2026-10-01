@@ -1,7 +1,7 @@
 // Researcher — hourly, 24/7 (learns constantly; findings are routed to the agents that can use them). Pulls public feeds (robots.txt respected) and approved search
 // queries, keeps only relevant items (tagged by business, usefulness 1–5), tracks per-source
 // hit/useful counts and retires sources that stay useless. Hunter extracts demand signals.
-import { db } from './lib/db.js';
+import { db, kvGet, kvSet } from './lib/db.js';
 import { chat } from './lib/llm.js';
 import { systemPrompt, untrusted } from './lib/guard.js';
 import { fetchFeed } from './lib/feeds.js';
@@ -15,10 +15,15 @@ const MAX_SOURCES = 25;
 const MAX_NEW_PER_SOURCE = 8;
 const MAX_ITEMS = 48;
 const BATCH = 8;
+// Continuous mode (Vercel tick every 5 min): fetch a few sources each tick, buffer new items, and judge only
+// full batches (or a batch older than 30 min) so Groq's daily request limit isn't spent on half-empty calls.
+const TICK = { sources: 6, buffer: 120, flushMs: 30 * 60000, maxBatches: 3 };
+const isTick = (ctx) => String(ctx.trigger || '').startsWith('tick');
 
 export async function run(ctx) {
+  const tick = isTick(ctx);
   const sources = await db.select('sources', {
-    status: 'eq.active', kind: 'in.(rss,search)', order: 'last_fetched_at.asc.nullsfirst', limit: MAX_SOURCES,
+    status: 'eq.active', kind: 'in.(rss,search)', order: 'last_fetched_at.asc.nullsfirst', limit: tick ? TICK.sources : MAX_SOURCES,
   });
   const pending = [];
   let fetched = 0, failed = 0;
@@ -52,12 +57,30 @@ export async function run(ctx) {
     }
   }
 
+  // Buffer: carry items across ticks; judge full batches only.
+  let toJudge = pending;
+  let buffered = 0;
+  if (tick) {
+    const buf = await kvGet('research_buffer', []);
+    const all = [...buf, ...pending.map((it) => ({ title: it.title, url: it.url, snippet: it.snippet, publishedAt: it.publishedAt, source_id: it.source.id, at: Date.now() }))].slice(-TICK.buffer);
+    const oldest = all.length ? Math.min(...all.map((x) => x.at || Date.now())) : Date.now();
+    const full = Math.floor(all.length / BATCH);
+    const n = Math.min(TICK.maxBatches, full || (all.length && Date.now() - oldest > TICK.flushMs ? 1 : 0)) * BATCH;
+    const take = all.slice(0, n);
+    await kvSet('research_buffer', all.slice(n));
+    buffered = all.length - take.length;
+    const byId = new Map(sources.map((x) => [x.id, x]));
+    const missing = [...new Set(take.map((x) => x.source_id).filter((id) => !byId.has(id)))];
+    if (missing.length) for (const r of await db.select('sources', { id: `in.(${missing.join(',')})` })) byId.set(r.id, r);
+    toJudge = take.filter((x) => byId.has(x.source_id)).map((x) => ({ ...x, source: byId.get(x.source_id) }));
+  }
+
   let kept = 0;
   const signalCandidates = [];
   const newKnowledge = [];
-  for (let i = 0; i < pending.length; i += BATCH) {
+  for (let i = 0; i < toJudge.length; i += BATCH) {
     if (ctx.outOfTime(90000)) break;
-    const batch = pending.slice(i, i + BATCH);
+    const batch = toJudge.slice(i, i + BATCH);
     const judged = await judge(ctx, batch);
     for (const [idx, j] of judged.entries()) {
       const it = batch[idx];
@@ -79,7 +102,7 @@ export async function run(ctx) {
 
   // Persist hit/useful counts and retire sources that stay useless.
   let retired = 0;
-  for (const s of new Set(pending.map((p) => p.source))) {
+  for (const s of new Set(toJudge.map((p) => p.source))) {
     const useless = s.fetched_count >= 40 && s.hit_count / s.fetched_count < 0.05 && s.useful_count === 0;
     await db.update('sources', { id: `eq.${s.id}` }, {
       hit_count: s.hit_count, useful_count: s.useful_count, ...(useless ? { status: 'retired' } : {}),
@@ -101,7 +124,7 @@ export async function run(ctx) {
     }
   }
   if (kept) ctx.log('knowledge', `Added ${kept} knowledge item(s) from ${fetched} source(s)`);
-  return `sources ${fetched} (${failed} failed), new items ${pending.length}, kept ${kept}, signals ${signals}, retired ${retired}, briefs ${routed.routed}, gaps ${routed.gaps}`;
+  return `sources ${fetched} (${failed} failed), new items ${pending.length}${tick ? `, judged ${toJudge.length}, buffered ${buffered}` : ''}, kept ${kept}, signals ${signals}, retired ${retired}, briefs ${routed.routed}, gaps ${routed.gaps}`;
 }
 
 async function pull(source) {

@@ -4,39 +4,12 @@
 //   node agents/run.js --agent=operator → run one agent now (manual dispatch)
 //   node agents/run.js --plan          → print the plan (used to decide whether to install ffmpeg)
 import { appendFileSync } from 'node:fs';
-import { db, kvGet } from './lib/db.js';
+import { db } from './lib/db.js';
 import { env } from './lib/env.js';
-import { CapError } from './lib/llm.js';
-import { SpendRefused } from './lib/spend.js';
-import { startJob, finishJob, startRun, finishRun, activity } from './lib/log.js';
+import { startJob, finishJob } from './lib/log.js';
 import { etDate } from './lib/time.js';
 import { dueAgents, scheduleFor, loadCrew, AGENT_IDS } from './router.js';
-
-const MODULES = {
-  villa_outreach: () => import('./villa/outreach.js'),
-  operator: () => import('./operator.js'),
-  villa_studio: () => import('./villa/studio.js'),
-  researcher: () => import('./researcher.js'),
-  strategist: () => import('./strategist.js'),
-  scout: () => import('./scout.js'),
-  analyst: () => import('./lab/analyst.js'),
-  builder: () => import('./lab/builder.js'),
-  judge: () => import('./lab/judge.js'),
-  launcher: () => import('./lab/launcher.js'),
-  asset_studio: () => import('./lab/asset_studio.js'),
-  learner: () => import('./learner.js'),
-  paper_trader: () => import('./trader/paper.js'),
-  economist: () => import('./economist.js'),
-  architect: () => import('./architect.js'),
-};
-
-// Extra manual-only commands.
-const COMMANDS = {
-  villa_test_email: { agent: 'villa_outreach', fn: 'testEmail' },
-  villa_test_order: { agent: 'villa_studio', fn: 'createTestOrder' },
-  villa_preflight: { agent: 'villa_outreach', fn: 'preflight' },
-  trader_probe: { agent: 'paper_trader', fn: 'probe' },
-};
+import { runAgent as runOne } from './runner.js';
 
 const args = Object.fromEntries(process.argv.slice(2).map((a) => {
   const [k, v] = a.replace(/^--/, '').split('=');
@@ -70,52 +43,7 @@ async function plan() {
   return { agents, needsFfmpeg: agents.includes('villa_studio') || assetWork, trigger: 'schedule', next };
 }
 
-// A crew member is data: a clone runs its base agent's module, a new one runs spawned.js. Nothing else.
-function moduleFor(agentId) {
-  if (MODULES[agentId]) return { load: MODULES[agentId], spec: null };
-  const spec = scheduleFor(agentId)?.spec;
-  if (!spec) return null;
-  if (spec.kind === 'clone' && MODULES[spec.base]) return { load: MODULES[spec.base], spec };
-  if (spec.kind === 'new') return { load: () => import('./spawned.js'), spec };
-  return null;
-}
-
-async function runAgent(id, { jobId, trigger }) {
-  const cmd = COMMANDS[id];
-  const agentId = cmd ? cmd.agent : id;
-  const m = moduleFor(agentId);
-  if (!m) throw new Error(`Unknown agent ${id}`);
-  const row = await db.one('agents', { id: `eq.${agentId}` });
-  if (row && row.enabled === false && trigger !== 'manual') return 'skipped';
-  // Minutes per run follow the economy (0.5x–1.5x of the base budget, never under 2 minutes).
-  const factor = Number((await kvGet('economy_budgets', {}).catch(() => ({})))?.minutes?.[agentId]) || 1;
-  const budget = Math.max(2, Math.round((scheduleFor(agentId)?.budgetMin ?? 5) * factor)) * 60000;
-  const deadlineMs = trigger === 'manual' ? JOB_DEADLINE : Math.min(JOB_DEADLINE, Date.now() + budget);
-  const ctx = await startRun(agentId, { jobId, trigger: cmd ? `manual:${id}` : trigger, deadlineMs });
-  if (m.spec) ctx.spec = m.spec;
-  try {
-    const mod = await m.load();
-    const fn = cmd ? mod[cmd.fn] : mod.run;
-    const summary = await fn(ctx);
-    await finishRun(ctx, 'ok', { summary: typeof summary === 'string' ? summary : undefined });
-    return 'ok';
-  } catch (e) {
-    if (e instanceof CapError) {
-      ctx.note(`stopped: ${e.message}`);
-      await finishRun(ctx, 'capped');
-      return 'capped';
-    }
-    if (e instanceof SpendRefused) {
-      ctx.note(e.message);
-      await finishRun(ctx, 'ok');
-      return 'ok';
-    }
-    console.error(`[${id}]`, e);
-    await finishRun(ctx, 'error', { error: `${e.message}\n${(e.stack || '').split('\n').slice(1, 6).join('\n')}` });
-    await activity(agentId, 'error', e.message);
-    return 'error';
-  }
-}
+const runAgent = (id, opts) => runOne(id, { ...opts, jobDeadline: JOB_DEADLINE });
 
 async function main() {
   const p = await plan();

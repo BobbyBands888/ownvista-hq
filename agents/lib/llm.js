@@ -55,6 +55,13 @@ function bump(model, agent, requests, tokens) {
   }
 }
 
+// Long-lived processes (the Vercel tick) re-read caps and usage from the database at the start of each shift,
+// so usage by the GitHub job and other ticks counts against the same daily caps.
+export function resetUsageCache() {
+  state.caps = null;
+  state.day = null;
+}
+
 export async function usageToday() {
   await loadUsage();
   return Object.fromEntries(state.usage);

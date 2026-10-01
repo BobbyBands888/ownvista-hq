@@ -1,5 +1,5 @@
-// Architect — checks hourly, full review Sundays 7pm ET. Shapes the crew around money.
-//   Hourly: if the Researcher queued a gap no agent covers, design one crew member for it (max one a day).
+// Architect — checks every 30 min (Vercel tick; hourly in the job), full review Sundays 7pm ET. Shapes the crew around money.
+//   Between reviews: if the Researcher queued a gap no agent covers, design one crew member for it (max one per 4 hours).
 //   1. Retires crew members that cost more than they bring (no accepted outputs or revenue for 4 weeks)
 //   2. Clones a PROVEN agent where a paying lane is bottlenecked (its runs keep hitting caps, or work piles up)
 //   3. Designs one brand-new kind of crew member aimed at the lane closest to money
@@ -29,7 +29,7 @@ export async function run(ctx) {
   const queue = await kvGet('architect_queue', []);
   const lastNew = crew.filter((c) => c.kind === 'new').map((c) => c.created_at).sort().pop() || null;
   if (!weekly && !shouldDesign({ weekly, queueLen: queue.length, lastDesignAt: lastNew, now })) {
-    return queue.length ? `${queue.length} gap(s) queued; next design after the daily limit` : 'no new gaps';
+    return queue.length ? `${queue.length} gap(s) queued; next design after the 4-hour gap` : 'no new gaps';
   }
   const out = [];
   if (!weekly) {
@@ -143,9 +143,11 @@ export function isWeeklySlot(now = new Date()) {
   return t.weekday === 0 && t.hour >= 19;
 }
 
-// Between weekly reviews, design only for queued gaps, at most one new crew member per 24 hours.
-export function shouldDesign({ weekly, queueLen, lastDesignAt, now = new Date() }) {
+// Between weekly reviews, design for queued gaps as they arrive: at most one new crew member every
+// DESIGN_GAP_HOURS (Bobby, Oct 1: deploy new agents without waiting). Was once a day.
+export const DESIGN_GAP_HOURS = 4;
+export function shouldDesign({ weekly, queueLen, lastDesignAt, now = new Date(), gapHours = DESIGN_GAP_HOURS }) {
   if (weekly) return true;
   if (!queueLen) return false;
-  return !lastDesignAt || now - new Date(lastDesignAt) >= 24 * 3600000;
+  return !lastDesignAt || now - new Date(lastDesignAt) >= gapHours * 3600000;
 }

@@ -25,6 +25,9 @@ on:
           - paper_trader
           - economist
           - architect
+          - autopilot
+          - product_scout
+          - dropship_scout
           - trader_probe
           - villa_outreach
           - villa_studio
@@ -73,6 +76,7 @@ jobs:
       CF_ACCOUNT_ID: ${{ secrets.CF_ACCOUNT_ID }}
       CF_API_TOKEN: ${{ secrets.CF_API_TOKEN }}
       ITCH_API_KEY: ${{ secrets.ITCH_API_KEY }}
+      ETSY_API_KEY: ${{ secrets.ETSY_API_KEY }}
     steps:
       - name: Start clock
         run: echo "JOB_STARTED_AT=$(date +%s)" >> "$GITHUB_ENV"

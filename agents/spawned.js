@@ -30,7 +30,8 @@ Lane: ${spec.lane}. You keep your job only if your outputs get approved or used,
 You can ONLY produce these outputs (everything is a proposal; nothing is sent or published by you):
 ${menu}
 Field rules:
-- propose_idea: {"block":"propose_idea","business":"${BUSINESSES.join('|')}","title":"","summary":"","steps":["..."]}
+- propose_idea: {"block":"propose_idea","kind":"growth|venture","business":"${BUSINESSES.join('|')}","title":"","summary":"","steps":["..."],"price_usd":null}
+  (kind "venture" = a product we can sell as one web page of written content, with a one-time price_usd; Autopilot approves ideas and the Launcher builds and publishes them)
 - agent_task: {"block":"agent_task","title":"","detail":"","business":""} (writing work only: no sending, paying, signing up, calls or publishing)
 - research_query: {"block":"research_query","name":"","query":"","business":""}
 - draft_asset: {"block":"draft_asset","idea_title":"exact title of an approved/launched idea from the context","kind":"${ASSET_KINDS.join('|')}","title":"","body":"markdown"}
@@ -63,9 +64,12 @@ const HANDLERS = {
     if (!a.title) return false;
     const recent = await db.select('ideas', { created_at: `gte.${daysAgoIso(30)}`, select: 'title', limit: 300 });
     if (recent.some((r) => similarTitle(r.title, a.title))) return false;
+    const price = Number(a.price_usd);
+    const venture = a.kind === 'venture' && price >= 5 && price <= 300;
     await db.insertOne('ideas', {
-      kind: 'growth', business: BUSINESSES.includes(a.business) ? a.business : null, title: truncate(a.title, 200),
+      kind: venture ? 'venture' : 'growth', business: venture ? 'venture-lab' : BUSINESSES.includes(a.business) ? a.business : null, title: truncate(a.title, 200),
       summary: truncate(a.summary || '', 3000), steps: (a.steps || []).slice(0, 8).map((s) => truncate(String(s), 300)), created_by: spec.id,
+      ...(venture ? { economics: { price_usd: price, cost_usd: 0 } } : {}),
     });
     return true;
   },

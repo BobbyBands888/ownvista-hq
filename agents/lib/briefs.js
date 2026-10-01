@@ -57,6 +57,7 @@ JSON only: {"routes":[{"i":0,"agents":["id"],"note":"what to do with it"}],"gaps
 
 // Latest briefs for an agent as a prompt block ('' when none). Cached for the rest of the job.
 const cache = new Map();
+export const clearBriefCache = () => cache.clear();
 export async function briefsFor(agent) {
   if (!agent || NO_BRIEFS.has(agent)) return '';
   if (cache.has(agent)) return cache.get(agent);

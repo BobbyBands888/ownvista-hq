@@ -3,7 +3,7 @@ import { sb, q, count, esc, ago, when, money, pct, nf, badge, statusTone, spark,
 // How long an agent may go without a run before it counts as unhealthy (hours).
 const EXPECT = {
   villa_outreach: 'day', operator: 2.5, builder: 2.5,
-  villa_studio: 'work', researcher: 7, strategist: 26, analyst: 26, learner: 2.5, scout: 100, judge: 8 * 24,
+  villa_studio: 'work', researcher: 1.5, autopilot: 2.5, product_scout: 4, dropship_scout: 5, strategist: 26, analyst: 26, learner: 2.5, scout: 100, judge: 8 * 24,
 };
 
 function health(a) {

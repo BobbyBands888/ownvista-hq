@@ -71,5 +71,16 @@
         }
       ]
     }
-  ]
+  ],
+  "crons": [
+    {
+      "path": "/api/tick",
+      "schedule": "*/5 * * * *"
+    }
+  ],
+  "functions": {
+    "api/tick.js": {
+      "maxDuration": 300
+    }
+  }
 }

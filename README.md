@@ -18,7 +18,7 @@ Setup: **[docs/SETUP.md](docs/SETUP.md)**.
 | Villa Outreach | hourly 6am–11pm | Zoho inbox (bounces, unsubscribes, complaints, replies), Stripe payments, follow-ups, first emails, prospect discovery |
 | Operator | hourly, 24/7 | Gmail → drafts in the thread (never sends), flags money/contract/legal-tax/complaint/press/pricing, records what Bobby sent, works agent tasks, builds growth-idea assets |
 | Villa Studio | hourly when an order is in production | photo pick (vision) → MiniMax-H3 768P clips → vision QA (≤2 retries/clip) → 2K regeneration for paid → ffmpeg film → review → delivery |
-| Researcher (+ Hunter) | hourly, 24/7 | public feeds + approved searches → relevant knowledge (business tags, usefulness 1–5); retires useless sources; Hunter extracts demand signals; **routes useful findings to the agents that can use them** (briefs, added to every LLM call as untrusted data) and queues uncovered opportunities for the Architect |
+| Researcher (+ Hunter) | every 5 min, 24/7 (Vercel tick `api/tick.js`; hourly backup in the job) | public feeds + approved searches → relevant knowledge (business tags, usefulness 1–5); retires useless sources; Hunter extracts demand signals; **routes useful findings to the agents that can use them** (briefs, added to every LLM call as untrusted data) and queues uncovered opportunities for the Architect |
 | Strategist | daily 7am | ≤3 growth ideas, ≤3 agent tasks, ≤3 new research queries |
 | Scout | Mon + Thu 8am | ≤3 new businesses scored 0–100 with real source links; launch kit for #1 |
 | Analyst | daily 9am | one-page business cases with unit economics and a $0–25 experiment |
@@ -26,7 +26,10 @@ Setup: **[docs/SETUP.md](docs/SETUP.md)**.
 | Judge | Sundays 6pm | scale / continue / kill per running experiment, with numbers |
 | Learner | hourly, 24/7 (grades the day at 11pm) | edits + feedback → playbook rules (dedupe, consolidate past 40, version history), grades drafts, self-review, daily metrics |
 | Economist | daily 11pm | P&L per agent (revenue share − shadow cost), runway vs real bills, weekly survival pressure per lane, writes the budgets agents already obey (token shares, image cap, minutes per run), closes crew probation |
-| Architect | hourly gap check; full review Sundays 7pm | retires crew that doesn't pay, clones a proven agent where an earning lane is bottlenecked, designs new crew (data, not code) for gaps the Researcher found (max one a day) — all deploy automatically on probation |
+| Autopilot | every 15 min (tick) | approves new ideas on Bobby's behalf (his Oct 1 call) so Builder → Launcher take them live; skips brands/IP, failed copy checks, MA real estate, Villa Cinema; max 6/day; pause on the Radar page |
+| Product Scout | hourly (tick) | Etsy (official API, `ETSY_API_KEY`), itch.io and Product Hunt feeds + research → original text products straight to Autopilot; physical/graphic ones to the Radar |
+| Dropship Scout | every 90 min (tick) | trending physical products scored on margin, shipping, saturation → Radar; never lists, buys or contacts suppliers |
+| Architect | every 30 min gap check (tick); full review Sundays 7pm | retires crew that doesn't pay, clones a proven agent where an earning lane is bottlenecked, designs new crew (data, not code) for gaps the Researcher found (max one per 4 hours, crew up to 8) — all deploy automatically on probation |
 
 The router runs every due agent inside one job and catches up after delayed or dropped GitHub schedule runs.
 Manual runs: Actions → Ownvista HQ → Run workflow → pick an agent, `villa_preflight`, `villa_test_email`,
@@ -44,6 +47,8 @@ Manual runs: Actions → Ownvista HQ → Run workflow → pick an agent, `villa_
 | No other spending, no accounts, no publishing | no code paths exist; paid-API grep test; experiments needing money or accounts go to Needs you |
 | No phone-call offers, no Nashville Buys vendor pricing, no legal/tax/RE advice, businesses never cross-mentioned | `checkCopy()` in `agents/lib/guard.js` on every draft/asset/email, plus the playbook |
 | Prompt-injection defense | every system prompt starts with `systemPrompt()`; all email/web text is wrapped by `untrusted()` |
+| Autopilot approves ideas, nothing else | `agents/lib/autopilot.js` only flips idea status (IP + copy + license checks, daily cap); `test/autopilot.test.js` |
+| Scouts read only: Etsy via its official API, everything else via robots-checked feeds | `agents/lib/etsy.js`, `fetchFeed`; `test/autopilot.test.js` |
 | Economy moves effort, never permissions | `agents/economist.js` writes budgets only; protected agents (Operator, Learner, Launcher, Villa Outreach, Economist, Architect, Paper Trader) never drop below base; no shutdowns while total revenue is $0 |
 | Architect crew can't send, spend, publish, sign up or trade | crew are rows in `crew_specs`: clones run an existing module, new ones run `agents/spawned.js` (5 proposal-only blocks); `validateSpec()` + `test/economy.test.js` run before every job; 14-day probation, Stop button on the Economy page |
 | robots.txt, public pages only | `agents/lib/robots.js` checks before every fetch (RFC 9309) |

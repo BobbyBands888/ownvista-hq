@@ -36,6 +36,9 @@ const CREW = {
   learner:        { room: 'library', desk: [240, 250], color: '#c9a2ff' },
   launcher:       { room: 'deck',    desk: [205, 150], color: '#5eead4' },
   asset_studio:   { room: 'shop',    desk: [105, 238], color: '#f472b6' },
+  product_scout:  { room: 'lab',     desk: [80, 75],   color: '#22d3ee' },
+  dropship_scout: { room: 'lab',     desk: [140, 75],  color: '#fb923c' },
+  autopilot:      { room: 'deck',    desk: [245, 175], color: '#facc15' },
 };
 const DECK_SPOTS = [[200, 140], [240, 140], [280, 140], [200, 170], [280, 170]];
 

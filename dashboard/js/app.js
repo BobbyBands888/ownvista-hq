@@ -8,6 +8,7 @@ const VIEWS = [
   ['email', 'Email'],
   ['economy', 'Economy'],
   ['shop', 'Shop'],
+  ['radar', 'Radar'],
   ['villa', 'Villa Cinema'],
   ['lab', 'Venture Lab'],
   ['trader', 'Trader'],

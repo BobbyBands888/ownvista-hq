@@ -14,7 +14,7 @@ export const CLONABLE = ['builder', 'launcher', 'asset_studio', 'researcher', 'a
 // The only things a new crew member can do. Every one writes a PROPOSAL row that an existing,
 // guarded pipeline (or Bobby) acts on. None sends, spends, publishes, signs up or trades.
 export const BLOCKS = {
-  propose_idea: { label: 'Propose a growth idea (goes to Ideas for approval)', perRun: 1, perWeek: 3 },
+  propose_idea: { label: 'Propose a growth idea or a sellable product (Autopilot approves it; products go live via the Launcher)', perRun: 1, perWeek: 3 },
   agent_task: { label: 'Create a writing task for the Operator', perRun: 2, perWeek: 6 },
   research_query: { label: 'Suggest a research search (paused until search is approved)', perRun: 2, perWeek: 4 },
   draft_asset: { label: 'Draft copy for a launched/approved idea; Bobby reviews it in Needs you (never published by itself)', perRun: 1, perWeek: 3 },
@@ -27,7 +27,7 @@ export const READS = ['ledger', 'launches', 'asset_packs', 'knowledge', 'ideas',
 export const ASSET_KINDS = ['sales_copy_variant', 'outreach_draft', 'seo_article', 'listing_copy', 'faq', 'social_post'];
 
 export const LIMITS = {
-  max_crew: 4, // probation + active, all kinds
+  max_crew: 8, // probation + active, all kinds (was 4; raised Oct 1 for more revenue lanes)
   max_clones_per_base: 2,
   probation_days: 14,
   probation_tokens: 8000, // per day
