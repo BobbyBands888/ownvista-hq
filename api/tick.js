@@ -10,6 +10,29 @@ import { loadCrew } from '../agents/router.js';
 import { resetUsageCache } from '../agents/lib/llm.js';
 import { clearBriefCache } from '../agents/lib/briefs.js';
 
+// Nashville Buys runs on Supabase's Free plan (since Oct 1, 2026), which pauses a project after 7 days without API
+// activity. One read a day keeps it awake. The publishable key is public by design (it ships in the site's own code).
+const KEEP_AWAKE = [{
+  name: 'nashville-buys',
+  url: 'https://xyxtwzsesvjowzyjaeyx.supabase.co/rest/v1/public_listings?select=id&limit=1',
+  key: 'sb_publishable_RY7ufGi_jwQUqmfhs-4GRA_BnG1cjKe',
+}];
+async function keepAwake() {
+  const last = await kvGet('keep_awake', {}).catch(() => ({}));
+  const out = { ...last };
+  for (const p of KEEP_AWAKE) {
+    if (last[p.name]?.at && Date.now() - Date.parse(last[p.name].at) < 20 * 3600000) continue;
+    try {
+      const res = await fetch(p.url, { headers: { apikey: p.key }, signal: AbortSignal.timeout(15000) });
+      out[p.name] = { at: new Date().toISOString(), status: res.status };
+    } catch (e) {
+      out[p.name] = { at: new Date().toISOString(), status: 0, error: String(e.message).slice(0, 120) };
+    }
+  }
+  await kvSet('keep_awake', out).catch(() => {});
+  return out;
+}
+
 export const INTERVALS = { autopilot: 15, researcher: 5, product_scout: 60, dropship_scout: 90, architect: 30 };
 const LIGHT = ['autopilot'];
 const BUDGET_MS = 270000;
@@ -41,6 +64,7 @@ export async function GET(request) {
   const results = {};
   resetUsageCache();
   clearBriefCache();
+  const awake = await keepAwake().catch(() => null);
   try {
     const intervals = { ...INTERVALS, ...(await kvGet('tick_rules', {})) };
     const since = {};
@@ -57,5 +81,5 @@ export async function GET(request) {
   } finally {
     await kvSet('tick_lock', { until: 0, at: new Date().toISOString(), last: results }).catch(() => {});
   }
-  return json({ ok: true, ms: Date.now() - start, results });
+  return json({ ok: true, ms: Date.now() - start, results, awake });
 }
