@@ -45,20 +45,19 @@ export function vetKit(raw = {}, target) {
     return true;
   };
   const s = (v, n) => truncate(String(v || '').trim(), n);
+  // Asset packs: the AI disclosure is added in code when the model leaves it out, so it is always there.
+  const AI_LINE = 'Note: these images are AI-generated (FLUX.1), then checked and cleaned up.';
+  const withAi = (text) => (target.kind !== 'asset_pack' || /\bAI[- ]?(generated|made|assisted)\b/i.test(text) ? text : `${text}\n\n${AI_LINE}`);
   const kit = {};
 
   const L = raw.listing || {};
   const listing = { title: s(L.title, 80), short: s(L.short, 140), tags: (L.tags || []).map((x) => s(x, 30).toLowerCase()).filter(Boolean).slice(0, 10), description: withAi(s(L.description, 3000)), price_note: s(L.price_note, 300) };
-  // Asset packs: the AI disclosure is added in code when the model leaves it out, so it is always there.
-  const AI_LINE = 'Note: these images are AI-generated (FLUX.1), then checked and cleaned up.';
-  const withAi = (text) => (target.kind !== 'asset_pack' || /\bAI[- ]?(generated|made|assisted)\b/i.test(text) ? text : `${text}\n\n${AI_LINE}`);
-  const aiNote = () => true;
-  if (aiNote('listing', listing.description) && ok('listing', [listing.title, listing.short, listing.tags.join(' '), listing.description, listing.price_note].join('\n'))) kit.listing = listing;
+  if (ok('listing', [listing.title, listing.short, listing.tags.join(' '), listing.description, listing.price_note].join('\n'))) kit.listing = listing;
 
   kit.pins = (raw.pins || []).slice(0, 3).map((p) => ({ title: s(p.title, 100), description: s(p.description, 500), board: s(p.board, 50) }))
     .filter((p, i) => p.title && ok(`pin ${i + 1}`, `${p.title}\n${p.description}\n${p.board}`));
   kit.reddit = (raw.reddit || []).slice(0, 2).map((r) => ({ subreddit: s(r.subreddit, 40).replace(/^\/?r\//i, ''), title: s(r.title, 200), body: withAi(s(r.body, 2500)), rule_check: s(r.rule_check, 300) }))
-    .filter((r, i) => r.subreddit && r.title && aiNote(`reddit ${i + 1}`, r.body) && ok(`reddit ${i + 1}`, `${r.title}\n${r.body}`));
+    .filter((r, i) => r.subreddit && r.title && ok(`reddit ${i + 1}`, `${r.title}\n${r.body}`));
   const seo = { title: s(raw.seo?.title, 70), description: s(raw.seo?.description, 160) };
   if (ok('search', `${seo.title}\n${seo.description}`)) kit.seo = seo;
   kit.hooks = (raw.hooks || []).slice(0, 3).map((h) => s(h, 160)).filter((h, i) => ok(`hook ${i + 1}`, h));
