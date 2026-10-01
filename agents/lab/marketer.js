@@ -15,11 +15,13 @@ import { htmlToText, truncate } from '../lib/text.js';
 export const KIT_KEY = 'marketing_kits';
 const SITE = 'https://www.levelingclips.com';
 const TREND_FEED = 'https://itch.io/game-assets/top-sellers.xml';
+export const KIT_VERSION = 2; // bump to rewrite every kit with new rules
+const HANDMADE = /\b(hand[- ]?(painted|drawn|crafted|made|illustrated)|handmade|artist[- ]made|drawn by (an? )?(artist|illustrator)|by a human)\b/i;
 const RULES = async () => ({ per_run: 2, refresh_days: 7, ...(await kvGet('marketer_rules', {})) });
 
 // Pure: which targets need a kit now (missing, or older than refresh_days). Oldest first.
 export function pickTargets(targets, kits = {}, { per_run = 2, refresh_days = 7, now = Date.now() } = {}) {
-  const stale = (k) => !k || now - Date.parse(k.made_at || 0) > refresh_days * 86400000;
+  const stale = (k) => !k || (k.v || 1) < KIT_VERSION || now - Date.parse(k.made_at || 0) > refresh_days * 86400000;
   return targets
     .filter((t) => stale(kits[t.key]))
     .sort((a, b) => Date.parse(kits[a.key]?.made_at || 0) - Date.parse(kits[b.key]?.made_at || 0))
@@ -37,6 +39,7 @@ export function vetKit(raw = {}, target) {
     const problems = [...checkCopy(t, { allowLinks, prices })];
     const re = realEstateRisk(t); if (re) problems.push(`real estate ("${re}")`);
     const ip = ipRisk(t); if (ip) problems.push(`brand/character ("${ip}")`);
+    if (target.kind === 'asset_pack' && HANDMADE.test(t)) problems.push('calls AI-generated art hand-made');
     if (/\b(\d+\s*\+?\s*(happy )?(customers|buyers|downloads|sales)|best[- ]?selling|#1|five[- ]star|5[- ]star)\b/i.test(t)) problems.push('claims sales/reviews we do not have');
     if (problems.length) { dropped.push(`${label}: ${problems.join('; ')}`); return false; }
     return true;
@@ -46,12 +49,17 @@ export function vetKit(raw = {}, target) {
 
   const L = raw.listing || {};
   const listing = { title: s(L.title, 80), short: s(L.short, 140), tags: (L.tags || []).map((x) => s(x, 30).toLowerCase()).filter(Boolean).slice(0, 10), description: s(L.description, 3000), price_note: s(L.price_note, 300) };
-  if (ok('listing', [listing.title, listing.short, listing.tags.join(' '), listing.description, listing.price_note].join('\n'))) kit.listing = listing;
+  const aiNote = (label, text) => {
+    if (target.kind !== 'asset_pack' || /\bAI[- ]?(generated|made|assisted)\b/i.test(text)) return true;
+    dropped.push(`${label}: missing the AI-generated disclosure`);
+    return false;
+  };
+  if (aiNote('listing', listing.description) && ok('listing', [listing.title, listing.short, listing.tags.join(' '), listing.description, listing.price_note].join('\n'))) kit.listing = listing;
 
   kit.pins = (raw.pins || []).slice(0, 3).map((p) => ({ title: s(p.title, 100), description: s(p.description, 500), board: s(p.board, 50) }))
     .filter((p, i) => p.title && ok(`pin ${i + 1}`, `${p.title}\n${p.description}\n${p.board}`));
   kit.reddit = (raw.reddit || []).slice(0, 2).map((r) => ({ subreddit: s(r.subreddit, 40).replace(/^\/?r\//i, ''), title: s(r.title, 200), body: s(r.body, 2500), rule_check: s(r.rule_check, 300) }))
-    .filter((r, i) => r.subreddit && r.title && ok(`reddit ${i + 1}`, `${r.title}\n${r.body}`));
+    .filter((r, i) => r.subreddit && r.title && aiNote(`reddit ${i + 1}`, r.body) && ok(`reddit ${i + 1}`, `${r.title}\n${r.body}`));
   const seo = { title: s(raw.seo?.title, 70), description: s(raw.seo?.description, 160) };
   if (ok('search', `${seo.title}\n${seo.description}`)) kit.seo = seo;
   kit.hooks = (raw.hooks || []).slice(0, 3).map((h) => s(h, 160)).filter((h, i) => ok(`hook ${i + 1}`, h));
@@ -97,7 +105,10 @@ Write a DRAFT marketing kit for one product. Bobby reviews and posts it himself;
 Honest only: describe exactly what the buyer gets. No discounts, coupons, previews, samples, free trials, guarantees,
 deadlines or scarcity. No invented reviews, testimonials, sales counts, "best-selling" or rankings. No phone calls.
 Only link to the product's own page (${t.url || 'none yet: use no links'}). Price is $${t.price}; mention no other price.
-No brand, character, team or celebrity names. ${t.kind === 'asset_pack' ? 'Keep the AI-generated graphics disclosure in the listing description.' : ''}
+No brand, character, team or celebrity names.${t.kind === 'asset_pack' ? `
+These images are AI-generated. NEVER call them hand-painted, hand-drawn, handmade or artist-made ("painterly style" is fine).
+Say "AI-generated" plainly in the listing description and in every Reddit body. Many game-dev subreddits ban AI art
+or its promotion: only pick subreddits that allow it, and put that in rule_check.` : ''}
 listing: the marketplace listing (${t.kind === 'asset_pack' ? 'itch.io' : 'Gumroad/itch-style'}): title under 80 chars, short one-liner,
 up to 10 lowercase search tags buyers actually type, description in plain text with short sections (under 1200 characters),
 price_note (one sentence: why this price, from the facts).
@@ -123,7 +134,7 @@ JSON only: {"listing":{"title":"","short":"","tags":[""],"description":"","price
       const { kit, dropped } = vetKit(json || {}, t);
       const pieces = (kit.listing ? 1 : 0) + kit.pins.length + kit.reddit.length + (kit.seo ? 1 : 0) + kit.hooks.length;
       if (!pieces) { out.push(`"${truncate(t.title, 40)}": nothing passed checks`); continue; }
-      kits[t.key] = { ...kit, kind: t.kind, title: t.title, url: t.url, dropped, made_at: new Date().toISOString() };
+      kits[t.key] = { ...kit, v: KIT_VERSION, kind: t.kind, title: t.title, url: t.url, dropped, made_at: new Date().toISOString() };
       await kvSet(KIT_KEY, kits);
       ctx.log('marketing', `Marketer: draft kit for "${truncate(t.title, 70)}" (${pieces} pieces${dropped.length ? `, ${dropped.length} dropped by checks` : ''}) on the Shop page`);
       out.push(`kit "${truncate(t.title, 40)}" ${pieces} pieces${dropped.length ? ` (${dropped.length} dropped)` : ''}`);

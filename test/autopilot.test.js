@@ -82,3 +82,22 @@ test('Marketer only drafts: it never sends, posts, publishes, spends or fetches 
   const kits = { a: { made_at: '2026-09-30T12:00:00Z' }, b: { made_at: '2026-09-20T12:00:00Z' } };
   assert.deepEqual(pickTargets(targets, kits, { now, per_run: 2, refresh_days: 7 }).map((t) => t.key), ['c', 'b']);
 });
+
+test('Marketer never calls AI art hand-made and always discloses AI on asset packs', async () => {
+  const { vetKit, pickTargets, KIT_VERSION } = await import('../agents/lab/marketer.js');
+  const pack = { kind: 'asset_pack', price: 4, itch_url: 'https://ownvista.itch.io/p' };
+  const { kit } = vetKit({
+    listing: { title: 'Potion Icons', short: 'x', tags: [], description: 'Sixteen AI-generated potion icons.', price_note: '' },
+    pins: [{ title: 'Hand-painted potions', description: 'x', board: 'b' }, { title: 'Potion icons', description: 'Painterly style', board: 'b' }],
+    reddit: [{ subreddit: 'gamedev', title: 'Tip', body: 'Consistent icons help.' }, { subreddit: 'aigamedev', title: 'Tip', body: 'AI-generated set, consistent style.' }],
+    hooks: ['Hand-drawn alchemy', 'Sixteen potions'],
+  }, pack);
+  assert.ok(kit.listing);
+  assert.equal(kit.pins.length, 1);
+  assert.deepEqual(kit.reddit.map((r) => r.subreddit), ['aigamedev']);
+  assert.deepEqual(kit.hooks, ['Sixteen potions']);
+  assert.equal(vetKit({ listing: { title: 'P', description: 'Sixteen potion icons.' } }, pack).kit.listing, undefined);
+  const fresh = new Date().toISOString();
+  assert.equal(pickTargets([{ key: 'a' }], { a: { made_at: fresh } }).length, 1, 'old-version kits are rewritten');
+  assert.equal(pickTargets([{ key: 'a' }], { a: { made_at: fresh, v: KIT_VERSION } }).length, 0);
+});
