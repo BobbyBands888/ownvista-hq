@@ -66,7 +66,11 @@ async function recentRuns(agent) {
 export function isDue(s, now, runs) {
   const okRuns = runs.filter((r) => r.status === 'ok' || r.status === 'capped');
   const lastOk = okRuns[0] ? new Date(okRuns[0].started_at) : null;
-  if (s.type === 'hourly') return s.hours.includes(et(now).hour);
+  if (s.type === 'hourly') {
+    // Two triggers in the same hour (GitHub's schedule + the Supabase backup) must not run an agent twice.
+    if (lastOk) { const a = et(lastOk), b = et(now); if (a.date === b.date && a.hour === b.hour) return false; }
+    return s.hours.includes(et(now).hour);
+  }
   if (s.type === 'interval') return !lastOk || now - lastOk >= s.everyHours * 3600000 - 20 * 60000;
   const slot = lastSlot(s, now);
   if (!slot || now - slot >= GRACE_MS) return false;

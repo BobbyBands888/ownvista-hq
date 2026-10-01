@@ -134,3 +134,10 @@ test('JSON extraction from model output', () => {
   assert.deepEqual(parseJson('Sure! {"a":[1,2]} done'), { a: [1, 2] });
   assert.throws(() => parseJson('no json'), /valid JSON/);
 });
+
+test('Hourly agents run once per hour even if triggered twice', () => {
+  const at = new Date('2026-10-01T14:37:00Z');
+  assert.ok(!isDue(S('operator'), at, [{ status: 'ok', started_at: '2026-10-01T14:20:00Z' }]), 'already ran this hour');
+  assert.ok(isDue(S('operator'), at, [{ status: 'ok', started_at: '2026-10-01T13:20:00Z' }]), 'ran last hour');
+  assert.ok(isDue(S('operator'), at, [{ status: 'error', started_at: '2026-10-01T14:20:00Z' }]), 'retry after an error');
+});
