@@ -49,9 +49,11 @@ export async function run(ctx) {
   if (!state.adjusted_on || Date.parse(today) - Date.parse(state.adjusted_on) >= 7 * 86400000) {
     lanes = survivalStep({ prev: lanes, revenue30: rev30, focus, daysOld, rules });
     adjusted = true;
-  } else if (focus && lanes[focus] && !['earning', 'focus'].includes(lanes[focus].state)) {
-    // The focus can move mid-week (e.g. an offer just went live); boost it right away.
-    lanes = { ...lanes, [focus]: { ...lanes[focus], factor: rules.focus_factor, state: 'focus' } };
+  } else if (focus !== (state.focus ?? null)) {
+    // The focus can move mid-week (e.g. an offer just went live): boost the new one, return the old one to normal.
+    lanes = { ...lanes };
+    for (const [id, l] of Object.entries(lanes)) if (l.state === 'focus' && id !== focus) lanes[id] = { ...l, factor: 1, state: 'grace' };
+    if (focus && lanes[focus]?.state !== 'earning') lanes[focus] = { ...(lanes[focus] || { zero_weeks: 0 }), factor: rules.focus_factor, state: 'focus' };
   }
 
   // 4. Budgets.

@@ -218,7 +218,8 @@ export async function focusSignals() {
     kvGet('vc_enabled', false),
     kvGet('vc_paused', false),
     kvGet('vc_footer_address', ''),
-    db.count('vc_messages', { direction: 'eq.in', created_at: `gte.${daysAgoIso(14)}` }).catch(() => 0),
+    // Replies from real prospects only (not Zoho/Carrd/Netlify system mail to the Villa inbox).
+    db.count('vc_messages', { direction: 'eq.in', prospect_id: 'not.is.null', created_at: `gte.${daysAgoIso(14)}` }).catch(() => 0),
   ]);
   return {
     offers: { live_offers: offers },
