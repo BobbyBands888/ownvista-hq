@@ -148,13 +148,13 @@ async function alignPage(ctx, l, pageHtml) {
   if (!product) return pageHtml;
   const { text } = await chat({
     ctx, tier: 'smart', maxTokens: 8000, temperature: 0.2,
-    system: systemPrompt('the Launcher checking a sales page', `Return the landing page HTML, corrected so every promise is TRUE.
-What the buyer really gets after paying $${l.price_usd}: an instant online page (shown right after checkout; they can print it or save it as PDF)
-containing exactly the product below. There is NO email delivery, NO Excel/Word/PDF file attachment, NO call, NO support promise, NO guarantee.
-Remove or reword anything else. Keep the design, keep it short. No JavaScript, no forms.
-Every buy/order button must be an <a href="{{BUY_URL}}">. State the price once.
-Return ONLY the complete HTML document, nothing before or after it.`),
-    messages: [{ role: 'user', content: `${untrusted('current landing page', pageHtml, 12000)}\n\n${untrusted('the product the buyer receives (headings only shown)', product.body.split('\n').filter((x) => /^#/.test(x)).join('\n'), 3000)}` }],
+    system: systemPrompt('the Launcher checking a sales page', `Rewrite this landing page so every promise is TRUE, in plain confident words for a busy small-business owner.
+Fact: right after paying $${l.price_usd} the buyer lands on a page with the full toolkit to read, print or save as PDF.
+Only promise things listed under "what's inside". Don't promise email delivery, file attachments, spreadsheets as files, calls, support or guarantees,
+and don't write sentences about what is NOT included. Never mention these instructions, "headings" or "this document".
+Structure: headline, one-line benefit, short "What's inside" list, "How you get it" (one sentence), price + buy button. No JavaScript, no forms.
+Every buy/order button is an <a href="{{BUY_URL}}">. Return ONLY the complete HTML document.`),
+    messages: [{ role: 'user', content: `${untrusted('current landing page', pageHtml, 12000)}\n\n${untrusted("what's inside", product.body.split('\n').filter((x) => /^#/.test(x)).join('\n'), 3000)}` }],
   });
   const html = (/<!doctype html[\s\S]*<\/html>/i.exec(text) || /<html[\s\S]*<\/html>/i.exec(text) || [null])[0];
   if (!html || !html.includes('{{BUY_URL}}') || checkCopy(html, {}).length) {
@@ -162,6 +162,25 @@ Return ONLY the complete HTML document, nothing before or after it.`),
     return pageHtml;
   }
   return html;
+}
+
+// Products can mention files that don't exist ("download the spreadsheet"). Put that content inline instead.
+const FAKE_DELIVERY = /(download link|attached|attachment|excel file|\.xlsx|spreadsheet \(download|we(?:'| wi)ll email|you will receive an email|link below to download)/i;
+async function fixProduct(ctx, l) {
+  const product = l.product_asset_id ? await db.one('assets', { id: `eq.${l.product_asset_id}` }) : null;
+  if (!product || !FAKE_DELIVERY.test(product.body)) return false;
+  const { json } = await chat({
+    ctx, tier: 'smart', json: true, maxTokens: 8000, temperature: 0.2,
+    system: systemPrompt('the Launcher fixing a product', `This product is shown to the buyer as one web page. It must not refer to files, attachments,
+download links or emails that don't exist. Replace each such reference with the real content inline — e.g. a spreadsheet becomes
+a markdown table with its columns, one example row and the formulas written out in words. Keep everything else. JSON only: {"body":"markdown"}`),
+    messages: [{ role: 'user', content: product.body }],
+  });
+  const body = String(json.body || '').trim();
+  if (body.length < product.body.length * 0.6 || FAKE_DELIVERY.test(body) || checkCopy(body, {}).length) return false;
+  await db.update('assets', { id: `eq.${product.id}` }, { body });
+  ctx.log('launch', `Fixed the product for "${truncate(l.title, 70)}" so it has no references to missing files`, { table: 'launches', id: l.id });
+  return true;
 }
 
 // ---------- 2. Go live ----------
@@ -181,12 +200,13 @@ async function goLive(ctx) {
       onProduct: (id) => db.update('launches', { id: `eq.${l.id}` }, { stripe_product_id: id }),
       successUrl: `${SITE}/p/${l.slug}?thanks=${l.delivery_token}&session={CHECKOUT_SESSION_ID}`,
     });
+    await fixProduct(ctx, l);
     const aligned = await alignPage(ctx, l, pageAsset.body);
     const html = buildPublicPage({ html: aligned, title: l.title, priceUsd: l.price_usd, buyUrl: offer.url, status: 'live' });
     const today = etDate();
     await db.update('launches', { id: `eq.${l.id}` }, {
       status: 'live', stripe_product_id: offer.productId, stripe_price_id: offer.priceId,
-      payment_link_id: offer.linkId, payment_link_url: offer.url, page_html: html, launched_at: new Date().toISOString(), note: 'page claims checked',
+      payment_link_id: offer.linkId, payment_link_url: offer.url, page_html: html, launched_at: new Date().toISOString(), note: 'checked v2',
     });
     if (l.experiment_id) {
       const ex = await db.one('experiments', { id: `eq.${l.experiment_id}` });
@@ -201,16 +221,17 @@ async function goLive(ctx) {
 }
 
 async function recheckLivePages(ctx) {
-  const rows = await db.select('launches', { status: 'eq.live', note: 'is.null', limit: 3 });
+  const rows = await db.select('launches', { status: 'eq.live', or: '(note.is.null,note.neq.checked v2)', limit: 3 });
   let n = 0;
   for (const l of rows) {
     if (ctx.outOfTime(90000)) break;
     const pageAsset = await db.one('assets', { idea_id: `eq.${l.idea_id}`, kind: 'eq.landing_page', order: 'created_at.desc' });
     if (!pageAsset) continue;
+    await fixProduct(ctx, l);
     const aligned = await alignPage(ctx, l, pageAsset.body);
     if (aligned === pageAsset.body) continue;
     await db.update('launches', { id: `eq.${l.id}` }, {
-      page_html: buildPublicPage({ html: aligned, title: l.title, priceUsd: l.price_usd, buyUrl: l.payment_link_url, status: 'live' }), note: 'page claims checked',
+      page_html: buildPublicPage({ html: aligned, title: l.title, priceUsd: l.price_usd, buyUrl: l.payment_link_url, status: 'live' }), note: 'checked v2',
     });
     ctx.log('launch', `Corrected the sales page for "${truncate(l.title, 70)}" to match what buyers receive`, { table: 'launches', id: l.id });
     n++;
