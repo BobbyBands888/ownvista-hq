@@ -81,7 +81,8 @@ function statCard(m, [, name, mode, plain]) {
 
 function hero(s) {
   const byId = Object.fromEntries((s?.metrics || []).map((m) => [m.id, m]));
-  const vals = STATS.map(([id, , mode]) => { const n = byId[id] && latest(byId[id]).now; return n ? (mode === 'flip' ? 100 - n.v : n.v) : null; }).filter((x) => x != null);
+  // Power only counts stats with 5+ data points, so one lucky result can't inflate the level.
+  const vals = STATS.map(([id, , mode]) => { const n = byId[id] && latest(byId[id]).now; return n && n.n >= 5 ? (mode === 'flip' ? 100 - n.v : n.v) : null; }).filter((x) => x != null);
   const power = vals.length ? Math.round(vals.reduce((a, b) => a + b, 0) / vals.length) : 0;
   const level = Math.max(1, Math.floor(power / 10));
   const sum = (id) => (byId[id]?.weeks || []).reduce((a, w) => a + (Number(w.v) || 0), 0);
@@ -90,11 +91,11 @@ function hero(s) {
   const head = tone === 'up' ? 'LEVEL UP!' : tone === 'down' ? 'LOSING XP' : 'TRAINING…';
   return `<div class="gm-top">
       <div class="gm-lvl"><div class="gm-badge gm-px">${level}</div>
-        <div><h2 class="gm-px">HQ BRAIN</h2><div class="gm-sub">Level ${level} · power ${power}/100 (average of the stats below)</div>
+        <div><h2 class="gm-px">HQ BRAIN</h2><div class="gm-sub">Level ${level} · power ${power}/100 (average of stats with 5+ data points)</div>
           <div class="gm-xp" title="${power}%"><span style="width:${power}%"></span></div></div></div>
       <div class="gm-sub">Updated ${ago(s?.at)}${s?.start?.day ? `<br>Save point ${esc(s.start.day)}` : ''}</div>
     </div>
-    <div class="gm-banner ${tone} gm-px">${head}<div class="gm-sub" style="margin-top:6px;font-family:inherit;color:inherit">${esc(s?.verdict || 'No scoreboard yet. It runs daily at 11pm ET.')}</div></div>
+    <div class="gm-banner ${tone} gm-px">${head}<div class="gm-sub" style="margin-top:6px;font-family:system-ui,sans-serif;font-size:13px;color:inherit">${esc(s?.verdict || 'No scoreboard yet. It runs daily at 11pm ET.')}</div></div>
     <div class="gm-grid">${STATS.map((st) => (byId[st[0]] ? statCard(byId[st[0]], st) : '')).join('')}</div>
     <div class="gm-loot">
       <div class="gm-coin"><div class="gm-px" style="font-size:9px">GOLD (8 WKS)</div><div class="big gm-px">$${gold.toFixed(2)}</div><div class="gm-sub">Stripe, itch and KDP royalties</div></div>
