@@ -128,9 +128,10 @@ function backtestSection(bt) {
   const cell = (r) => `<td class="num">${pctS(r.ret)}</td><td class="num">${pctS(r.spy_ret)}</td><td class="num">${pctS(-r.max_dd)}</td>
     <td class="num">${r.all.n}</td><td class="num">${Math.round(r.all.win_rate * 100)}%</td><td class="num">${Number(r.all.avg_r).toFixed(2)}R</td>`;
   const setups = [...new Set(names.flatMap((k) => Object.keys(bt.older[k]?.by_setup || {})))];
-  const tone = bt.verdict?.winner === 'proposed' ? 'ok' : bt.verdict?.winner === 'current' ? '' : 'warn';
+  const win = bt.verdict?.winner;
+  const tone = win && win !== 'current' && bt.configs?.[win] ? 'ok' : '';
   return `<div class="section"><h2>Backtest</h2><div class="card stack">
-    <div>${badge(bt.verdict?.winner === 'proposed' ? 'new rules won' : bt.verdict?.winner === 'current' ? 'current rules won' : 'mixed result', tone)}
+    <div>${badge(win && win !== 'current' && bt.configs?.[win] ? `winner: ${bt.configs[win].label}` : 'current rules kept', tone)}
       <span class="small muted">${esc(bt.universe)} stocks · ran ${ago(bt.ran_at)}</span></div>
     <div class="small">${esc(bt.verdict?.text || '')}</div>
     <table class="table"><thead><tr><th>Period</th><th>Rules</th><th>Return</th><th>SPY</th><th>Worst drop</th><th>Trades</th><th>Wins</th><th>Avg</th></tr></thead><tbody>

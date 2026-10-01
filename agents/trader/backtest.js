@@ -7,21 +7,22 @@
 //  - Long stocks only: no options, no puts, no penny stocks.
 import { stats, setupsFor, sma, round } from './rules.js';
 
+const BASE = {
+  label: 'Current rules',
+  setups: ['breakout', 'pullback', 'momentum_gap', 'oversold_bounce'],
+  risk: 0.02, max_open: 8, max_new_per_day: 3, max_position_pct: 0.20,
+  stop_atr: 1.5, target_atr: 3, trail_atr: null, max_hold: 10,
+  regime: false, uptrend_only: false, min_price: 5, breakout_min_strength: null,
+};
+
+// Round 2 (Oct 1): keep the current setups and change ONE thing at a time, plus one combo.
+// A change only "wins" if it beats the current rules in BOTH periods.
 export const CONFIGS = {
-  current: {
-    label: 'Current rules',
-    setups: ['breakout', 'pullback', 'momentum_gap', 'oversold_bounce'],
-    risk: 0.02, max_open: 8, max_new_per_day: 3, max_position_pct: 0.20,
-    stop_atr: 1.5, target_atr: 3, trail_atr: null, max_hold: 10,
-    regime: false, uptrend_only: false, min_price: 1,
-  },
-  proposed: {
-    label: 'Aggressive, not reckless',
-    setups: ['breakout', 'pullback', 'oversold_bounce'],
-    risk: 0.0125, max_open: 8, max_new_per_day: 3, max_position_pct: 0.20,
-    stop_atr: 2, target_atr: null, trail_atr: 3, max_hold: 40,
-    regime: true, uptrend_only: true, min_price: 10,
-  },
+  current: BASE,
+  trail: { ...BASE, label: '+ trailing stop', target_atr: null, trail_atr: 3, max_hold: 40 },
+  regime: { ...BASE, label: '+ SPY market filter', regime: true },
+  strong_breakout: { ...BASE, label: '+ breakouts only in strong stocks', breakout_min_strength: 0.15 },
+  combo: { ...BASE, label: '+ trailing stop + market filter', target_atr: null, trail_atr: 3, max_hold: 40, regime: true },
 };
 
 const SLIP = 0.0005;
@@ -141,9 +142,10 @@ export function simulate(data, cfg, { from, to, cash: startCash = 10000 }) {
       const st = s.st[j];
       if (!st || !st.atr14 || st.price < cfg.min_price || st.dollar_volume < MIN_DOLLAR_VOLUME) continue;
       if (cfg.uptrend_only && !(s.sma200[j] && st.price > s.sma200[j])) continue;
-      const setup = setupsFor(st).find((x) => cfg.setups.includes(x));
-      if (!setup) continue;
       const strength = j >= 63 ? st.price / s.bars[j - 63].close - 1 : 0;
+      const setup = setupsFor(st).find((x) => cfg.setups.includes(x)
+        && !(x === 'breakout' && cfg.breakout_min_strength != null && strength < cfg.breakout_min_strength));
+      if (!setup) continue;
       cands.push({ sym, setup, close: st.price, atr: st.atr14, strength, mult });
     }
     cands.sort((a, b) => b.strength - a.strength);
@@ -203,26 +205,25 @@ export function windows(data, recentDays = 252, warmup = 200) {
 }
 
 // Plain-English verdict. It only reports; it never changes the live rules.
-export function verdict(res) {
-  const score = (r) => r.ret - 0.5 * r.max_dd; // return, penalized for deep drops
+// A change wins only if it beats the current rules in BOTH periods (return, penalized for deep drops).
+export const score = (r) => r.ret - 0.5 * r.max_dd;
+export function verdict(res, configs = CONFIGS) {
   const o = res.older, r = res.recent;
-  const pOld = score(o.proposed) > score(o.current);
-  const pNew = score(r.proposed) >= score(r.current);
-  const beatsSpy = (x) => x.spy_ret != null && x.ret > x.spy_ret;
-  let winner = 'mixed';
-  if (pOld && pNew) winner = 'proposed';
-  else if (!pOld && !pNew) winner = 'current';
+  const keys = Object.keys(configs).filter((k) => k !== 'current' && o[k] && r[k]);
+  const winners = keys.filter((k) => score(o[k]) > score(o.current) && score(r[k]) > score(r.current))
+    .sort((a, b) => score(o[b]) - score(o[a]));
+  const winner = winners[0] || 'current';
   const lines = [];
-  if (winner === 'proposed') lines.push('The new rules beat the current ones on the older years AND held up on the last 12 months they never saw.');
-  else if (winner === 'current') lines.push('The current rules beat the new ones in both periods. Keep them and look at the per-setup numbers instead.');
-  else lines.push('Mixed: the winner on the older years did not hold up on the last 12 months. Not strong enough evidence to switch.');
-  for (const k of ['current', 'proposed']) {
-    lines.push(`${CONFIGS[k].label}: last 12 months ${beatsSpy(r[k]) ? 'beat' : 'did not beat'} just holding SPY.`);
-  }
-  const losers = Object.entries(o[winner === 'current' ? 'current' : 'proposed'].by_setup)
-    .filter(([, g]) => g.n >= 20 && g.avg_r < 0).map(([s]) => s);
+  if (winner === 'current') lines.push('No single change beat the current rules in both periods. Keep the current rules.');
+  else lines.push(`Best change: "${configs[winner].label}". It beat the current rules on the older years AND on the last 12 months it never saw.`);
+  if (winners.length > 1) lines.push(`Also beat them in both periods: ${winners.slice(1).map((k) => `"${configs[k].label}"`).join(', ')}.`);
+  const lost = keys.filter((k) => !winners.includes(k));
+  if (lost.length) lines.push(`Did not hold up: ${lost.map((k) => `"${configs[k].label}"`).join(', ')}.`);
+  const w = r[winner];
+  if (w.spy_ret != null) lines.push(`The ${winner === 'current' ? 'current rules' : 'winner'} ${w.ret > w.spy_ret ? 'beat' : 'did not beat'} just holding SPY over the last 12 months.`);
+  const losers = Object.entries(o[winner].by_setup).filter(([, g]) => g.n >= 20 && g.avg_r < 0).map(([k]) => k);
   if (losers.length) lines.push(`Setups that lost money over the older years: ${losers.join(', ')}.`);
-  return { winner, text: lines.join(' ') };
+  return { winner, winners, text: lines.join(' ') };
 }
 
 export function runAll(data, configs = CONFIGS) {
@@ -231,5 +232,5 @@ export function runAll(data, configs = CONFIGS) {
   for (const [name, win] of Object.entries(w)) {
     for (const [k, cfg] of Object.entries(configs)) out[name][k] = simulate(data, cfg, win);
   }
-  return { ...out, verdict: verdict(out) };
+  return { ...out, verdict: verdict(out, configs) };
 }

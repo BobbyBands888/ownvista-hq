@@ -35,7 +35,7 @@ test('backtest runs both rule sets, never goes below zero cash, and closes every
     }
   }
   assert.ok(res.older.current.all.n > 0, 'current rules trade on a noisy universe');
-  assert.ok(['proposed', 'current', 'mixed'].includes(res.verdict.winner));
+  assert.ok(Object.keys(CONFIGS).includes(res.verdict.winner));
   assert.ok(res.verdict.text.length > 20);
 });
 
@@ -48,11 +48,11 @@ test('windows split older years from the last ~12 months without overlap', () =>
   assert.equal(w.recent.to - w.recent.from + 1, 252);
 });
 
-test('market filter: proposed rules take no new trades while SPY is below its 200-day average', () => {
+test('market filter: rules take no new trades while SPY is below its 200-day average', () => {
   const data = fixture();
   // Force SPY under its 200-day average everywhere.
   data.spyClose = data.spyClose.map((c, i) => (data.spySma200[i] ? data.spySma200[i] * 0.9 : c));
-  const r = simulate(data, CONFIGS.proposed, { from: 200, to: data.days.length - 1 });
+  const r = simulate(data, CONFIGS.regime, { from: 200, to: data.days.length - 1 });
   assert.equal(r.all.n, 0);
   assert.equal(r.end_equity, 10000);
 });
@@ -69,8 +69,22 @@ test('risk per trade is respected: one stop-out costs about the configured risk'
   });
   bars[301].open = 70; bars[301].high = 70.5;
   const data = prepare({ AAA: bars }, spy);
-  const r = simulate(data, { ...CONFIGS.proposed, setups: ['breakout'], uptrend_only: false, regime: false }, { from: 250, to: n - 1 });
+  const r = simulate(data, { ...CONFIGS.current, setups: ['breakout'], risk: 0.0125, target_atr: null, trail_atr: 3, max_hold: 40 }, { from: 250, to: n - 1 });
   assert.equal(r.all.n, 1);
   const loss = -r.all.pnl;
-  assert.ok(loss > 0 && loss <= 10000 * CONFIGS.proposed.risk * 1.6, `loss ${loss}`); // stop + slippage + a gap
+  assert.ok(loss > 0 && loss <= 10000 * 0.0125 * 1.6, `loss ${loss}`); // stop + slippage + a gap
+});
+
+test('verdict: a change only wins if it beats the current rules in both periods', async () => {
+  const { verdict } = await import('../agents/trader/backtest.js');
+  const r = (ret, dd = 0.1) => ({ ret, max_dd: dd, spy_ret: 0.1, by_setup: {} });
+  const res = {
+    older: { current: r(0.5), trail: r(0.8), regime: r(0.9), strong_breakout: r(0.2), combo: r(0.4) },
+    recent: { current: r(0.2), trail: r(0.3), regime: r(0.1), strong_breakout: r(0.5), combo: r(0.1) },
+  };
+  const v = verdict(res);
+  assert.equal(v.winner, 'trail');
+  assert.deepEqual(v.winners, ['trail']);
+  const none = verdict({ older: { ...res.older, trail: r(0.1) }, recent: res.recent });
+  assert.equal(none.winner, 'current');
 });

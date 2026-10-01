@@ -392,7 +392,7 @@ export async function probe(ctx) {
 }
 
 // Manual: replay ~5 years of daily bars for the biggest US stocks and compare the current rules with the
-// proposed "aggressive, not reckless" rules. Older years pick the winner; the last 12 months confirm it.
+// current rules with one change at a time (trailing stop, SPY filter, strong-only breakouts, a combo). Older years pick the winner; the last 12 months confirm it.
 // Saves a summary for the Trader page. It never changes the live rules or places anything.
 const FALLBACK_UNIVERSE = ['AAPL', 'MSFT', 'NVDA', 'AMZN', 'GOOGL', 'META', 'AVGO', 'TSLA', 'JPM', 'LLY', 'V', 'UNH', 'XOM', 'MA', 'COST',
   'HD', 'PG', 'JNJ', 'NFLX', 'ABBV', 'BAC', 'CRM', 'ORCL', 'AMD', 'KO', 'CVX', 'MRK', 'PEP', 'ADBE', 'WMT', 'TMO', 'LIN', 'ACN', 'MCD',
@@ -439,8 +439,8 @@ export async function backtest(ctx) {
   };
   await kvSet('pt_backtest', out);
   const pct = (x) => (x == null ? '—' : `${x >= 0 ? '+' : ''}${(x * 100).toFixed(1)}%`);
-  const line = (w, k) => `${k} ${pct(res[w][k].ret)} (SPY ${pct(res[w][k].spy_ret)}, worst drop ${pct(-res[w][k].max_dd)}, ${res[w][k].all.n} trades)`;
-  const msg = `Backtest on ${n} stocks. Older years: ${line('older', 'current')}; ${line('older', 'proposed')}. Last 12 months: ${line('recent', 'current')}; ${line('recent', 'proposed')}. Verdict: ${res.verdict.winner}.`;
+  const line = (w) => Object.keys(CONFIGS).map((k) => `${k} ${pct(res[w][k].ret)}/${pct(-res[w][k].max_dd)}`).join(', ');
+  const msg = `Backtest on ${n} stocks (return/worst drop). Older years (SPY ${pct(res.older.current.spy_ret)}): ${line('older')}. Last 12 months (SPY ${pct(res.recent.current.spy_ret)}): ${line('recent')}. Winner: ${res.verdict.winner}.`;
   ctx.log('report', `Paper Trader ${msg}`);
   console.log(msg);
   return msg;
