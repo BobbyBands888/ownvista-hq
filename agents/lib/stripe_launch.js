@@ -38,12 +38,14 @@ async function call(method, path, params = {}) {
 }
 
 // Product + one-time price + Payment Link. Metadata ties everything back to the launch.
-export async function createOffer({ launchId, title, description, priceUsd, successUrl }) {
+export async function createOffer({ launchId, title, description, priceUsd, successUrl, productId, onProduct }) {
   const cents = Math.round(Number(priceUsd) * 100);
   if (!(cents >= 100 && cents <= 100000)) throw new Error(`price out of range: ${priceUsd}`);
-  const product = await call('POST', '/v1/products', {
+  // Reuse the product from an earlier, interrupted attempt so retries never pile up duplicate products.
+  const product = productId ? { id: productId } : await call('POST', '/v1/products', {
     name: title.slice(0, 250), description: description ? description.slice(0, 500) : undefined, metadata: { launch_id: launchId, source: 'ownvista-hq' },
   });
+  if (!productId && onProduct) await onProduct(product.id);
   const price = await call('POST', '/v1/prices', { product: product.id, unit_amount: cents, currency: 'usd', metadata: { launch_id: launchId } });
   const link = await call('POST', '/v1/payment_links', {
     'line_items[0][price]': price.id, 'line_items[0][quantity]': 1,

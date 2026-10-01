@@ -151,7 +151,8 @@ async function goLive(ctx) {
     const pageAsset = await db.one('assets', { idea_id: `eq.${l.idea_id}`, kind: 'eq.landing_page', order: 'created_at.desc' });
     if (!pageAsset) continue;
     const offer = await createOffer({
-      launchId: l.id, title: l.title, priceUsd: l.price_usd,
+      launchId: l.id, title: l.title, priceUsd: l.price_usd, productId: l.stripe_product_id,
+      onProduct: (id) => db.update('launches', { id: `eq.${l.id}` }, { stripe_product_id: id }),
       successUrl: `${SITE}/p/${l.slug}?thanks=${l.delivery_token}&session={CHECKOUT_SESSION_ID}`,
     });
     const html = buildPublicPage({ html: pageAsset.body, title: l.title, priceUsd: l.price_usd, buyUrl: offer.url, status: 'live' });
