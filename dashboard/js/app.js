@@ -6,6 +6,7 @@ const VIEWS = [
   ['world', 'World'],
   ['needs', 'Needs you'],
   ['email', 'Email'],
+  ['economy', 'Economy'],
   ['shop', 'Shop'],
   ['villa', 'Villa Cinema'],
   ['lab', 'Venture Lab'],

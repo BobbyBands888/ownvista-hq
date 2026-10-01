@@ -2,6 +2,7 @@
 // delayed or dropped GitHub schedule runs.
 import { db } from './lib/db.js';
 import { et, etToUtc, addDays } from './lib/time.js';
+import { scheduleEntry } from './lib/crew.js';
 
 const range = (a, b) => Array.from({ length: b - a + 1 }, (_, i) => a + i);
 
@@ -20,9 +21,22 @@ export const SCHEDULE = [
   { id: 'judge', type: 'weekly', days: [0], hour: 18, budgetMin: 4 },
   { id: 'learner', type: 'hourly', hours: range(0, 23), budgetMin: 5, label: 'Hourly, 24/7 (grades the day at 11pm ET)' },
   { id: 'paper_trader', type: 'hourly', hours: range(10, 16), weekdays: [1, 2, 3, 4, 5], budgetMin: 5, label: 'Weekdays hourly 10am–4pm ET (paper money)' },
+  { id: 'economist', type: 'daily', hour: 23, budgetMin: 3, label: 'Daily 11pm ET (books, budgets)' },
+  { id: 'architect', type: 'weekly', days: [0], hour: 19, budgetMin: 4, label: 'Sundays 7pm ET (shapes the crew)' },
 ];
 
 export const AGENT_IDS = SCHEDULE.map((s) => s.id);
+
+// Crew members the Architect deployed (rows in crew_specs). Loaded once per job; data only.
+let crew = [];
+export async function loadCrew() {
+  try {
+    const rows = await db.select('crew_specs', { status: 'in.(probation,active)', order: 'created_at.asc' });
+    crew = rows.map((spec) => ({ ...scheduleEntry(spec), spec }));
+  } catch { crew = []; }
+  return crew;
+}
+const allSchedules = () => [...SCHEDULE, ...crew];
 
 const GRACE_MS = 12 * 3600 * 1000;
 
@@ -85,7 +99,8 @@ export function isDue(s, now, runs) {
 export async function dueAgents(now = new Date()) {
   const due = [];
   const next = {};
-  for (const s of SCHEDULE) {
+  await loadCrew();
+  for (const s of allSchedules()) {
     const runs = await recentRuns(s.id);
     if (isDue(s, now, runs)) due.push(s.id);
     const lastOk = runs.find((r) => r.status === 'ok' || r.status === 'capped');
@@ -97,5 +112,5 @@ export async function dueAgents(now = new Date()) {
 export { lastSlot, nextSlot };
 
 export function scheduleFor(id) {
-  return SCHEDULE.find((s) => s.id === id);
+  return allSchedules().find((s) => s.id === id);
 }

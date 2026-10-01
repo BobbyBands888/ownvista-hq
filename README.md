@@ -25,6 +25,8 @@ Setup: **[docs/SETUP.md](docs/SETUP.md)**.
 | Builder | hourly, 24/7 when work exists | assets for approved ideas/experiments (no accounts, no payments, no publishing) |
 | Judge | Sundays 6pm | scale / continue / kill per running experiment, with numbers |
 | Learner | hourly, 24/7 (grades the day at 11pm) | edits + feedback → playbook rules (dedupe, consolidate past 40, version history), grades drafts, self-review, daily metrics |
+| Economist | daily 11pm | P&L per agent (revenue share − shadow cost), runway vs real bills, weekly survival pressure per lane, writes the budgets agents already obey (token shares, image cap, minutes per run), closes crew probation |
+| Architect | Sundays 7pm | retires crew that doesn't pay, clones a proven agent where an earning lane is bottlenecked, designs one new crew member (data, not code) — both deploy automatically on probation |
 
 The router runs every due agent inside one job and catches up after delayed or dropped GitHub schedule runs.
 Manual runs: Actions → Ownvista HQ → Run workflow → pick an agent, `villa_preflight`, `villa_test_email`,
@@ -42,6 +44,8 @@ Manual runs: Actions → Ownvista HQ → Run workflow → pick an agent, `villa_
 | No other spending, no accounts, no publishing | no code paths exist; paid-API grep test; experiments needing money or accounts go to Needs you |
 | No phone-call offers, no Nashville Buys vendor pricing, no legal/tax/RE advice, businesses never cross-mentioned | `checkCopy()` in `agents/lib/guard.js` on every draft/asset/email, plus the playbook |
 | Prompt-injection defense | every system prompt starts with `systemPrompt()`; all email/web text is wrapped by `untrusted()` |
+| Economy moves effort, never permissions | `agents/economist.js` writes budgets only; protected agents (Operator, Learner, Launcher, Villa Outreach, Economist, Architect, Paper Trader) never drop below base; no shutdowns while total revenue is $0 |
+| Architect crew can't send, spend, publish, sign up or trade | crew are rows in `crew_specs`: clones run an existing module, new ones run `agents/spawned.js` (5 proposal-only blocks); `validateSpec()` + `test/economy.test.js` run before every job; 14-day probation, Stop button on the Economy page |
 | robots.txt, public pages only | `agents/lib/robots.js` checks before every fetch (RFC 9309) |
 
 ## How it gets better

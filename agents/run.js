@@ -4,13 +4,13 @@
 //   node agents/run.js --agent=operator → run one agent now (manual dispatch)
 //   node agents/run.js --plan          → print the plan (used to decide whether to install ffmpeg)
 import { appendFileSync } from 'node:fs';
-import { db } from './lib/db.js';
+import { db, kvGet } from './lib/db.js';
 import { env } from './lib/env.js';
 import { CapError } from './lib/llm.js';
 import { SpendRefused } from './lib/spend.js';
 import { startJob, finishJob, startRun, finishRun, activity } from './lib/log.js';
 import { etDate } from './lib/time.js';
-import { dueAgents, scheduleFor, AGENT_IDS } from './router.js';
+import { dueAgents, scheduleFor, loadCrew, AGENT_IDS } from './router.js';
 
 const MODULES = {
   villa_outreach: () => import('./villa/outreach.js'),
@@ -26,6 +26,8 @@ const MODULES = {
   asset_studio: () => import('./lab/asset_studio.js'),
   learner: () => import('./learner.js'),
   paper_trader: () => import('./trader/paper.js'),
+  economist: () => import('./economist.js'),
+  architect: () => import('./architect.js'),
 };
 
 // Extra manual-only commands.
@@ -52,6 +54,7 @@ async function studioHasWork() {
 async function plan() {
   const requested = args.agent && args.agent !== 'auto' ? String(args.agent) : null;
   if (requested) {
+    await loadCrew();
     const agents = requested === 'all' ? AGENT_IDS : [requested];
     const needsFfmpeg = agents.includes('villa_studio') || agents.includes('asset_studio') || requested === 'all';
     return { agents, needsFfmpeg, trigger: 'manual', next: null };
@@ -67,17 +70,31 @@ async function plan() {
   return { agents, needsFfmpeg: agents.includes('villa_studio') || assetWork, trigger: 'schedule', next };
 }
 
+// A crew member is data: a clone runs its base agent's module, a new one runs spawned.js. Nothing else.
+function moduleFor(agentId) {
+  if (MODULES[agentId]) return { load: MODULES[agentId], spec: null };
+  const spec = scheduleFor(agentId)?.spec;
+  if (!spec) return null;
+  if (spec.kind === 'clone' && MODULES[spec.base]) return { load: MODULES[spec.base], spec };
+  if (spec.kind === 'new') return { load: () => import('./spawned.js'), spec };
+  return null;
+}
+
 async function runAgent(id, { jobId, trigger }) {
   const cmd = COMMANDS[id];
   const agentId = cmd ? cmd.agent : id;
-  if (!MODULES[agentId]) throw new Error(`Unknown agent ${id}`);
+  const m = moduleFor(agentId);
+  if (!m) throw new Error(`Unknown agent ${id}`);
   const row = await db.one('agents', { id: `eq.${agentId}` });
   if (row && row.enabled === false && trigger !== 'manual') return 'skipped';
-  const budget = (scheduleFor(agentId)?.budgetMin ?? 5) * 60000;
+  // Minutes per run follow the economy (0.5x–1.5x of the base budget, never under 2 minutes).
+  const factor = Number((await kvGet('economy_budgets', {}).catch(() => ({})))?.minutes?.[agentId]) || 1;
+  const budget = Math.max(2, Math.round((scheduleFor(agentId)?.budgetMin ?? 5) * factor)) * 60000;
   const deadlineMs = trigger === 'manual' ? JOB_DEADLINE : Math.min(JOB_DEADLINE, Date.now() + budget);
   const ctx = await startRun(agentId, { jobId, trigger: cmd ? `manual:${id}` : trigger, deadlineMs });
+  if (m.spec) ctx.spec = m.spec;
   try {
-    const mod = await MODULES[agentId]();
+    const mod = await m.load();
     const fn = cmd ? mod[cmd.fn] : mod.run;
     const summary = await fn(ctx);
     await finishRun(ctx, 'ok', { summary: typeof summary === 'string' ? summary : undefined });

@@ -23,6 +23,8 @@ on:
           - launcher
           - asset_studio
           - paper_trader
+          - economist
+          - architect
           - trader_probe
           - villa_outreach
           - villa_studio
