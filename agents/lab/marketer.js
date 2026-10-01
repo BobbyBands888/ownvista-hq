@@ -6,7 +6,7 @@
 // Every piece goes through the same copy checks as the rest of HQ (no fake offers, no phone calls, no made-up
 // prices, links only to our own pages, no brands, no real estate); a piece that fails is dropped, not "fixed".
 import { db, kvGet, kvSet } from '../lib/db.js';
-import { chat } from '../lib/llm.js';
+import { chat, parseJson } from '../lib/llm.js';
 import { systemPrompt, untrusted, checkCopy, realEstateRisk } from '../lib/guard.js';
 import { ipRisk } from '../lib/autopilot.js';
 import { fetchFeed } from '../lib/feeds.js';
@@ -99,9 +99,10 @@ deadlines or scarcity. No invented reviews, testimonials, sales counts, "best-se
 Only link to the product's own page (${t.url || 'none yet: use no links'}). Price is $${t.price}; mention no other price.
 No brand, character, team or celebrity names. ${t.kind === 'asset_pack' ? 'Keep the AI-generated graphics disclosure in the listing description.' : ''}
 listing: the marketplace listing (${t.kind === 'asset_pack' ? 'itch.io' : 'Gumroad/itch-style'}): title under 80 chars, short one-liner,
-up to 10 lowercase search tags buyers actually type, description in plain text with short sections, price_note (why this price, from the facts).
+up to 10 lowercase search tags buyers actually type, description in plain text with short sections (under 1200 characters),
+price_note (one sentence: why this price, from the facts).
 pins: 3 Pinterest pins (title, description with natural keywords, board name).
-reddit: 2 posts for subreddits where this is genuinely useful. Lead with value (a tip, a free insight), mention the product once at the end.
+reddit: 2 posts for subreddits where this is genuinely useful (body under 900 characters). Lead with value (a tip, a free insight), mention the product once at the end.
   rule_check: what Bobby must confirm in that subreddit's rules first (e.g. self-promotion day, flair).
 seo: page title under 60 chars and meta description under 155 chars.
 hooks: 3 short opening lines for posts.
@@ -109,7 +110,16 @@ JSON only: {"listing":{"title":"","short":"","tags":[""],"description":"","price
 "reddit":[{"subreddit":"","title":"","body":"","rule_check":""}],"seo":{"title":"","description":""},"hooks":[""]}`);
     const user = [untrusted('product facts', t.facts, 6000), trends && t.kind === 'asset_pack' ? untrusted('itch.io top-selling asset titles (for tag and naming ideas only, never copy)', trends, 1500) : ''].filter(Boolean).join('\n');
     try {
-      const { json } = await chat({ ctx, tier: 'smart', json: true, maxTokens: 2500, system, messages: [{ role: 'user', content: user }] });
+      const messages = [{ role: 'user', content: user }];
+      // Groq's JSON mode rejects long or slightly-off output; fall back to plain text and parse it ourselves.
+      let json;
+      try { ({ json } = await chat({ ctx, tier: 'smart', json: true, maxTokens: 4000, system, messages })); }
+      catch (e) {
+        if (!/json/i.test(String(e.message))) throw e;
+        const { text } = await chat({ ctx, tier: 'smart', maxTokens: 4000, system: `${system}\nReturn ONLY the JSON object, no other text.`, messages });
+        json = parseJson(text);
+      }
+      if (!json || typeof json !== 'object') throw new Error('model returned no usable JSON');
       const { kit, dropped } = vetKit(json || {}, t);
       const pieces = (kit.listing ? 1 : 0) + kit.pins.length + kit.reddit.length + (kit.seo ? 1 : 0) + kit.hooks.length;
       if (!pieces) { out.push(`"${truncate(t.title, 40)}": nothing passed checks`); continue; }
