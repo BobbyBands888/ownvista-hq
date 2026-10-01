@@ -28,6 +28,7 @@ on:
           - autopilot
           - product_scout
           - dropship_scout
+          - marketer
           - trader_probe
           - villa_outreach
           - villa_studio

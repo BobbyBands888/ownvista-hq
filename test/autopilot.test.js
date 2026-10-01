@@ -59,3 +59,26 @@ test('Product Scout keywords stay out of real estate; POD goes to the Radar only
   assert.ok(!ETSY_KEYWORDS.some((w) => /airbnb|rental|property/i.test(w)));
   assert.match(src('agents/lab/product_scout.js'), /lane: pod \? 'pod'/);
 });
+
+test('Marketer only drafts: it never sends, posts, publishes, spends or fetches pages itself', async () => {
+  const forbidden = /(sendgate|gmail\.js|zoho\.js|minimax|spend\.js|stripe(_launch)?\.js|cfimage|createDraft|child_process|\bfetch\(|method:\s*'(POST|PUT|DELETE)')/;
+  assert.doesNotMatch(src('agents/lab/marketer.js'), forbidden);
+  const { vetKit, pickTargets } = await import('../agents/lab/marketer.js');
+  const target = { price: 4, url: 'https://www.levelingclips.com/p/x' };
+  const { kit, dropped } = vetKit({
+    listing: { title: 'Potion Icons', short: 'Sixteen icons', tags: ['icons'], description: 'Get it at https://www.levelingclips.com/p/x', price_note: '$4' },
+    pins: [{ title: 'Use coupon code SAVE10', description: 'x', board: 'b' }, { title: 'Fantasy icons', description: 'Join 500+ happy customers', board: 'b' }, { title: 'Potion art', description: 'Clean icons', board: 'Game art' }],
+    reddit: [{ subreddit: 'r/gamedev', title: 'Tips', body: 'Only $9 today, see https://evil.example' }],
+    seo: { title: 'Potion Icons', description: 'Sixteen potion icons for games' },
+    hooks: ['Hop on a quick call with me', 'Sixteen potions, one style', 'Starter homes for first-time buyers'],
+  }, target);
+  assert.ok(kit.listing);
+  assert.equal(kit.pins.length, 1);
+  assert.equal(kit.reddit.length, 0);
+  assert.deepEqual(kit.hooks, ['Sixteen potions, one style']);
+  assert.ok(dropped.length >= 5);
+  const now = Date.parse('2026-10-01T12:00:00Z');
+  const targets = [{ key: 'a' }, { key: 'b' }, { key: 'c' }];
+  const kits = { a: { made_at: '2026-09-30T12:00:00Z' }, b: { made_at: '2026-09-20T12:00:00Z' } };
+  assert.deepEqual(pickTargets(targets, kits, { now, per_run: 2, refresh_days: 7 }).map((t) => t.key), ['c', 'b']);
+});

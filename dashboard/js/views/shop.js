@@ -12,12 +12,13 @@ async function signed(path, secs = 3600) {
 }
 
 export async function render(el) {
-  let launches = [], packs = [], studio = null, tablesMissing = false;
+  let launches = [], packs = [], studio = null, kits = {}, tablesMissing = false;
   try {
-    [launches, packs, studio] = await Promise.all([
+    [launches, packs, studio, kits] = await Promise.all([
       q(sb.from('launches').select('*, experiments(ends_on,starts_on,status)').order('created_at', { ascending: false }).limit(50)),
       q(sb.from('asset_packs').select('*').order('created_at', { ascending: false }).limit(40)),
       q(sb.from('agents').select('id,enabled,last_summary,last_run_at').eq('id', 'asset_studio').maybeSingle()),
+      q(sb.from('kv').select('value').eq('key', 'marketing_kits').maybeSingle()).then((r) => r?.value || {}, () => ({})),
     ]);
   } catch (e) { tablesMissing = true; }
 
@@ -52,6 +53,7 @@ export async function render(el) {
         ${l.status === 'live' || l.status === 'killed' ? `<div class="small"><a href="/p/${esc(l.slug)}" target="_blank" rel="noopener">levelingclips.com/p/${esc(l.slug)}</a></div>` : ''}
         ${l.note ? `<div class="small muted">${esc(l.note)}</div>` : ''}
         ${l.status === 'waiting_key' ? '<div class="small muted">Ready to go live the hour after the Stripe launch key is saved.</div>' : ''}
+        ${kitHtml(kits[`launch:${l.id}`])}
       </div>`).join('') || '<div class="card empty">No offers yet. Approve a business idea and the crew builds and launches it.</div>'}
     </div>
   </div>
@@ -77,6 +79,7 @@ export async function render(el) {
           <details><summary>Page description</summary><textarea readonly rows="10" style="width:100%" data-copy>${esc(p.page_copy)}</textarea><button data-act="copy">Copy description</button></details>
           <div class="row"><input data-url placeholder="https://yourname.itch.io/pack-name" style="flex:1"><button class="ok" data-act="published">Save link</button><button class="danger" data-act="reject">Reject pack</button></div>` : ''}
         ${p.feedback ? `<div class="small muted">Note: ${esc(p.feedback)}</div>` : ''}
+        ${kitHtml(kits[`pack:${p.id}`])}
       </div>`;
     }).join('') || `<div class="card empty">No packs yet. ${studio?.last_summary ? esc(studio.last_summary) : 'Once Cloudflare is connected the Asset Studio starts on its own.'}</div>`}
     </div>
@@ -85,6 +88,11 @@ export async function render(el) {
   el.querySelector('#studio-on')?.addEventListener('change', (e) => act(null, async () => {
     await q(sb.from('agents').update({ enabled: e.target.checked }).eq('id', 'asset_studio'));
   }, e.target.checked ? 'Asset Studio on' : 'Asset Studio paused'));
+
+  on(el, 'click', '[data-copykit]', (e, btn) => {
+    const text = btn.previousElementSibling?.value || '';
+    navigator.clipboard?.writeText(text).then(() => toast('Copied'), () => { btn.previousElementSibling.select(); toast('Press Cmd+C to copy'); });
+  });
 
   on(el, 'click', '[data-act]', (e, btn) => {
     const card = btn.closest('[data-pack]');
@@ -114,4 +122,20 @@ export async function render(el) {
       window.hqRefresh();
     }, what === 'zip' ? null : 'Saved');
   });
+}
+
+// Marketer's draft kit (kv marketing_kits). Drafts only: Bobby copies and posts what he likes.
+function kitHtml(k) {
+  if (!k) return '';
+  const box = (label, text, rows = 4) => `<div style="margin-top:6px"><div class="small"><strong>${esc(label)}</strong></div><textarea readonly rows="${rows}" style="width:100%">${esc(text)}</textarea><button data-copykit>Copy</button></div>`;
+  const L = k.listing;
+  return `<details><summary>Marketing kit (drafts, ${esc(ago(k.made_at))})</summary>
+    <div class="small muted">Written by the Marketer. Nothing has been posted. Check each one before you use it.</div>
+    ${L ? box('Listing', `Title: ${L.title}\nShort: ${L.short}\nTags: ${(L.tags || []).join(', ')}\n\n${L.description}\n\nPrice note: ${L.price_note}`, 10) : ''}
+    ${(k.pins || []).map((p, i) => box(`Pinterest pin ${i + 1} (board: ${p.board})`, `${p.title}\n\n${p.description}`)).join('')}
+    ${(k.reddit || []).map((r, i) => `${box(`Reddit ${i + 1}: r/${r.subreddit}`, `${r.title}\n\n${r.body}`, 8)}<div class="small muted">Check first: ${esc(r.rule_check)}</div>`).join('')}
+    ${k.seo ? box('Search title / description', `${k.seo.title}\n${k.seo.description}`, 2) : ''}
+    ${(k.hooks || []).length ? box('Hooks', k.hooks.join('\n'), 3) : ''}
+    ${(k.dropped || []).length ? `<div class="small muted">Dropped by checks: ${esc(k.dropped.join(' | '))}</div>` : ''}
+  </details>`;
 }

@@ -22,6 +22,7 @@ export const SCHEDULE = [
   { id: 'analyst', type: 'daily', hour: 9, budgetMin: 4 },
   { id: 'builder', type: 'hourly', hours: range(0, 23), budgetMin: 4, label: 'Hourly, 24/7 when work exists' },
   { id: 'launcher', type: 'hourly', hours: range(0, 23), budgetMin: 4, label: 'Hourly, 24/7' },
+  { id: 'marketer', type: 'hourly', hours: [9, 15, 21], budgetMin: 4, label: '9am, 3pm, 9pm ET (draft-only marketing kits)' },
   { id: 'asset_studio', type: 'hourly', hours: range(0, 23), budgetMin: 8, label: 'Hourly, 24/7 (free daily image allowance)' },
   { id: 'judge', type: 'weekly', days: [0], hour: 18, budgetMin: 4 },
   { id: 'learner', type: 'hourly', hours: range(0, 23), budgetMin: 5, label: 'Hourly, 24/7 (grades the day at 11pm ET)' },
