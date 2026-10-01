@@ -71,7 +71,7 @@ export async function render(el) {
       ${open.map((t) => { const m = t.kind === 'stock' ? 1 : 100; const u = (Number(t.mark_price ?? t.entry_price) - Number(t.entry_price)) * Number(t.qty) * m; return `<tr title="${esc(t.thesis || '')}">
         <td><strong>${esc(t.symbol)}</strong></td><td class="num">${esc(what(t))}</td><td>${esc(t.setup || '')}</td>
         <td class="num">${money(t.entry_price)}</td><td class="num">${money(t.mark_price ?? t.entry_price)}</td>
-        <td>${badge(signed(u), pnlTone(u))}</td><td class="num small">${money(t.stop)} / ${money(t.target)}${t.kind !== 'stock' ? ' (stock price)' : ''}</td></tr>`; }).join('')}
+        <td>${badge(signed(u), pnlTone(u))}</td><td class="num small">${money(t.stop)} / ${t.target == null ? 'trailing' : money(t.target)}${t.kind !== 'stock' ? ' (stock price)' : ''}</td></tr>`; }).join('')}
     </tbody></table></div>` : '<div class="card empty">No open positions.</div>'}
   </div>
 

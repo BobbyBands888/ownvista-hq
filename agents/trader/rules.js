@@ -17,7 +17,8 @@ export const DEFAULT_RULES = {
   penny_below: 5,
   min_dollar_volume: 5e6,
   min_penny_dollar_volume: 3e6,
-  max_hold_days: 20,
+  max_hold_days: 40,           // stock trades hold up to 40 days; the trailing stop decides the exit
+  trail_atr: 3,                // Oct 1 backtest winner: no fixed target on stocks, stop trails 3 ATR under the high
   option_min_dte: 14,
   option_max_dte: 45,
   option_max_spread: 0.15,     // skip contracts whose bid/ask spread is >15% of mid
@@ -213,6 +214,8 @@ export function validatePick(pick, s, setups, rules = DEFAULT_RULES) {
   if (bearish && pick.setup !== 'breakdown' && pick.setup !== 'momentum_gap') problems.push('puts only on breakdown or fading a gap');
   const entry = s.price;
   const a = s.atr14;
+  // Stocks with a trailing stop have no fixed target: the stop follows the price up and decides the exit.
+  const trailing = inst === 'stock' && rules.trail_atr > 0;
   let stop = Number(pick.stop), target = Number(pick.target);
   if (!Number.isFinite(stop) || stop <= 0) stop = bearish ? entry + 1.5 * a : entry - 1.5 * a;
   if (!Number.isFinite(target) || target <= 0) target = bearish ? entry - 3 * a : entry + 3 * a;
@@ -222,10 +225,13 @@ export function validatePick(pick, s, setups, rules = DEFAULT_RULES) {
   else {
     if (risk < 0.5 * a) problems.push('stop is tighter than half a normal day’s move (gets shaken out)');
     if (risk > 3 * a) problems.push('stop is wider than 3 normal days’ moves (too loose)');
-    if (reward / risk < rules.min_reward_risk) problems.push(`reward:risk ${(reward / risk).toFixed(1)} is under ${rules.min_reward_risk}`);
+    if (!trailing && reward / risk < rules.min_reward_risk) problems.push(`reward:risk ${(reward / risk).toFixed(1)} is under ${rules.min_reward_risk}`);
   }
-  const hold = Math.max(1, Math.min(rules.max_hold_days, Math.round(Number(pick.max_hold_days) || 10)));
-  return { ok: problems.length === 0, problems, plan: { entry, stop: round(stop), target: round(target), hold, bearish } };
+  const hold = trailing ? rules.max_hold_days : Math.max(1, Math.min(rules.max_hold_days, Math.round(Number(pick.max_hold_days) || 10)));
+  return {
+    ok: problems.length === 0, problems,
+    plan: { entry, stop: round(stop), target: trailing ? null : round(target), hold, bearish, trail: trailing ? round(rules.trail_atr * a) : null },
+  };
 }
 
 // Size a stock trade. Returns shares (0 = skip) and the reason if skipped.
@@ -283,21 +289,28 @@ export function fillPrice(price, side, penny, rules = DEFAULT_RULES) {
 
 // Walk intraday bars since the last check. Stops are checked before targets inside the same bar
 // (the conservative assumption). Gaps through a stop fill at the bar's open, not the stop.
-// trade: { stop, target, bearish } on the underlying. bars oldest first.
+// trade: { stop, target (null = none), bearish, ref, trail (dollars, long only), mfe0 (best move so far) }.
+// With a trail, the stop rises to (highest price so far − trail) after each bar; it never goes down.
+// Returns the (possibly raised) stop so the caller can save it.
 export function checkExit(trade, bars) {
   let mfe = 0, mae = 0;
+  let stop = trade.stop;
+  const hasTarget = trade.target != null && Number.isFinite(Number(trade.target)) && Number(trade.target) > 0;
+  const trail = !trade.bearish && trade.trail > 0 ? trade.trail : null;
+  let best = Math.max(0, Number(trade.mfe0) || 0);
   for (const b of bars) {
     if (!trade.bearish) {
       mfe = Math.max(mfe, b.high - trade.ref); mae = Math.max(mae, trade.ref - b.low);
-      if (b.low <= trade.stop) return { reason: 'stop', price: Math.min(trade.stop, b.open), t: b.t, mfe, mae };
-      if (b.high >= trade.target) return { reason: 'target', price: Math.max(trade.target, b.open), t: b.t, mfe, mae };
+      if (b.low <= stop) return { reason: trail ? 'trailing_stop' : 'stop', price: Math.min(stop, b.open), t: b.t, mfe, mae, stop };
+      if (hasTarget && b.high >= trade.target) return { reason: 'target', price: Math.max(trade.target, b.open), t: b.t, mfe, mae, stop };
+      if (trail) { best = Math.max(best, b.high - trade.ref); stop = Math.max(stop, round(trade.ref + best - trail)); }
     } else {
       mfe = Math.max(mfe, trade.ref - b.low); mae = Math.max(mae, b.high - trade.ref);
-      if (b.high >= trade.stop) return { reason: 'stop', price: Math.max(trade.stop, b.open), t: b.t, mfe, mae };
-      if (b.low <= trade.target) return { reason: 'target', price: Math.min(trade.target, b.open), t: b.t, mfe, mae };
+      if (b.high >= stop) return { reason: 'stop', price: Math.max(stop, b.open), t: b.t, mfe, mae, stop };
+      if (hasTarget && b.low <= trade.target) return { reason: 'target', price: Math.min(trade.target, b.open), t: b.t, mfe, mae, stop };
     }
   }
-  return { reason: null, mfe, mae };
+  return { reason: null, mfe, mae, stop };
 }
 
 // Trading days between two YYYY-MM-DD dates (weekdays; holidays ignored).

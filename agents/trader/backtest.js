@@ -8,7 +8,7 @@
 import { stats, setupsFor, sma, round } from './rules.js';
 
 const BASE = {
-  label: 'Current rules',
+  label: 'Old rules (fixed target)',
   setups: ['breakout', 'pullback', 'momentum_gap', 'oversold_bounce'],
   risk: 0.02, max_open: 8, max_new_per_day: 3, max_position_pct: 0.20,
   stop_atr: 1.5, target_atr: 3, trail_atr: null, max_hold: 10,
@@ -19,7 +19,7 @@ const BASE = {
 // A change only "wins" if it beats the current rules in BOTH periods.
 export const CONFIGS = {
   current: BASE,
-  trail: { ...BASE, label: '+ trailing stop', target_atr: null, trail_atr: 3, max_hold: 40 },
+  trail: { ...BASE, label: '+ trailing stop (live since Oct 1)', target_atr: null, trail_atr: 3, max_hold: 40 },
   regime: { ...BASE, label: '+ SPY market filter', regime: true },
   strong_breakout: { ...BASE, label: '+ breakouts only in strong stocks', breakout_min_strength: 0.15 },
   combo: { ...BASE, label: '+ trailing stop + market filter', target_atr: null, trail_atr: 3, max_hold: 40, regime: true },

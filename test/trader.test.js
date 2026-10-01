@@ -43,17 +43,45 @@ test('drawdown brakes: half size at -10%, pause at -20%', () => {
   assert.equal(riskMode(7900, 10000).mode, 'paused');
 });
 
-test('pick validation enforces 2:1 reward:risk and sane stops', () => {
+test('pick validation (fixed-target mode) enforces 2:1 reward:risk and sane stops', () => {
   const s = { price: 100, atr14: 2 };
-  assert.ok(validatePick({ instrument: 'stock', setup: 'breakout', stop: 97, target: 106 }, s, ['breakout']).ok);
-  assert.match(validatePick({ instrument: 'stock', setup: 'breakout', stop: 97, target: 104 }, s, ['breakout']).problems.join(), /reward:risk/);
-  assert.match(validatePick({ instrument: 'stock', setup: 'breakout', stop: 99.8, target: 110 }, s, ['breakout']).problems.join(), /tighter/);
-  assert.match(validatePick({ instrument: 'stock', setup: 'breakout', stop: 90, target: 130 }, s, ['breakout']).problems.join(), /wider/);
-  assert.match(validatePick({ instrument: 'stock', setup: 'pullback', stop: 97, target: 106 }, s, ['breakout']).problems.join(), /not on this chart/);
-  assert.match(validatePick({ instrument: 'stock', setup: 'breakdown', stop: 103, target: 94 }, s, ['breakdown']).problems.join(), /puts-only/);
-  assert.ok(validatePick({ instrument: 'put', setup: 'breakdown', stop: 103, target: 94 }, s, ['breakdown']).ok);
+  const FIXED = { ...R, trail_atr: 0 };
+  assert.ok(validatePick({ instrument: 'stock', setup: 'breakout', stop: 97, target: 106 }, s, ['breakout'], FIXED).ok);
+  assert.match(validatePick({ instrument: 'stock', setup: 'breakout', stop: 97, target: 104 }, s, ['breakout'], FIXED).problems.join(), /reward:risk/);
+  assert.match(validatePick({ instrument: 'stock', setup: 'breakout', stop: 99.8, target: 110 }, s, ['breakout'], FIXED).problems.join(), /tighter/);
+  assert.match(validatePick({ instrument: 'stock', setup: 'breakout', stop: 90, target: 130 }, s, ['breakout'], FIXED).problems.join(), /wider/);
+  assert.match(validatePick({ instrument: 'stock', setup: 'pullback', stop: 97, target: 106 }, s, ['breakout'], FIXED).problems.join(), /not on this chart/);
+  assert.match(validatePick({ instrument: 'stock', setup: 'breakdown', stop: 103, target: 94 }, s, ['breakdown'], FIXED).problems.join(), /puts-only/);
+  assert.ok(validatePick({ instrument: 'put', setup: 'breakdown', stop: 103, target: 94 }, s, ['breakdown'], FIXED).ok);
   // Missing levels get ATR defaults that pass.
-  assert.ok(validatePick({ instrument: 'stock', setup: 'breakout' }, s, ['breakout']).ok);
+  assert.ok(validatePick({ instrument: 'stock', setup: 'breakout' }, s, ['breakout'], FIXED).ok);
+});
+
+test('stocks use a trailing stop: no target, no reward:risk gate, full 40-day hold; options keep their target', () => {
+  const s = { price: 100, atr14: 2 };
+  const v = validatePick({ instrument: 'stock', setup: 'breakout', stop: 97, target: 101, max_hold_days: 5 }, s, ['breakout']);
+  assert.ok(v.ok, v.problems.join());
+  assert.equal(v.plan.target, null);
+  assert.equal(v.plan.trail, 6);
+  assert.equal(v.plan.hold, R.max_hold_days);
+  const o = validatePick({ instrument: 'put', setup: 'breakdown', stop: 103, target: 99 }, s, ['breakdown']);
+  assert.match(o.problems.join(), /reward:risk/);
+});
+
+test('trailing stop rises with the high, never falls, and exits on the trailed level', () => {
+  const t = { stop: 97, target: null, bearish: false, ref: 100, trail: 6, mfe0: 0 };
+  const up = checkExit(t, [{ t: 1, open: 100, high: 110, low: 99, close: 109 }, { t: 2, open: 109, high: 112, low: 107, close: 111 }]);
+  assert.equal(up.reason, null);
+  assert.equal(up.stop, 106); // 112 − 6
+  const down = checkExit({ ...t, stop: up.stop, mfe0: 12 }, [{ t: 3, open: 108, high: 108, low: 105, close: 105.5 }]);
+  assert.equal(down.reason, 'trailing_stop');
+  assert.equal(down.price, 106);
+  // A dip that stays above the trailed stop does not lower it.
+  const hold = checkExit({ ...t, stop: 106, mfe0: 12 }, [{ t: 4, open: 108, high: 109, low: 106.5, close: 107 }]);
+  assert.equal(hold.reason, null);
+  assert.equal(hold.stop, 106);
+  // Null target never triggers a "target" exit.
+  assert.notEqual(checkExit({ ...t, trail: null }, [{ t: 5, open: 100, high: 150, low: 99, close: 140 }]).reason, 'target');
 });
 
 test('stock sizing risks ~2% and respects position, penny and cash caps', () => {

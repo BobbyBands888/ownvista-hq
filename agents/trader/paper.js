@@ -93,11 +93,14 @@ async function manageOpen(ctx, rules, state, today) {
       const fresh = bars.filter((b) => b.t > since);
       if (!fresh.length) continue;
       const last = fresh[fresh.length - 1].close;
-      const hit = checkExit({ stop: Number(t.stop), target: Number(t.target), bearish: t.bearish, ref: Number(t.entry_underlying) }, fresh);
+      // Stock trades opened without a target trail their stop 3 ATR (at entry) under the highest price since entry.
+      const trail = t.kind === 'stock' && t.target == null && Number(t.signals?.atr14) > 0 ? Number(t.signals.atr14) * rules.trail_atr : null;
+      const hit = checkExit({ stop: Number(t.stop), target: t.target == null ? null : Number(t.target), bearish: t.bearish, ref: Number(t.entry_underlying), trail, mfe0: Number(t.mfe || 0) }, fresh);
       const patch = {
         marked_at: new Date(fresh[fresh.length - 1].t).toISOString(),
         mfe: round(Math.max(Number(t.mfe || 0), hit.mfe)), mae: round(Math.max(Number(t.mae || 0), hit.mae)),
       };
+      if (trail && hit.stop > Number(t.stop)) patch.stop = round(hit.stop);
       let exit = hit.reason ? { reason: hit.reason, underlying: hit.price } : null;
       const held = tradingDaysBetween(t.entry_day, today);
       if (!exit && held >= t.hold_days) exit = { reason: 'time_limit', underlying: last };
@@ -198,7 +201,8 @@ async function maybeTrade(ctx, rules, state, equity, mode, today) {
   const system = systemPrompt('the Paper Trader', `You manage a PAPER (simulated) trading account. No real money; nothing you choose is ever sent to a broker.
 Style: aggressive but not reckless. Take real swings when a setup is clean; pass when it is not. Passing is a valid answer.
 Instruments: stock (long only), call, put. Puts only on 'breakdown' or fading a 'momentum_gap'.
-Hard rules the code enforces anyway: reward:risk at least ${rules.min_reward_risk}, stop between 0.5 and 3 ATR from price, max hold ${rules.max_hold_days} trading days.
+Hard rules the code enforces anyway: stop between 0.5 and 3 ATR from price, max hold ${rules.max_hold_days} trading days.
+STOCKS have no fixed target: after entry the stop trails ${rules.trail_atr} ATR under the highest price, so winners can run (your target is ignored for stocks). Options: reward:risk at least ${rules.min_reward_risk}.
 Set stop and target as UNDERLYING stock prices. Confidence 1–5 (only use 4–5 when the chart and the lessons both agree).
 Setups: ${Object.entries(SETUPS).map(([k, v]) => `${k} = ${v}`).join('; ')}.
 Benched setups (lost money, do not use): ${Object.keys(bench).filter((k) => bench[k] > today).join(', ') || 'none'}.
@@ -248,7 +252,7 @@ Return at most ${slots} pick(s).`);
   }
   if (rejected.length) await db.insert('pt_trades', rejected.map((r) => ({ ...r, signals: r.signals ?? null, status: 'rejected' }))).catch((e) => ctx.note(`log rejects: ${e.message}`));
   for (const t of made) {
-    ctx.log('trade', `Paper buy: ${t.qty} ${t.symbol} ${t.kind === 'stock' ? 'shares' : `${t.contract.strike} ${t.kind}s exp ${t.contract.expiry}`} @ $${t.entry_price} (${t.setup}, stop ${t.stop}, target ${t.target})`, { table: 'pt_trades', id: t.id });
+    ctx.log('trade', `Paper buy: ${t.qty} ${t.symbol} ${t.kind === 'stock' ? 'shares' : `${t.contract.strike} ${t.kind}s exp ${t.contract.expiry}`} @ $${t.entry_price} (${t.setup}, stop ${t.stop}, ${t.target == null ? 'trailing stop' : `target ${t.target}`})`, { table: 'pt_trades', id: t.id });
   }
   const passed = !made.length && json.pass_reason ? `passed: ${truncate(json.pass_reason, 120)}` : '';
   return [made.length && `opened ${made.map((t) => `${t.symbol} ${t.kind}`).join(', ')}`, rejected.length && `${rejected.length} pick(s) failed the risk rules`, passed].filter(Boolean).join(', ') || `scanned ${cands.length} setups, no trade`;
