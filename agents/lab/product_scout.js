@@ -15,6 +15,9 @@ import { etsyListings, etsyReady } from '../lib/etsy.js';
 import { ipRisk } from '../lib/autopilot.js';
 import { addToRadar } from '../lib/radar.js';
 import { similarTitle, truncate } from '../lib/text.js';
+
+// A written product (guide/template/checklist) only counts as proven when the evidence itself is a paid written product.
+export const WRITTEN = /\b(templates?|guides?|checklists?|planners?|worksheets?|e-?books?|playbooks?|swipe files?|workbooks?|spreadsheets?|printables?|notion|course|scripts? pack)\b/i;
 import { daysAgoIso } from '../lib/time.js';
 
 export const FEEDS = [
@@ -80,8 +83,13 @@ Bobby's standing rejections (Oct 1): (1) nothing for short-term rental / Airbnb 
 property managers until he decides otherwise; (2) evidence must show people PAYING for this kind of product (sales,
 favorites, top-seller lists), not just that a free thing is popular; (3) never guides on repackaging or reselling
 other people's free assets, templates or libraries (licensing risk); we sell only our own original work.
-type "text": a product delivered as ONE web page of written content — a guide, playbook, template set written as tables,
+type "text": ONLY when the evidence itself shows people paying for that kind of written product (a paid template, guide or
+checklist listing). "X sells, so sell a guide about X" is not evidence. A product delivered as ONE web page of written content — a guide, playbook, template set written as tables,
 checklists, scripts, swipe files, worksheets. Our Launcher can build and sell these with no human.
+type "asset_pack": a niche for an itch.io game asset pack OUR image model can make well: single objects, icons, item sets,
+character portraits, props, seamless textures or painted backgrounds (NOT tilesets, animation frames or anything with text).
+Use "deliverable" for the niche and 16 example items. These go to the Asset Studio, our focus lane: prefer them when itch.io evidence shows
+asset packs selling. Never turn "asset packs sell" into a guide/calculator/checklist ABOUT asset packs.
 type "pod": an ORIGINAL print-on-demand design (shirt, mug, sticker, poster, tote) a supplier like Printify prints and
 ships per order. Describe the design concept in "deliverable" (no copied slogans, no trademarks, no brand/character/
 team/celebrity names, no real-estate themes). "est_cost" = the supplier's typical base cost per item. Radar only, for later.
@@ -89,12 +97,13 @@ type "other": printables/graphics, physical goods or anything needing shipping �
 Each needs at least one evidence URL copied exactly from the list, a one-time price, and an honest score 0–100
 (demand evidence 40, ease to make it excellent as a web page 30, low competition 30).
 Avoid ideas like these rejected ones: ${rejected.join('; ') || '(none)'}.
-JSON only: {"products":[{"type":"text|pod|other","title":"","buyer":"who buys it","deliverable":"exactly what they get","price_usd":19,
+JSON only: {"products":[{"type":"text|asset_pack|pod|other","title":"","buyer":"who buys it","deliverable":"exactly what they get","price_usd":19,
 "why_now":"the evidence in one sentence","score":0,"evidence":["url"],"channel":"etsy|itch|web|amazon|other","est_cost":0}]}`);
   const user = evidence.slice(0, 60).map((e) => untrusted(e.url, e.text, 300)).join('\n');
   const { json } = await chat({ ctx, tier: 'smart', json: true, maxTokens: 2000, system, messages: [{ role: 'user', content: user }] });
 
-  let ideas = 0, onRadar = [];
+  let ideas = 0, onRadar = [], packHints = 0, gated = 0;
+  const byUrl = new Map(evidence.map((e) => [e.url, e.text]));
   for (const p of (json.products || []).slice(0, 4)) {
     const urls = (p.evidence || []).filter((u) => allowed.has(u));
     if (!p.title || !urls.length || ipRisk(`${p.title} ${p.deliverable}`)) continue;
@@ -102,6 +111,15 @@ JSON only: {"products":[{"type":"text|pod|other","title":"","buyer":"who buys it
     if (recent.some((r) => similarTitle(r.title, p.title))) continue;
     const price = Number(p.price_usd);
     const score = Math.max(0, Math.min(100, Math.round(Number(p.score) || 0)));
+    if (p.type === 'asset_pack') {
+      const cur = (await kvGet('asset_pack_ideas', [])) || [];
+      if (!cur.some((c) => similarTitle(c.niche, p.title))) {
+        await kvSet('asset_pack_ideas', [{ niche: truncate(p.title, 120), why: truncate(`${p.deliverable} — ${p.why_now}`, 300), evidence: urls.slice(0, 2), score, at: new Date().toISOString() }, ...cur].slice(0, 20));
+        packHints++;
+      }
+      continue;
+    }
+    if (p.type === 'text' && !urls.some((u) => WRITTEN.test(byUrl.get(u) || ''))) { gated++; continue; } // no proof this kind of guide sells
     if (p.type === 'text' && price >= 5 && price <= 300) {
       await db.insertOne('ideas', {
         kind: 'venture', business: 'venture-lab', title: truncate(p.title, 200),
@@ -116,6 +134,6 @@ JSON only: {"products":[{"type":"text|pod|other","title":"","buyer":"who buys it
     }
   }
   const radarAdded = onRadar.length ? await addToRadar(onRadar) : 0;
-  if (ideas || radarAdded) ctx.log('scout', `Product Scout: ${ideas} sellable product idea(s) sent to Autopilot, ${radarAdded} to the Radar`);
-  return [`evidence ${evidence.length}`, `ideas ${ideas}`, `radar ${radarAdded}`, ...notes].join(' · ');
+  if (ideas || radarAdded || packHints) ctx.log('scout', `Product Scout: ${ideas} sellable product idea(s) sent to Autopilot, ${packHints} pack niche(s) to the Asset Studio, ${radarAdded} to the Radar`);
+  return [`evidence ${evidence.length}`, `ideas ${ideas}`, `pack niches ${packHints}`, `radar ${radarAdded}`, gated && `guide ideas without proof ${gated}`, ...notes].filter(Boolean).join(' · ');
 }

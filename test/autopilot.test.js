@@ -102,3 +102,11 @@ test('Marketer never calls AI art hand-made and always discloses AI on asset pac
   assert.equal(pickTargets([{ key: 'a' }], { a: { made_at: fresh } }).length, 1, 'old-version kits are rewritten');
   assert.equal(pickTargets([{ key: 'a' }], { a: { made_at: fresh, v: KIT_VERSION } }).length, 0);
 });
+
+test('Product Scout only proposes written products when the evidence is a paid written product', async () => {
+  const { WRITTEN } = await import('../agents/lab/product_scout.js');
+  assert.ok(WRITTEN.test('[Etsy "budget planner"] Monthly Budget Planner Template — $6'));
+  assert.ok(!WRITTEN.test('[itch.io] Modern Office asset pack: 200 sprites'));
+  assert.ok(!WRITTEN.test('[itch.io] Cute & Cozy UI SFX'));
+  assert.match(src('agents/lab/asset_studio.js'), /asset_pack_ideas/);
+});

@@ -76,6 +76,7 @@ async function planPack(ctx, rules) {
     try { trends.push(...(await fetchFeed({ url })).items.slice(0, 25).map((i) => i.title)); } catch (e) { ctx.note(`feed ${url}: ${e.message}`); }
   }
   const past = await db.select('asset_packs', { select: 'title,kind:theme,style,status,views,downloads,sales,revenue,price_usd,feedback', order: 'created_at.desc', limit: 15 });
+  const hints = ((await kvGet('asset_pack_ideas', [])) || []).slice(0, 6);
   const lessons = await db.select('playbook_rules', { active: 'eq.true', category: 'in.(lab,guardrails)', select: 'rule', limit: 30 });
 
   const { json } = await chat({
@@ -100,7 +101,9 @@ JSON only: {"title":"","theme":"","kind":"icons","style":"","items":[{"name":"",
     messages: [{ role: 'user', content: `${untrusted('itch.io best sellers right now', trends.join('\n') || '(feed unavailable)', 4000)}
 
 Our past packs (learn from what sold and what didn't):
-${past.map((p) => `- ${p.title} [${p.status}] $${p.price_usd} · views ${p.views} · downloads ${p.downloads} · sales ${p.sales} · $${p.revenue}${p.feedback ? ` · Bobby: ${p.feedback}` : ''}`).join('\n') || '(none yet — this is the first pack)'}` }],
+${past.map((p) => `- ${p.title} [${p.status}] $${p.price_usd} · views ${p.views} · downloads ${p.downloads} · sales ${p.sales} · $${p.revenue}${p.feedback ? ` · Bobby: ${p.feedback}` : ''}`).join('\n') || '(none yet — this is the first pack)'}
+
+${hints.length ? untrusted('pack niches the Product Scout found demand for (pick one if it fits the model\'s strengths, or ignore)', hints.map((h) => `- ${h.niche}: ${h.why}`).join('\n'), 2000) : ''}` }],
   });
 
   const items = (json.items || []).filter((i) => i?.name && i?.prompt).slice(0, rules.items_per_pack);
