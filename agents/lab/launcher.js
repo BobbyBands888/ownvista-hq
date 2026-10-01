@@ -191,6 +191,10 @@ async function goLive(ctx) {
     const pageAsset = await db.one('assets', { idea_id: `eq.${l.idea_id}`, kind: 'eq.landing_page', order: 'created_at.desc' });
     const page = await pageFromProduct(ctx, l, product, pageAsset?.body);
     if (!page) continue;
+    if (l.payment_link_id) {
+      // Relaunch: retire the old link so no sale can come through an untracked link.
+      try { await deactivateLink(l.payment_link_id); } catch (e) { ctx.note(`old link not deactivated: ${truncate(e.message, 100)}`); }
+    }
     const offer = await createOffer({
       launchId: l.id, title: l.title, priceUsd: l.price_usd, productId: l.stripe_product_id,
       onProduct: (id) => db.update('launches', { id: `eq.${l.id}` }, { stripe_product_id: id }),
