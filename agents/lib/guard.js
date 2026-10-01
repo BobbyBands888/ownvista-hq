@@ -34,6 +34,19 @@ const PHONE_OFFER = [
   /\(\d{3}\)\s*\d{3}[-.\s]\d{4}|\b\d{3}[-.]\d{3}[-.]\d{4}\b/,
 ];
 
+// Offers that don't exist: the agents invent discount codes, previews, trials and guarantees.
+const FAKE_OFFER = [
+  /\b(discount|promo|coupon)\s*codes?\b/i,
+  /\bcoupons?\b/i,
+  /\bearly[- ]adopters?\b/i,
+  /\bfree\s+(trial|preview|sample|sneak peek)\b/i,
+  /\b(send|share|get|request|want)\s+(you\s+|me\s+)?(a\s+|the\s+)?(quick\s+)?(preview|sample|sneak peek)\b/i,
+  /\bpreview\s+(link|copy|version)\b/i,
+  /\b(money[- ]back|satisfaction)\s+guarantee(d)?\b/i,
+  /\b(full\s+)?refund\s+guarantee\b/i,
+  /\blimited[- ]time\s+(offer|discount|deal)\b/i,
+];
+
 const ADVICE = [
   /\byou should (sue|file (a|an) (claim|lawsuit)|deduct|write (it|this) off)\b/i,
   /\b(this is|as) (legal|tax) advice\b/i,
@@ -52,6 +65,8 @@ export function checkCopy(text, ctx = {}) {
   const t = String(text || '');
   if (PHONE_OFFER.some((re) => re.test(t))) problems.push('offers a phone call or includes a phone number');
   if (ADVICE.some((re) => re.test(t))) problems.push('reads like legal/tax/real-estate advice');
+  // Villa Cinema's free sample is a real offer; its copy has its own price guard below.
+  if (!ctx.villa && FAKE_OFFER.some((re) => re.test(t))) problems.push('promises a discount, preview, trial or guarantee that does not exist');
   if (ctx.business === 'nashville-buys' && ctx.audience === 'vendor' && /\$\s?\d/.test(t)) {
     problems.push('mentions a price in Nashville Buys vendor copy');
   }
@@ -90,7 +105,7 @@ export const GMAIL_FORBIDDEN = /(\/send\b|messages\/send|drafts\/send|\/import\b
 // Bobby's rule (Oct 1, 2026): agents build and sell NOTHING that touches real estate or his license.
 // Anything matching this is never auto-approved, built or launched. (Nashville Buys' own growth ideas
 // still exist, but they wait for Bobby — Autopilot never approves them.)
-const REAL_ESTATE = /\b(real[- ]?estate|realtors?|realty|brokerages?|mortgages?|home ?buy(er|ers|ing)|home ?sell(er|ers|ing)|fsbo|for[- ]sale[- ]by[- ]owner|listing agents?|buyer'?s agents?|closing (costs?|day|attorneys?|process)|escrow|title insurance|closinglock|certifid|mls|open houses?|home appraisals?|appraisers?|property management|landlords?|rental propert(y|ies)|housing market|home inspections?|licensed agents?|agent licen[cs]e|offer to purchase|purchase and sale agreement|down ?payments?)\b/i;
+const REAL_ESTATE = /\b(real[- ]?estate|realtors?|realty|brokerages?|mortgages?|home ?buy(er|ers|ing)|home ?sell(er|ers|ing)|fsbo|for[- ]sale[- ]by[- ]owner|listing agents?|buyer'?s agents?|closing (costs?|day|attorneys?|process)|escrow|title insurance|closinglock|certifid|mls|open houses?|home appraisals?|appraisers?|property management|landlords?|rental propert(y|ies)|housing market|home inspections?|licensed agents?|agent licen[cs]e|offer to purchase|purchase and sale agreement|down ?payments?|house[- ]?flip(s|ping|pers?)?|flip(ping)? houses|home[- ]?staging|real estate investing|investment propert(y|ies)|rental arbitrage|wholesal(e|ing) (houses|homes|propert(y|ies))|foreclosures?|short sales?|home valuations?|home equity|first[- ]time buyers?)\b/i;
 
 export function realEstateRisk(text = '') {
   // Agents often write special hyphens/spaces (e.g. "Real‑Estate" with U+2011); normalize before matching.

@@ -10,7 +10,7 @@ export async function render(el) {
     q(sb.from('launches').select('title,status,slug,price_usd,sales').order('created_at', { ascending: false }).limit(8)),
   ]);
   const enabled = pilot?.enabled !== false;
-  const maxDay = pilot?.max_per_day ?? 6;
+  const maxDay = Math.min(pilot?.max_per_day ?? 3, 3);
   const rows = (Array.isArray(radar) ? radar : []).slice().sort((a, b) => (b.score || 0) - (a.score || 0));
   const lastTick = tick?.at;
   const tickLate = !lastTick || Date.now() - Date.parse(lastTick) > 20 * 60000;
@@ -20,7 +20,7 @@ export async function render(el) {
   <div class="grid g2">
     <div class="card">
       <h2>Autopilot ${badge(enabled ? 'on' : 'paused', enabled ? 'ok' : 'warn')}</h2>
-      <p class="small">Approves up to <strong>${esc(maxDay)}</strong> ideas a day. Skips brand names, phone offers, MA real estate and Villa Cinema. Live offers still face the 14-day kill rule.</p>
+      <p class="small">Approves up to <strong>${esc(maxDay)}</strong> ideas a day. Skips brand names, phone offers, made-up discounts or previews, anything real estate, Nashville Buys and Villa Cinema. Live offers still face the 14-day kill rule.</p>
       <div class="row"><button id="pilot" class="${enabled ? '' : 'primary'}">${enabled ? 'Pause Autopilot' : 'Turn Autopilot on'}</button></div>
     </div>
     <div class="card">
