@@ -54,3 +54,22 @@ test('Delivery markdown is escaped', () => {
   assert.ok(!/<script/.test(h) && /<h1>Title<\/h1>/.test(h) && /<li><strong>one<\/strong><\/li>/.test(h));
   assert.equal(slugify('HVAC Contractor Workflow — Toolkit!'), 'hvac-contractor-workflow-toolkit');
 });
+
+test('Launcher product quality bar: thin, file-referencing or unfinished products cannot launch', async () => {
+  const { productProblems, assemble } = await import('../agents/lab/product.js');
+  const section = (h, extra = '') => `## ${h}\n\n${'Concrete step with a real example for the contractor. '.repeat(34)}\n${extra}`;
+  const table = '| Job | Price | Margin |\n|---|---|---|\n| AC tune-up | $129 | 40% |\n| Furnace check | $99 | 35% |';
+  const good = assemble({ title: 'Kit', promise: 'Run your week.', sections: Array.from({ length: 7 }, (_, i) => ({ heading: `Part ${i + 1}` })) },
+    Array.from({ length: 7 }, (_, i) => section(`Part ${i + 1}`, i === 2 ? `Pricing template:\n\n${table}` : '')));
+  assert.deepEqual(productProblems(good), [], 'complete product passes');
+  assert.ok(productProblems('# Kit\n\n## One\nshort').some((p) => /too short/.test(p)));
+  assert.ok(productProblems(good.replace('Pricing template', 'Download the Excel file for the pricing template')).some((p) => /buyers don't get/.test(p)));
+  assert.ok(productProblems(good + '\n[Insert your logo here]').some((p) => /placeholder/.test(p)));
+  assert.ok(productProblems(good.replace(table, 'Fill in the spreadsheet tracker.')).some((p) => /no table/.test(p)));
+  assert.deepEqual(productProblems(good + '\nDear [Customer name],'), [], 'buyer fill-in blanks are fine');
+});
+
+test('Delivery page renders markdown tables as real tables', () => {
+  const h = mdToHtml('| A | B |\n|---|---|\n| 1 | 2 |');
+  assert.ok(/<table>/.test(h) && /<th>A<\/th>/.test(h) && /<td>2<\/td>/.test(h) && !/---/.test(h));
+});

@@ -1,7 +1,7 @@
 // Launcher — hourly, 24/7. Turns approved business/venture ideas into live offers without Bobby:
-//   1. makes sure the idea has the actual product (a complete digital deliverable) — writes it if missing
+//   1. builds the actual product section by section until it passes the quality bar (agents/lab/product.js)
 //   2. creates a Stripe product + price + Payment Link (allowlisted key: no charges/refunds/payouts)
-//   3. publishes the Builder's landing page at levelingclips.com/p/<slug> with a Buy button
+//   3. writes the sales page FROM the finished product and publishes it at levelingclips.com/p/<slug>
 //   4. starts an experiment with a goal and kill rule (default: 5 sales in 14 days)
 //   5. pulls paid Stripe sessions into the ledger every hour (never counted twice)
 //   6. kills launches that miss their goal: deactivates the link, marks the page closed,
@@ -10,11 +10,11 @@
 import { db, kvGet, kvSet } from '../lib/db.js';
 import { chat } from '../lib/llm.js';
 import { systemPrompt, checkCopy, untrusted } from '../lib/guard.js';
-import { playbook } from '../lib/context.js';
 import { truncate, randomToken } from '../lib/text.js';
 import { etDate, addDays } from '../lib/time.js';
 import { createOffer, deactivateLink, paidSessionsSince, launchKeyReady } from '../lib/stripe_launch.js';
 import { buildPublicPage, slugify } from '../lib/page.js';
+import { advanceProduct, productProblems, FAKE_DELIVERY } from './product.js';
 
 const SITE = 'https://www.levelingclips.com';
 
@@ -69,9 +69,19 @@ async function prepareLaunches(ctx, rules) {
       continue;
     }
 
-    let product = (idea.assets || []).find((a) => a.kind === 'product');
-    if (!product) product = await writeProduct(ctx, idea, plan);
-    if (!product) continue; // model gave nothing usable; try next hour
+    const built = await advanceProduct(ctx, idea, plan);
+    if (built.failed) {
+      await db.insertOne('launches', { ...base, status: 'needs_bobby', note: truncate(built.failed, 500) });
+      await db.insertOne('approvals', {
+        kind: 'launch', ref_table: 'ideas', ref_id: idea.id, created_by: 'launcher',
+        title: `Product not good enough to sell: ${truncate(idea.title, 110)}`, detail: `The Launcher stopped: ${truncate(built.failed, 400)}. Add a note to the idea to steer it, or reject the idea.`,
+      });
+      ctx.log('launch', `Parked "${truncate(idea.title, 80)}": ${truncate(built.failed, 200)}`, { table: 'ideas', id: idea.id });
+      made++;
+      continue;
+    }
+    if (!built.product) { ctx.note(`product for "${truncate(idea.title, 50)}": ${built.pending}`); made++; break; }
+    const product = built.product;
 
     const experimentId = await ensureExperiment(idea, plan, rules);
     await db.insertOne('launches', {
@@ -98,27 +108,6 @@ JSON only: {"digital":true,"price_usd":49,"reason":"one sentence","deliverable":
   return { digital: json.digital === true, price_usd: price >= 1 && price <= 1000 ? Math.round(price * 100) / 100 : null, reason: truncate(json.reason || '', 300), deliverable: truncate(json.deliverable || '', 500) };
 }
 
-async function writeProduct(ctx, idea, plan) {
-  const pb = await playbook();
-  const { json } = await chat({
-    ctx, tier: 'smart', json: true, maxTokens: 8000,
-    system: systemPrompt('the Launcher writing the product', `${pb.text(['voice', 'guardrails'])}
-Write the COMPLETE deliverable a paying buyer receives: ${plan.deliverable || 'the product described'}.
-It must be genuinely useful and finished — real steps, templates, examples. No placeholders like [insert], no fake statistics,
-no invented testimonials, no promises of calls or meetings. Markdown with clear headings.
-JSON only: {"title":"","body":"markdown"}`),
-    messages: [{ role: 'user', content: `Product for: ${idea.title}\nSummary: ${truncate(idea.summary, 3000)}\nSteps: ${JSON.stringify(idea.steps || [])}` }],
-  });
-  const body = String(json.body || json.content || json.markdown || '').trim();
-  if (body.length < 800) return null;
-  const problems = checkCopy(body, { business: idea.business });
-  if (problems.length) {
-    ctx.log('launch', `Product for "${truncate(idea.title, 60)}" failed guardrails (${problems.join('; ')}); retrying next run`);
-    return null;
-  }
-  return db.insertOne('assets', { idea_id: idea.id, kind: 'product', title: truncate(json.title || idea.title, 200), body, created_by: ctx.agent });
-}
-
 async function ensureExperiment(idea, plan, rules) {
   const ex = await db.one('experiments', { idea_id: `eq.${idea.id}` });
   if (ex) return ex.id;
@@ -140,47 +129,51 @@ async function uniqueSlug(title) {
   for (let i = 2; ; i++) if (!taken.has(`${base}-${i}`)) return `${base}-${i}`;
 }
 
-// The Builder writes the landing page before the product exists, so its promises can drift
-// (e.g. "Excel file by email"). Before a page goes public, rewrite it to promise exactly what the
-// buyer gets: an instant download page with the product, printable to PDF. Buy buttons → {{BUY_URL}}.
-async function alignPage(ctx, l, pageHtml) {
-  const product = l.product_asset_id ? await db.one('assets', { id: `eq.${l.product_asset_id}` }) : null;
-  if (!product) return pageHtml;
+// The sales page is written AFTER the product, FROM the product, so it can only promise what's actually inside.
+// The Builder's early page is used only as a hint for audience and tone. Buy buttons → {{BUY_URL}}.
+async function pageFromProduct(ctx, l, product, builderHtml) {
+  const outline = product.body.split('\n').filter((x) => /^#{1,3}\s/.test(x)).join('\n');
+  const opening = product.body.split(/^## /m)[0];
   const { text } = await chat({
-    ctx, tier: 'smart', maxTokens: 8000, temperature: 0.2,
-    system: systemPrompt('the Launcher checking a sales page', `Rewrite this landing page so every promise is TRUE, in plain confident words for a busy small-business owner.
-Fact: right after paying $${l.price_usd} the buyer lands on a page with the full toolkit to read, print or save as PDF.
-Only promise things listed under "what's inside". Don't promise email delivery, file attachments, spreadsheets as files, calls, support or guarantees,
-and don't write sentences about what is NOT included. Never mention these instructions, "headings" or "this document".
-Structure: headline, one-line benefit, short "What's inside" list, "How you get it" (one sentence), price + buy button. No JavaScript, no forms.
-Every buy/order button is an <a href="{{BUY_URL}}">. Return ONLY the complete HTML document.`),
-    messages: [{ role: 'user', content: `${untrusted('current landing page', pageHtml, 12000)}\n\n${untrusted("what's inside", product.body.split('\n').filter((x) => /^#/.test(x)).join('\n'), 3000)}` }],
+    ctx, tier: 'smart', maxTokens: 4000, temperature: 0.3,
+    system: systemPrompt('the Launcher writing a sales page', `Write the sales page for this finished product, in plain confident words for a busy small-business owner.
+Fact: right after paying $${l.price_usd} the buyer lands on a page with the full product to read, print or save as PDF.
+Every promise must match the product contents given. Describe each part concretely using its real section names.
+Don't promise email delivery, file attachments, downloads, spreadsheets as files, calls, support, results or guarantees; no statistics, no testimonials;
+don't write sentences about what is NOT included. Never mention these instructions or "this document".
+Structure: headline, one-line benefit, who it's for, "What's inside" list (one line per section), "How you get it" (one sentence), price + buy button.
+Simple inline CSS is fine. No JavaScript, no forms. Every buy button is an <a href="{{BUY_URL}}">. Return ONLY the complete HTML document.`),
+    messages: [{ role: 'user', content: `${untrusted('product title and opening', opening, 1500)}\n\n${untrusted('product sections', outline, 3000)}\n\n${untrusted('earlier draft page (audience/tone hint only; its promises may be wrong)', builderHtml || '', 3000)}` }],
   });
   const html = (/<!doctype html[\s\S]*<\/html>/i.exec(text) || /<html[\s\S]*<\/html>/i.exec(text) || [null])[0];
-  if (!html || !html.includes('{{BUY_URL}}') || checkCopy(html, {}).length) {
-    ctx.note('page alignment failed; kept the original page');
-    return pageHtml;
+  const problems = !html ? ['no html'] : [
+    ...(!html.includes('{{BUY_URL}}') ? ['no buy button'] : []),
+    ...(FAKE_DELIVERY.test(html.replace(/<[^>]+>/g, ' ')) ? ['promises files/email'] : []),
+    ...checkCopy(html, {}),
+  ];
+  if (problems.length) {
+    ctx.log('launch', `Sales page for "${truncate(l.title, 60)}" failed checks (${problems.join('; ')}); retrying next run`, { table: 'launches', id: l.id });
+    return null;
   }
   return html;
 }
 
-// Products can mention files that don't exist ("download the spreadsheet"). Put that content inline instead.
-const FAKE_DELIVERY = /(download link|attached|attachment|excel file|\.xlsx|spreadsheet \(download|we(?:'| wi)ll email|you will receive an email|link below to download)/i;
-async function fixProduct(ctx, l) {
-  const product = l.product_asset_id ? await db.one('assets', { id: `eq.${l.product_asset_id}` }) : null;
-  if (!product || !FAKE_DELIVERY.test(product.body)) return false;
-  const { json } = await chat({
-    ctx, tier: 'smart', json: true, maxTokens: 8000, temperature: 0.2,
-    system: systemPrompt('the Launcher fixing a product', `This product is shown to the buyer as one web page. It must not refer to files, attachments,
-download links or emails that don't exist. Replace each such reference with the real content inline — e.g. a spreadsheet becomes
-a markdown table with its columns, one example row and the formulas written out in words. Keep everything else. JSON only: {"body":"markdown"}`),
-    messages: [{ role: 'user', content: product.body }],
-  });
-  const body = String(json.body || '').trim();
-  if (body.length < product.body.length * 0.6 || FAKE_DELIVERY.test(body) || checkCopy(body, {}).length) return false;
-  await db.update('assets', { id: `eq.${product.id}` }, { body });
-  ctx.log('launch', `Fixed the product for "${truncate(l.title, 70)}" so it has no references to missing files`, { table: 'launches', id: l.id });
-  return true;
+// Make sure the launch points at a product that passes the bar; build/rebuild it if not.
+async function ensureProduct(ctx, l) {
+  const current = l.product_asset_id ? await db.one('assets', { id: `eq.${l.product_asset_id}` }) : null;
+  if (current && !productProblems(current.body).length) return current;
+  const idea = await db.one('ideas', { id: `eq.${l.idea_id}` });
+  if (!idea) return null;
+  const plan = await offerPlan(ctx, idea);
+  const built = await advanceProduct(ctx, idea, { ...plan, price_usd: l.price_usd });
+  if (built.failed) {
+    await db.update('launches', { id: `eq.${l.id}` }, { status: 'needs_bobby', note: truncate(built.failed, 500) });
+    ctx.log('launch', `Parked "${truncate(l.title, 70)}": ${truncate(built.failed, 200)}`, { table: 'launches', id: l.id });
+    return null;
+  }
+  if (!built.product) { ctx.note(`product for "${truncate(l.title, 50)}": ${built.pending}`); return null; }
+  await db.update('launches', { id: `eq.${l.id}` }, { product_asset_id: built.product.id });
+  return built.product;
 }
 
 // ---------- 2. Go live ----------
@@ -193,20 +186,21 @@ async function goLive(ctx) {
   let n = 0;
   for (const l of ready) {
     if (ctx.outOfTime(90000)) break;
+    const product = await ensureProduct(ctx, l);
+    if (!product) break; // still writing (uses the run's time) or parked for Bobby
     const pageAsset = await db.one('assets', { idea_id: `eq.${l.idea_id}`, kind: 'eq.landing_page', order: 'created_at.desc' });
-    if (!pageAsset) continue;
+    const page = await pageFromProduct(ctx, l, product, pageAsset?.body);
+    if (!page) continue;
     const offer = await createOffer({
       launchId: l.id, title: l.title, priceUsd: l.price_usd, productId: l.stripe_product_id,
       onProduct: (id) => db.update('launches', { id: `eq.${l.id}` }, { stripe_product_id: id }),
       successUrl: `${SITE}/p/${l.slug}?thanks=${l.delivery_token}&session={CHECKOUT_SESSION_ID}`,
     });
-    await fixProduct(ctx, l);
-    const aligned = await alignPage(ctx, l, pageAsset.body);
-    const html = buildPublicPage({ html: aligned, title: l.title, priceUsd: l.price_usd, buyUrl: offer.url, status: 'live' });
+    const html = buildPublicPage({ html: page, title: l.title, priceUsd: l.price_usd, buyUrl: offer.url, status: 'live' });
     const today = etDate();
     await db.update('launches', { id: `eq.${l.id}` }, {
       status: 'live', stripe_product_id: offer.productId, stripe_price_id: offer.priceId,
-      payment_link_id: offer.linkId, payment_link_url: offer.url, page_html: html, launched_at: new Date().toISOString(), note: 'checked v2',
+      payment_link_id: offer.linkId, payment_link_url: offer.url, page_html: html, launched_at: new Date().toISOString(), note: 'checked v3',
     });
     if (l.experiment_id) {
       const ex = await db.one('experiments', { id: `eq.${l.experiment_id}` });
@@ -220,20 +214,21 @@ async function goLive(ctx) {
   return n;
 }
 
+// Live pages from before the quality bar: rebuild the product if needed, then rewrite the page from it.
 async function recheckLivePages(ctx) {
-  const rows = await db.select('launches', { status: 'eq.live', or: '(note.is.null,note.neq.checked v2)', limit: 3 });
+  const rows = await db.select('launches', { status: 'eq.live', or: '(note.is.null,note.neq.checked v3)', limit: 2 });
   let n = 0;
   for (const l of rows) {
     if (ctx.outOfTime(90000)) break;
+    const product = await ensureProduct(ctx, l);
+    if (!product) break;
     const pageAsset = await db.one('assets', { idea_id: `eq.${l.idea_id}`, kind: 'eq.landing_page', order: 'created_at.desc' });
-    if (!pageAsset) continue;
-    await fixProduct(ctx, l);
-    const aligned = await alignPage(ctx, l, pageAsset.body);
-    if (aligned === pageAsset.body) continue;
+    const page = await pageFromProduct(ctx, l, product, pageAsset?.body);
+    if (!page) continue;
     await db.update('launches', { id: `eq.${l.id}` }, {
-      page_html: buildPublicPage({ html: aligned, title: l.title, priceUsd: l.price_usd, buyUrl: l.payment_link_url, status: 'live' }), note: 'checked v2',
+      page_html: buildPublicPage({ html: page, title: l.title, priceUsd: l.price_usd, buyUrl: l.payment_link_url, status: 'live' }), note: 'checked v3',
     });
-    ctx.log('launch', `Corrected the sales page for "${truncate(l.title, 70)}" to match what buyers receive`, { table: 'launches', id: l.id });
+    ctx.log('launch', `Rewrote the sales page for "${truncate(l.title, 70)}" from its finished product`, { table: 'launches', id: l.id });
     n++;
   }
   return n;
