@@ -1,5 +1,6 @@
 -- Backup hourly trigger for the agents (GitHub's own schedule skipped 3 hours on Sep 30).
--- Supabase pg_cron calls GitHub's "run workflow" API at :37 every hour. The router runs each
+-- Supabase pg_cron calls GitHub's "run workflow" API at :07 and :37 every hour (since Oct 1:
+-- GitHub's own :07 schedule kept skipping, so pg_cron is now the main clock and :37 the retry). The router runs each
 -- hourly agent at most once per hour, so a double trigger never double-runs an agent.
 -- Token is trimmed: a pasted trailing newline made GitHub answer 400 "Problems parsing JSON" (fixed Sep 30, 10pm).
 -- Needs the Vault secret "github_dispatch_token" (fine-grained token: this repo, Actions read & write).
@@ -8,7 +9,7 @@ create extension if not exists pg_net;
 
 select cron.unschedule(jobid) from cron.job where jobname = 'ownvista-hq-hourly';
 
-select cron.schedule('ownvista-hq-hourly', '37 * * * *', $job$
+select cron.schedule('ownvista-hq-hourly', '7,37 * * * *', $job$
   select net.http_post(
     url := 'https://api.github.com/repos/BobbyBands888/ownvista-hq/actions/workflows/hq.yml/dispatches',
     headers := jsonb_build_object(
