@@ -1,4 +1,4 @@
-// Researcher — every 3 hours. Pulls public feeds (robots.txt respected) and approved search
+// Researcher — hourly, 24/7 (learns constantly; findings are routed to the agents that can use them). Pulls public feeds (robots.txt respected) and approved search
 // queries, keeps only relevant items (tagged by business, usefulness 1–5), tracks per-source
 // hit/useful counts and retires sources that stay useless. Hunter extracts demand signals.
 import { db } from './lib/db.js';
@@ -9,6 +9,7 @@ import { webSearch } from './lib/search.js';
 import { sha256, truncate } from './lib/text.js';
 import { BUSINESSES, LANES } from './lib/context.js';
 import { hunt } from './lab/hunter.js';
+import { routeFindings } from './lib/briefs.js';
 
 const MAX_SOURCES = 25;
 const MAX_NEW_PER_SOURCE = 8;
@@ -53,6 +54,7 @@ export async function run(ctx) {
 
   let kept = 0;
   const signalCandidates = [];
+  const newKnowledge = [];
   for (let i = 0; i < pending.length; i += BATCH) {
     if (ctx.outOfTime(90000)) break;
     const batch = pending.slice(i, i + BATCH);
@@ -62,10 +64,11 @@ export async function run(ctx) {
       if (!j) continue;
       const src = it.source;
       if (j.relevant && j.usefulness >= 2) {
-        await db.insert('knowledge', [{
+        const added = await db.insert('knowledge', [{
           source_id: src.id, url: it.url, title: it.title, summary: j.summary,
           businesses: j.businesses, lane: j.lane, usefulness: j.usefulness, published_at: it.publishedAt,
         }], { onConflict: 'url', ignoreDuplicates: true });
+        if (added?.[0]) newKnowledge.push(added[0]);
         kept++;
         src.hit_count++;
         if (j.usefulness >= 4) src.useful_count++;
@@ -88,8 +91,17 @@ export async function run(ctx) {
   }
 
   const signals = ctx.outOfTime(60000) ? 0 : await hunt(ctx, signalCandidates);
+
+  // Deploy what was learned: brief the agents that can use it, queue uncovered opportunities for the Architect.
+  let routed = { routed: 0, gaps: 0 };
+  if (newKnowledge.length && !ctx.outOfTime(45000)) {
+    try { routed = await routeFindings(ctx, newKnowledge); } catch (e) {
+      if (e.name === 'CapError') throw e;
+      ctx.note(`routing skipped: ${truncate(e.message, 120)}`);
+    }
+  }
   if (kept) ctx.log('knowledge', `Added ${kept} knowledge item(s) from ${fetched} source(s)`);
-  return `sources ${fetched} (${failed} failed), new items ${pending.length}, kept ${kept}, signals ${signals}, retired ${retired}`;
+  return `sources ${fetched} (${failed} failed), new items ${pending.length}, kept ${kept}, signals ${signals}, retired ${retired}, briefs ${routed.routed}, gaps ${routed.gaps}`;
 }
 
 async function pull(source) {

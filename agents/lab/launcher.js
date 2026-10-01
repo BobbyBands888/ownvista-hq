@@ -33,7 +33,8 @@ export async function run(ctx) {
   if (sales) out.push(`${sales} new sale(s)`);
   const judged = await enforceRules(ctx, rules);
   if (judged) out.push(judged);
-  return out.join(' · ') || 'nothing to launch';
+  // Show product-writing progress (e.g. "3/9 sections written") instead of hiding it behind "nothing to launch".
+  return [...out, ...ctx.notes].join(' · ') || 'nothing to launch';
 }
 
 async function tablesReady() {

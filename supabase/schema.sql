@@ -1365,3 +1365,19 @@ insert into public.kv (key, value) values
   ('economy_rules', '{}'),
   ('economy_burn', '[{"name":"Vercel","usd_month":0},{"name":"Domains (levelingclips, villacinema, nashvillebuys)","usd_month":0},{"name":"Zoho Mail","usd_month":0},{"name":"Supabase","usd_month":0},{"name":"Groq / Cloudflare / GitHub (free tiers)","usd_month":0}]')
 on conflict (key) do nothing;
+-- 6. Researcher briefs: findings routed to the agents that can use them (added Oct 1, after the first block).
+create table if not exists public.agent_briefs (
+  id uuid primary key default gen_random_uuid(),
+  agent text not null,
+  knowledge_id uuid not null references public.knowledge(id) on delete cascade,
+  note text,
+  created_at timestamptz not null default now(),
+  expires_at timestamptz not null default now() + interval '7 days',
+  unique (agent, knowledge_id)
+);
+create index if not exists agent_briefs_agent_idx on public.agent_briefs (agent, created_at desc);
+alter table public.agent_briefs enable row level security;
+drop policy if exists bobby_all on public.agent_briefs;
+create policy bobby_all on public.agent_briefs for all to authenticated using (public.is_bobby()) with check (public.is_bobby());
+update public.agents set schedule = 'Hourly, 24/7 (learns and briefs the crew)' where id = 'researcher';
+update public.agents set schedule = 'Hourly check for new gaps; full crew review Sundays 7pm ET' where id = 'architect';

@@ -1,4 +1,5 @@
-// Architect — Sundays 7pm ET. Shapes the crew around money.
+// Architect — checks hourly, full review Sundays 7pm ET. Shapes the crew around money.
+//   Hourly: if the Researcher queued a gap no agent covers, design one crew member for it (max one a day).
 //   1. Retires crew members that cost more than they bring (no accepted outputs or revenue for 4 weeks)
 //   2. Clones a PROVEN agent where a paying lane is bottlenecked (its runs keep hitting caps, or work piles up)
 //   3. Designs one brand-new kind of crew member aimed at the lane closest to money
@@ -8,11 +9,11 @@
 //   - validateSpec() rejects anything off-menu; the full guardrail test suite runs before every job
 //   - probation: small token budget, 14-day kill metric, card on the Economy page with a Stop button
 //   - anything needing money, an account, a key, or emailing a new audience still waits for Bobby
-import { db, kvGet } from './lib/db.js';
+import { db, kvGet, kvSet } from './lib/db.js';
 import { chat } from './lib/llm.js';
-import { systemPrompt } from './lib/guard.js';
+import { systemPrompt, untrusted } from './lib/guard.js';
 import { truncate } from './lib/text.js';
-import { daysAgoIso, etDate } from './lib/time.js';
+import { daysAgoIso, etDate, et } from './lib/time.js';
 import { LANES } from './lib/economy.js';
 import { CLONABLE, BLOCKS, READS, LIMITS, validateSpec, deploy, retire, crewStats, slugId } from './lib/crew.js';
 
@@ -21,7 +22,23 @@ export async function run(ctx) {
   try { crew = await db.select('crew_specs', { order: 'created_at.asc' }); } catch { return 'waiting for the database update (run the Economy SQL block in Supabase)'; }
   const snap = await kvGet('economy_snapshot', null);
   if (!snap) return 'waiting for the Economist\'s first books';
+  const now = new Date();
+  // Full review once per Sunday evening (7pm or the first run after it).
+  const weekly = isWeeklySlot(now) && (await kvGet('architect_weekly_on', null)) !== etDate(now);
+  if (weekly) await kvSet('architect_weekly_on', etDate(now));
+  const queue = await kvGet('architect_queue', []);
+  const lastNew = crew.filter((c) => c.kind === 'new').map((c) => c.created_at).sort().pop() || null;
+  if (!weekly && !shouldDesign({ weekly, queueLen: queue.length, lastDesignAt: lastNew, now })) {
+    return queue.length ? `${queue.length} gap(s) queued; next design after the daily limit` : 'no new gaps';
+  }
   const out = [];
+  if (!weekly) {
+    const live = crew.filter((c) => ['probation', 'active'].includes(c.status));
+    if (live.length >= LIMITS.max_crew) return `${queue.length} gap(s) queued, but the crew is full (${LIMITS.max_crew})`;
+    const made = await design(ctx, snap, crew, queue);
+    await kvSet('architect_queue', []);
+    return made || `looked at ${queue.length} gap(s); none worth a crew member`;
+  }
 
   // 1. Retire active crew that stopped paying their way.
   for (const spec of crew.filter((c) => c.status === 'active')) {
@@ -60,7 +77,8 @@ export async function run(ctx) {
   // 3. Design one new kind of crew member.
   const live = crew.filter((c) => ['probation', 'active'].includes(c.status));
   if (live.length < LIMITS.max_crew && !ctx.outOfTime(90000)) {
-    const made = await design(ctx, snap, crew);
+    const made = await design(ctx, snap, crew, queue);
+    await kvSet('architect_queue', []);
     if (made) out.push(made);
   } else if (live.length >= LIMITS.max_crew) out.push('crew is full');
 
@@ -84,7 +102,7 @@ async function bottleneck(lane) {
   return null;
 }
 
-async function design(ctx, snap, crew) {
+async function design(ctx, snap, crew, queue = []) {
   const agents = await db.select('agents', { select: 'id,name,description,enabled', order: 'sort' });
   const retired = crew.filter((c) => c.status === 'retired').slice(-6);
   const menu = Object.entries(BLOCKS).map(([k, v]) => `- ${k}: ${v.label} (max ${v.perWeek}/week)`).join('\n');
@@ -105,6 +123,7 @@ JSON only: {"create":true|false,"why":"one paragraph: the bottleneck to money it
     `Lanes (30 days): ${JSON.stringify(snap.lanes)}`,
     `Existing agents:\n${agents.map((a) => `- ${a.name}${a.enabled === false ? ' (off)' : ''}: ${truncate(a.description || '', 160)}`).join('\n')}`,
     `Retired crew:\n${retired.map((c) => `- ${c.name}: ${truncate(c.mission, 120)} — ${c.retire_reason || ''}`).join('\n') || '(none)'}`,
+    `Gaps the Researcher found that no agent covers (prefer designing for the strongest one):\n${queue.map((q) => untrusted(q.url || 'researcher gap', `${q.title}: ${q.why}\nSuggested mission: ${q.mission}`, 700)).join('\n') || '(none)'}`,
   ].join('\n\n');
   const { json } = await chat({ ctx, tier: 'smart', json: true, maxTokens: 1400, system, messages: [{ role: 'user', content: user }] });
   if (!json.create || !json.spec) { ctx.note(`no new crew: ${truncate(json.why || 'nothing clearly useful', 200)}`); return null; }
@@ -116,4 +135,17 @@ JSON only: {"create":true|false,"why":"one paragraph: the bottleneck to money it
   await deploy(spec);
   ctx.log('architect', `New crew member "${spec.name}" on probation: ${truncate(spec.mission, 200)} Budget ${spec.token_budget} tokens/day. ${spec.kill_metric.text}`, { table: 'crew_specs', id: spec.id });
   return `designed ${spec.name}`;
+}
+
+// Sunday from 7pm ET = the full weekly review window.
+export function isWeeklySlot(now = new Date()) {
+  const t = et(now);
+  return t.weekday === 0 && t.hour >= 19;
+}
+
+// Between weekly reviews, design only for queued gaps, at most one new crew member per 24 hours.
+export function shouldDesign({ weekly, queueLen, lastDesignAt, now = new Date() }) {
+  if (weekly) return true;
+  if (!queueLen) return false;
+  return !lastDesignAt || now - new Date(lastDesignAt) >= 24 * 3600000;
 }

@@ -102,6 +102,10 @@ export async function chat({ ctx, tier = 'smart', system, messages, json = false
   const provider = PROVIDER();
   const model = MODELS[provider][tier];
   const agent = ctx?.agent ?? 'unknown';
+  // Every agent gets its latest Researcher briefs (wrapped as untrusted data) on every call.
+  if (ctx?.agent) {
+    try { system = `${system}${await (await import('./briefs.js')).briefsFor(ctx.agent)}`; } catch { /* briefs are optional */ }
+  }
   const est = estimateTokens([{ content: system }, ...messages]) + Math.min(maxTokens, 1200);
   await checkCaps(tier, model, agent, est);
   if (ctx?.outOfTime?.(45000)) throw new CapError('Out of time for this run');

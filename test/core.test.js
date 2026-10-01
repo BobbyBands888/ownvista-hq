@@ -51,10 +51,11 @@ test('Learner runs every hour; Scout Mon+Thu; Judge Sundays', () => {
   assert.ok(isDue(S('judge'), new Date('2026-10-04T22:07:00Z'), []), 'Sun 6:07pm');
 });
 
-test('Researcher every 3 hours', () => {
+test('Researcher learns hourly, 24/7, once per hour', () => {
   const s = S('researcher');
-  assert.ok(isDue(s, new Date('2026-10-01T12:07:00Z'), [{ status: 'ok', started_at: '2026-10-01T09:08:00Z' }]));
-  assert.ok(!isDue(s, new Date('2026-10-01T11:07:00Z'), [{ status: 'ok', started_at: '2026-10-01T09:08:00Z' }]));
+  assert.ok(isDue(s, new Date('2026-10-01T07:07:00Z'), [{ status: 'ok', started_at: '2026-10-01T06:08:00Z' }]), '3am ET runs');
+  assert.ok(isDue(s, new Date('2026-10-01T12:07:00Z'), [{ status: 'ok', started_at: '2026-10-01T11:08:00Z' }]));
+  assert.ok(!isDue(s, new Date('2026-10-01T12:37:00Z'), [{ status: 'ok', started_at: '2026-10-01T12:08:00Z' }]), 'backup fire in the same hour does not rerun');
 });
 
 test('RSS and Atom parsing', () => {

@@ -18,7 +18,7 @@ Setup: **[docs/SETUP.md](docs/SETUP.md)**.
 | Villa Outreach | hourly 6am–11pm | Zoho inbox (bounces, unsubscribes, complaints, replies), Stripe payments, follow-ups, first emails, prospect discovery |
 | Operator | hourly, 24/7 | Gmail → drafts in the thread (never sends), flags money/contract/legal-tax/complaint/press/pricing, records what Bobby sent, works agent tasks, builds growth-idea assets |
 | Villa Studio | hourly when an order is in production | photo pick (vision) → MiniMax-H3 768P clips → vision QA (≤2 retries/clip) → 2K regeneration for paid → ffmpeg film → review → delivery |
-| Researcher (+ Hunter) | every 3 hours | public feeds + approved searches → relevant knowledge (business tags, usefulness 1–5); retires useless sources; Hunter extracts demand signals in 6 lanes |
+| Researcher (+ Hunter) | hourly, 24/7 | public feeds + approved searches → relevant knowledge (business tags, usefulness 1–5); retires useless sources; Hunter extracts demand signals; **routes useful findings to the agents that can use them** (briefs, added to every LLM call as untrusted data) and queues uncovered opportunities for the Architect |
 | Strategist | daily 7am | ≤3 growth ideas, ≤3 agent tasks, ≤3 new research queries |
 | Scout | Mon + Thu 8am | ≤3 new businesses scored 0–100 with real source links; launch kit for #1 |
 | Analyst | daily 9am | one-page business cases with unit economics and a $0–25 experiment |
@@ -26,7 +26,7 @@ Setup: **[docs/SETUP.md](docs/SETUP.md)**.
 | Judge | Sundays 6pm | scale / continue / kill per running experiment, with numbers |
 | Learner | hourly, 24/7 (grades the day at 11pm) | edits + feedback → playbook rules (dedupe, consolidate past 40, version history), grades drafts, self-review, daily metrics |
 | Economist | daily 11pm | P&L per agent (revenue share − shadow cost), runway vs real bills, weekly survival pressure per lane, writes the budgets agents already obey (token shares, image cap, minutes per run), closes crew probation |
-| Architect | Sundays 7pm | retires crew that doesn't pay, clones a proven agent where an earning lane is bottlenecked, designs one new crew member (data, not code) — both deploy automatically on probation |
+| Architect | hourly gap check; full review Sundays 7pm | retires crew that doesn't pay, clones a proven agent where an earning lane is bottlenecked, designs new crew (data, not code) for gaps the Researcher found (max one a day) — all deploy automatically on probation |
 
 The router runs every due agent inside one job and catches up after delayed or dropped GitHub schedule runs.
 Manual runs: Actions → Ownvista HQ → Run workflow → pick an agent, `villa_preflight`, `villa_test_email`,

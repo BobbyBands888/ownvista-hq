@@ -11,7 +11,7 @@ export const SCHEDULE = [
   { id: 'villa_outreach', type: 'hourly', hours: range(6, 23), budgetMin: 5 },
   { id: 'operator', type: 'hourly', hours: range(0, 23), budgetMin: 6, label: 'Hourly, 24/7' },
   { id: 'villa_studio', type: 'hourly', hours: range(0, 23), budgetMin: 12, onlyIfWork: true },
-  { id: 'researcher', type: 'interval', everyHours: 3, budgetMin: 6 },
+  { id: 'researcher', type: 'hourly', hours: range(0, 23), budgetMin: 6, label: 'Hourly, 24/7 (learns and briefs the crew)' },
   { id: 'strategist', type: 'daily', hour: 7, budgetMin: 4 },
   { id: 'scout', type: 'weekly', days: [1, 4], hour: 8, budgetMin: 5 },
   { id: 'analyst', type: 'daily', hour: 9, budgetMin: 4 },
@@ -22,7 +22,7 @@ export const SCHEDULE = [
   { id: 'learner', type: 'hourly', hours: range(0, 23), budgetMin: 5, label: 'Hourly, 24/7 (grades the day at 11pm ET)' },
   { id: 'paper_trader', type: 'hourly', hours: range(10, 16), weekdays: [1, 2, 3, 4, 5], budgetMin: 5, label: 'Weekdays hourly 10am–4pm ET (paper money)' },
   { id: 'economist', type: 'daily', hour: 23, budgetMin: 3, label: 'Daily 11pm ET (books, budgets)' },
-  { id: 'architect', type: 'weekly', days: [0], hour: 19, budgetMin: 4, label: 'Sundays 7pm ET (shapes the crew)' },
+  { id: 'architect', type: 'hourly', hours: range(0, 23), budgetMin: 4, label: 'Hourly check for new gaps; full crew review Sundays 7pm ET' },
 ];
 
 export const AGENT_IDS = SCHEDULE.map((s) => s.id);
