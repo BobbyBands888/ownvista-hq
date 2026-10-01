@@ -9,7 +9,7 @@
 // Physical products or anything needing Bobby's license/time go to Needs you instead.
 import { db, kvGet, kvSet } from '../lib/db.js';
 import { chat } from '../lib/llm.js';
-import { systemPrompt, checkCopy } from '../lib/guard.js';
+import { systemPrompt, checkCopy, untrusted } from '../lib/guard.js';
 import { playbook } from '../lib/context.js';
 import { truncate, randomToken } from '../lib/text.js';
 import { etDate, addDays } from '../lib/time.js';
@@ -25,6 +25,8 @@ export async function run(ctx) {
   const made = await prepareLaunches(ctx, rules);
   if (made) out.push(`prepared ${made}`);
   const live = await goLive(ctx);
+  const fixed = await recheckLivePages(ctx);
+  if (fixed) out.push(`rechecked ${fixed} page(s)`);
   if (live) out.push(`launched ${live}`);
   if (!launchKeyReady()) out.push('waiting for STRIPE_LAUNCH_KEY');
   const sales = await syncSales(ctx);
@@ -138,6 +140,30 @@ async function uniqueSlug(title) {
   for (let i = 2; ; i++) if (!taken.has(`${base}-${i}`)) return `${base}-${i}`;
 }
 
+// The Builder writes the landing page before the product exists, so its promises can drift
+// (e.g. "Excel file by email"). Before a page goes public, rewrite it to promise exactly what the
+// buyer gets: an instant download page with the product, printable to PDF. Buy buttons → {{BUY_URL}}.
+async function alignPage(ctx, l, pageHtml) {
+  const product = l.product_asset_id ? await db.one('assets', { id: `eq.${l.product_asset_id}` }) : null;
+  if (!product) return pageHtml;
+  const { text } = await chat({
+    ctx, tier: 'smart', maxTokens: 8000, temperature: 0.2,
+    system: systemPrompt('the Launcher checking a sales page', `Return the landing page HTML, corrected so every promise is TRUE.
+What the buyer really gets after paying $${l.price_usd}: an instant online page (shown right after checkout; they can print it or save it as PDF)
+containing exactly the product below. There is NO email delivery, NO Excel/Word/PDF file attachment, NO call, NO support promise, NO guarantee.
+Remove or reword anything else. Keep the design, keep it short. No JavaScript, no forms.
+Every buy/order button must be an <a href="{{BUY_URL}}">. State the price once.
+Return ONLY the complete HTML document, nothing before or after it.`),
+    messages: [{ role: 'user', content: `${untrusted('current landing page', pageHtml, 12000)}\n\n${untrusted('the product the buyer receives (headings only shown)', product.body.split('\n').filter((x) => /^#/.test(x)).join('\n'), 3000)}` }],
+  });
+  const html = (/<!doctype html[\s\S]*<\/html>/i.exec(text) || /<html[\s\S]*<\/html>/i.exec(text) || [null])[0];
+  if (!html || !html.includes('{{BUY_URL}}') || checkCopy(html, {}).length) {
+    ctx.note('page alignment failed; kept the original page');
+    return pageHtml;
+  }
+  return html;
+}
+
 // ---------- 2. Go live ----------
 async function goLive(ctx) {
   if (!launchKeyReady()) {
@@ -155,11 +181,12 @@ async function goLive(ctx) {
       onProduct: (id) => db.update('launches', { id: `eq.${l.id}` }, { stripe_product_id: id }),
       successUrl: `${SITE}/p/${l.slug}?thanks=${l.delivery_token}&session={CHECKOUT_SESSION_ID}`,
     });
-    const html = buildPublicPage({ html: pageAsset.body, title: l.title, priceUsd: l.price_usd, buyUrl: offer.url, status: 'live' });
+    const aligned = await alignPage(ctx, l, pageAsset.body);
+    const html = buildPublicPage({ html: aligned, title: l.title, priceUsd: l.price_usd, buyUrl: offer.url, status: 'live' });
     const today = etDate();
     await db.update('launches', { id: `eq.${l.id}` }, {
       status: 'live', stripe_product_id: offer.productId, stripe_price_id: offer.priceId,
-      payment_link_id: offer.linkId, payment_link_url: offer.url, page_html: html, launched_at: new Date().toISOString(),
+      payment_link_id: offer.linkId, payment_link_url: offer.url, page_html: html, launched_at: new Date().toISOString(), note: 'page claims checked',
     });
     if (l.experiment_id) {
       const ex = await db.one('experiments', { id: `eq.${l.experiment_id}` });
@@ -168,6 +195,24 @@ async function goLive(ctx) {
     }
     await db.update('ideas', { id: `eq.${l.idea_id}` }, { status: 'launched' });
     ctx.log('launch', `LIVE: "${truncate(l.title, 80)}" at $${l.price_usd} → ${SITE}/p/${l.slug}`, { table: 'launches', id: l.id });
+    n++;
+  }
+  return n;
+}
+
+async function recheckLivePages(ctx) {
+  const rows = await db.select('launches', { status: 'eq.live', note: 'is.null', limit: 3 });
+  let n = 0;
+  for (const l of rows) {
+    if (ctx.outOfTime(90000)) break;
+    const pageAsset = await db.one('assets', { idea_id: `eq.${l.idea_id}`, kind: 'eq.landing_page', order: 'created_at.desc' });
+    if (!pageAsset) continue;
+    const aligned = await alignPage(ctx, l, pageAsset.body);
+    if (aligned === pageAsset.body) continue;
+    await db.update('launches', { id: `eq.${l.id}` }, {
+      page_html: buildPublicPage({ html: aligned, title: l.title, priceUsd: l.price_usd, buyUrl: l.payment_link_url, status: 'live' }), note: 'page claims checked',
+    });
+    ctx.log('launch', `Corrected the sales page for "${truncate(l.title, 70)}" to match what buyers receive`, { table: 'launches', id: l.id });
     n++;
   }
   return n;
