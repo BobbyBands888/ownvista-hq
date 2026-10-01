@@ -2,7 +2,7 @@
 // Entry point for the hourly GitHub Actions job.
 //   node agents/run.js                 → run every agent that is due (router)
 //   node agents/run.js --agent=operator → run one agent now (manual dispatch)
-//   node agents/run.js --plan          → print the plan (used to decide whether to install ffmpeg)
+//   node agents/run.js --plan          → print the plan (used to decide whether to install ffmpeg / Python)
 import { appendFileSync } from 'node:fs';
 import { db } from './lib/db.js';
 import { env } from './lib/env.js';
@@ -30,7 +30,10 @@ async function plan() {
     await loadCrew();
     const agents = requested === 'all' ? AGENT_IDS : [requested];
     const needsFfmpeg = agents.includes('villa_studio') || agents.includes('asset_studio') || requested === 'all';
-    return { agents, needsFfmpeg, trigger: 'manual', next: null };
+    const books = agents.includes('book_studio') ? await import('./lab/book_studio.js') : null;
+    const needsPython = !!books;
+    const needsToddler = needsPython && await books.needsToddler().catch(() => false);
+    return { agents, needsFfmpeg, needsPython, needsToddler, trigger: 'manual', next: null };
   }
   const { due, next } = await dueAgents();
   const agents = [];
@@ -40,7 +43,11 @@ async function plan() {
   }
   // ffmpeg is installed only when Villa Studio has an order or the Asset Studio can still make images today.
   const assetWork = agents.includes('asset_studio') && await (await import('./lab/asset_studio.js')).hasWork().catch(() => false);
-  return { agents, needsFfmpeg: agents.includes('villa_studio') || assetWork, trigger: 'schedule', next };
+  // Python (reportlab, pypdf) is installed only when the Book Studio has a book to build.
+  const books = agents.includes('book_studio') ? await import('./lab/book_studio.js') : null;
+  const needsPython = !!books && await books.hasWork().catch(() => false);
+  const needsToddler = needsPython && await books.needsToddler().catch(() => false);
+  return { agents, needsFfmpeg: agents.includes('villa_studio') || assetWork, needsPython, needsToddler, trigger: 'schedule', next };
 }
 
 const runAgent = (id, opts) => runOne(id, { ...opts, jobDeadline: JOB_DEADLINE });
@@ -48,9 +55,9 @@ const runAgent = (id, opts) => runOne(id, { ...opts, jobDeadline: JOB_DEADLINE }
 async function main() {
   const p = await plan();
   if (args.plan) {
-    console.log(JSON.stringify({ agents: p.agents, needsFfmpeg: p.needsFfmpeg }));
+    console.log(JSON.stringify({ agents: p.agents, needsFfmpeg: p.needsFfmpeg, needsPython: p.needsPython }));
     if (process.env.GITHUB_OUTPUT) {
-      appendFileSync(process.env.GITHUB_OUTPUT, `needs_ffmpeg=${p.needsFfmpeg}\nagents=${p.agents.join(',')}\n`);
+      appendFileSync(process.env.GITHUB_OUTPUT, `needs_ffmpeg=${p.needsFfmpeg}\nneeds_python=${!!p.needsPython}\nneeds_toddler=${!!p.needsToddler}\nagents=${p.agents.join(',')}\n`);
     }
     return;
   }

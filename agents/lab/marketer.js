@@ -1,5 +1,5 @@
 // Marketer — 3x a day (hourly GitHub job, not the Vercel tick). Writes DRAFT-ONLY marketing kits for what we sell:
-//   live Launcher offers (levelingclips.com/p/<slug>) and Asset Studio packs (itch.io).
+//   live Launcher offers (levelingclips.com/p/<slug>), Asset Studio packs (itch.io) and live Book Studio paperbacks (Amazon).
 //   kit = better marketplace listing (title, short line, tags, description, price note), 3 Pinterest pins,
 //         2 Reddit post drafts (with the subreddit rule to check), search title/description, 3 hooks.
 // Never posts, sends, publishes, edits listings or contacts anyone. Bobby copies what he likes from the Shop page.
@@ -11,6 +11,7 @@ import { systemPrompt, untrusted, checkCopy, realEstateRisk } from '../lib/guard
 import { ipRisk } from '../lib/autopilot.js';
 import { fetchFeed } from '../lib/feeds.js';
 import { htmlToText, truncate } from '../lib/text.js';
+import { KV_KEY as BOOKS_KEY } from '../lib/books.js';
 
 export const KIT_KEY = 'marketing_kits';
 const SITE = 'https://www.levelingclips.com';
@@ -39,7 +40,7 @@ export function vetKit(raw = {}, target) {
     const problems = [...checkCopy(t, { allowLinks, prices })];
     const re = realEstateRisk(t); if (re) problems.push(`real estate ("${re}")`);
     const ip = ipRisk(t); if (ip) problems.push(`brand/character ("${ip}")`);
-    if (target.kind === 'asset_pack' && HANDMADE.test(t)) problems.push('calls AI-generated art hand-made');
+    if (['asset_pack', 'book'].includes(target.kind) && HANDMADE.test(t)) problems.push('calls AI-generated art hand-made');
     if (/\b(\d+\s*\+?\s*(happy )?(customers|buyers|downloads|sales)|best[- ]?selling|#1|five[- ]star|5[- ]star)\b/i.test(t)) problems.push('claims sales/reviews we do not have');
     if (problems.length) { dropped.push(`${label}: ${problems.join('; ')}`); return false; }
     return true;
@@ -65,9 +66,10 @@ export function vetKit(raw = {}, target) {
 }
 
 async function loadTargets() {
-  const [launches, packs] = await Promise.all([
+  const [launches, packs, books] = await Promise.all([
     db.select('launches', { status: 'eq.live', order: 'launched_at.desc', limit: 20, select: 'id,slug,title,price_usd,page_html,sales,goal_sales' }).catch(() => []),
     db.select('asset_packs', { status: 'in.(ready,published)', order: 'created_at.desc', limit: 20, select: 'id,title,theme,style,page_copy,tags,price_usd,itch_url,status,views,downloads,sales,items' }).catch(() => []),
+    kvGet(BOOKS_KEY, []).catch(() => []),
   ]);
   return [
     ...launches.map((l) => ({
@@ -77,6 +79,11 @@ async function loadTargets() {
     ...packs.map((p) => ({
       key: `pack:${p.id}`, kind: 'asset_pack', title: p.title, price: p.price_usd, url: p.itch_url || null, itch_url: p.itch_url || null,
       facts: `itch.io game asset pack (${p.status === 'ready' ? 'not published yet' : 'published'}${p.itch_url ? `: ${p.itch_url}` : ''}).\nTheme: ${p.theme || ''}\nStyle: ${p.style || ''}\nItems: ${(p.items || []).map((i) => i.name || i.title).filter(Boolean).slice(0, 20).join(', ')}\nPrice: $${p.price_usd}\nCurrent tags: ${(p.tags || []).join(', ')}\nStats: ${p.views} views, ${p.downloads} downloads, ${p.sales} sales.\nAI-generated graphics (must stay disclosed).\nCurrent description:\n${truncate(p.page_copy || '', 2500)}`,
+    })),
+    // Live Amazon paperbacks (Book Studio). No Amazon link is stored, so kits use no links.
+    ...(Array.isArray(books) ? books : []).filter((b) => b.status === 'live').map((b) => ({
+      key: `book:${b.slug}`, kind: 'book', title: b.title, price: b.list_price || b.recommended_price, url: null,
+      facts: `Amazon paperback coloring book (live on Amazon.com).\nTitle: ${b.title}\nSubtitle: ${b.subtitle || ''}\nAuthor (pen name): ${b.author}\nPages: ${b.pages || 'unknown'}\nPrice: $${b.list_price || b.recommended_price}\nSingle-sided pages, 8.5 x 11 in. Art made with AI tools; never call it hand-drawn.\nListing description:\n${truncate(htmlToText(b.listing?.description || ''), 2000)}`,
     })),
   ];
 }
@@ -107,7 +114,7 @@ No brand, character, team or celebrity names.${t.kind === 'asset_pack' ? `
 These images are AI-generated. NEVER call them hand-painted, hand-drawn, handmade or artist-made ("painterly style" is fine).
 Say "AI-generated" plainly in the listing description and in every Reddit body. Many game-dev subreddits ban AI art
 or its promotion: only pick subreddits that allow it, and put that in rule_check.` : ''}
-listing: the marketplace listing (${t.kind === 'asset_pack' ? 'itch.io' : 'Gumroad/itch-style'}): title under 80 chars, short one-liner,
+listing: the marketplace listing (${t.kind === 'asset_pack' ? 'itch.io' : t.kind === 'book' ? 'Amazon A+ / description ideas for Bobby to paste on KDP himself' : 'Gumroad/itch-style'}): title under 80 chars, short one-liner,
 up to 10 lowercase search tags buyers actually type, description in plain text with short sections (under 1200 characters),
 price_note (one sentence: why this price, from the facts).
 pins: 3 Pinterest pins (title, description with natural keywords, board name).

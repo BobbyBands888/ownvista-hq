@@ -7,3 +7,5 @@ dashboard/config.js
 .DS_Store
 .vercel
 .claude/
+__pycache__/
+*.pyc

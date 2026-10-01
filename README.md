@@ -29,6 +29,7 @@ Setup: **[docs/SETUP.md](docs/SETUP.md)**.
 | Autopilot | every 15 min (tick) | approves new ideas on Bobby's behalf (his Oct 1 call) so Builder → Launcher take them live; skips brands/IP, failed copy checks, MA real estate, Villa Cinema; max 6/day; pause on the Radar page |
 | Product Scout | hourly (tick) | Etsy (official API, `ETSY_API_KEY`), itch.io and Product Hunt feeds + research → original text products straight to Autopilot; physical/graphic ones to the Radar |
 | Dropship Scout | every 90 min (tick) | trending physical products scored on margin, shipping, saturation → Radar; never lists, buys or contacts suppliers |
+| Book Studio | daily 3am | Amazon KDP paperbacks: seasonal (live 4–6 weeks before the date) + evergreen adult mandala books, max 2 new titles per KDP week (resets Sun 00:00 UTC); builds interior + cover PDFs (vendored Python engines in `agents/books/engines`, checked with pypdf), listing + 7 keywords through trademark/banned-word checks, upload pack on the Shop page. Claude uploads in Chrome, Bobby clicks Publish; it never logs into Amazon or changes prices |
 | Architect | every 30 min gap check (tick); full review Sundays 7pm | retires crew that doesn't pay, clones a proven agent where an earning lane is bottlenecked, designs new crew (data, not code) for gaps the Researcher found (max one per 4 hours, crew up to 8) — all deploy automatically on probation |
 
 The router runs every due agent inside one job and catches up after delayed or dropped GitHub schedule runs.
@@ -44,6 +45,7 @@ Manual runs: Actions → Ownvista HQ → Run workflow → pick an agent, `villa_
 | Send caps: 20 first emails/day with 5→20 warm-up over 14 days, one follow-up after 4+ days, no third touch, role addresses only, per-country switch (US only on), suppression list, unsubscribe footer + physical address, 60/day safety cap | `vc_reserve_send()` in Postgres |
 | Auto-pause on >5% bounces or any complaint | `vc_record_bounce()` / `vc_pause()`; Bobby resumes from Needs you |
 | Spend: $20 per paid film (incl. 2K upgrade + retries, upgrade reserved up front), $25/week samples, $150/month backstop, flag Bobby on refusal | `vc_reserve_spend()` in Postgres; every MiniMax call requires a reservation id |
+| Book Studio only prepares KDP books (status moves past `needs_upload` are recorded by Bobby via `api/books.js`) | `agents/lib/books.js` `canMove()`; `test/books.test.js` |
 | No other spending, no accounts, no publishing | no code paths exist; paid-API grep test; experiments needing money or accounts go to Needs you |
 | No phone-call offers, no Nashville Buys vendor pricing, no legal/tax/RE advice, businesses never cross-mentioned | `checkCopy()` in `agents/lib/guard.js` on every draft/asset/email, plus the playbook |
 | Prompt-injection defense | every system prompt starts with `systemPrompt()`; all email/web text is wrapped by `untrusted()` |

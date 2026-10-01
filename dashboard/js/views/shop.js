@@ -1,4 +1,5 @@
-// Shop: what the crew is selling. Launches (live pages + Stripe links) and Asset Studio packs for itch.io.
+// Shop: what the crew is selling. Launches (live pages + Stripe links), Asset Studio packs for itch.io and
+// Book Studio paperbacks for Amazon KDP (read/written through /api/books, never straight from here).
 import { sb, q, esc, ago, money, badge, on, act, toast } from '../core.js';
 
 const BUCKET = 'asset-packs';
@@ -58,6 +59,8 @@ export async function render(el) {
     </div>
   </div>
 
+  <div class="section" id="kdp"><h2>Amazon (KDP)</h2><div class="small muted">Loading books…</div></div>
+
   <div class="section"><div class="row between"><h2>Asset Studio packs</h2>
       <label class="small" style="display:flex;gap:6px;align-items:center;margin:0">${studio ? `<input type="checkbox" id="studio-on" ${studio.enabled ? 'checked' : ''}> Asset Studio on` : ''}</label></div>
     ${studio?.last_summary ? `<div class="small muted" style="margin-top:4px">Last run ${ago(studio.last_run_at)}: ${esc(studio.last_summary)}</div>` : ''}
@@ -84,6 +87,8 @@ export async function render(el) {
     }).join('') || `<div class="card empty">No packs yet. ${studio?.last_summary ? esc(studio.last_summary) : 'Once Cloudflare is connected the Asset Studio starts on its own.'}</div>`}
     </div>
   </div>`;
+
+  renderBooks(el.querySelector('#kdp'), kits);
 
   el.querySelector('#studio-on')?.addEventListener('change', (e) => act(null, async () => {
     await q(sb.from('agents').update({ enabled: e.target.checked }).eq('id', 'asset_studio'));
@@ -138,4 +143,84 @@ function kitHtml(k) {
     ${(k.hooks || []).length ? box('Hooks', k.hooks.join('\n'), 3) : ''}
     ${(k.dropped || []).length ? `<div class="small muted">Dropped by checks: ${esc(k.dropped.join(' | '))}</div>` : ''}
   </details>`;
+}
+
+// ---------- Amazon (KDP): Book Studio paperbacks ----------
+// Claude uploads in Chrome from this pack; Bobby clicks Publish on KDP. Buttons only record what happened there.
+const BOOK_TONE = { planned: 'info', built: 'info', needs_upload: 'warn', uploaded_draft: 'warn', in_review: 'info', live: 'ok', paused: 'bad' };
+const BOOK_LABEL = { needs_upload: 'needs upload', uploaded_draft: 'draft on KDP', in_review: 'in review' };
+const NEXT = {
+  needs_upload: [['uploaded_draft', 'Uploaded as draft']],
+  uploaded_draft: [['in_review', 'Published (in review)'], ['needs_upload', 'Back to needs upload']],
+  in_review: [['live', 'Live on Amazon']],
+  live: [['paused', 'Paused']],
+  paused: [['needs_upload', 'Needs upload again'], ['live', 'Live again']],
+};
+
+async function booksApi(method, body) {
+  const { data: { session } } = await sb.auth.getSession();
+  const res = await fetch('/api/books', {
+    method,
+    headers: { Authorization: `Bearer ${session?.access_token || ''}`, ...(body ? { 'Content-Type': 'application/json' } : {}) },
+    body: body ? JSON.stringify(body) : undefined,
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+  return data;
+}
+
+const field = (label, value, rows = 1) => `<div style="margin-top:6px"><div class="small"><strong>${esc(label)}</strong></div>
+  <div class="row" style="align-items:flex-start"><textarea readonly rows="${rows}" style="flex:1;min-height:0">${esc(value)}</textarea><button data-copybook>Copy</button></div></div>`;
+
+function bookCard(b, kit) {
+  const r = b.price?.recommended, cur = b.price?.current;
+  const pack = b.pack;
+  const files = b.links?.interior ? `<div class="row small"><a href="${esc(b.links.interior)}" target="_blank" rel="noopener">interior.pdf</a> · <a href="${esc(b.links.cover)}" target="_blank" rel="noopener">cover.pdf</a>${b.cover_in ? ` <span class="muted">(${b.pages} pages, cover ${esc(b.cover_in.join(' x '))} in)</span>` : ''}</div>` : '';
+  const next = (NEXT[b.status] || []).map(([s, label]) => `<button data-bookstatus="${s}" class="${s === 'live' || s === 'in_review' ? 'ok' : ''}">${esc(label)}</button>`).join('');
+  return `<div class="card stack" data-book="${esc(b.slug)}">
+    <div class="row between"><h3>${esc(b.title)}</h3><span class="row">${badge(BOOK_LABEL[b.status] || b.status, BOOK_TONE[b.status])}${b.kdp_title_id ? badge(b.kdp_title_id) : ''}</span></div>
+    <div class="small muted">${esc(b.subtitle || '')}</div>
+    <div class="small">${esc(b.author)}${cur ? ` · on KDP at ${money(cur.price)} (${Math.round(cur.rate * 100)}% → ${money(cur.per_sale)}/sale)` : ''}${r ? ` · recommended ${money(r.price)} → ${Math.round(r.rate * 100)}% × ${money(r.price)} − ${money(r.print_cost)} print = <strong>${money(r.per_sale)}</strong>/sale` : ''}</div>
+    ${b.links?.thumb ? `<img src="${esc(b.links.thumb)}" alt="Front cover of ${esc(b.title)}" style="width:120px;border-radius:4px">` : ''}
+    ${files}
+    ${b.notes ? `<div class="small muted">${esc(b.notes)}</div>` : ''}
+    ${b.build_error ? `<div class="small" style="color:var(--bad)">Last build failed: ${esc(b.build_error)}</div>` : ''}
+    ${pack && b.files?.interior ? `<details><summary>Upload pack (KDP fields in order)</summary>
+      ${pack.upload_after ? `<div class="small"><strong>Create on KDP on/after ${esc(pack.upload_after)}</strong> (weekly title limit)</div>` : ''}
+      <ol class="small">${pack.checklist.map((c) => `<li>${esc(c)}</li>`).join('')}</ol>
+      ${pack.sections.map((sec) => `<h4 style="margin:10px 0 0">${esc(sec.name)}</h4>${sec.fields.map(([k, v]) => field(k, v, String(v).length > 120 ? 6 : 1)).join('')}`).join('')}
+      ${(b.listing_dropped || []).length ? `<div class="small muted">Dropped by checks: ${esc(b.listing_dropped.join(' | '))}</div>` : ''}
+    </details>` : ''}
+    ${next ? `<div class="row">${b.status === 'needs_upload' || b.status === 'uploaded_draft' ? `<input data-kdpid placeholder="KDP title ID" value="${esc(b.kdp_title_id || '')}" style="width:150px">` : ''}${b.status === 'in_review' || b.status === 'live' ? `<input data-listprice placeholder="price on KDP" value="${esc(b.list_price ?? '')}" style="width:110px">` : ''}${next}</div>` : ''}
+    ${kitHtml(kit)}
+  </div>`;
+}
+
+async function renderBooks(host, kits = {}) {
+  if (!host) return;
+  let books;
+  try { ({ books } = await booksApi('GET')); }
+  catch (e) { host.innerHTML = `<h2>Amazon (KDP)</h2><div class="card empty">Could not load books: ${esc(e.message)}</div>`; return; }
+  const order = ['needs_upload', 'uploaded_draft', 'in_review', 'built', 'planned', 'live', 'paused'];
+  books.sort((a, b) => order.indexOf(a.status) - order.indexOf(b.status));
+  const n = (s) => books.filter((b) => b.status === s).length;
+  host.innerHTML = `<div class="row between"><h2>Amazon (KDP)</h2><span class="small muted">Book Studio prepares; Claude uploads in Chrome; you click Publish</span></div>
+    <div class="small num" style="margin-top:4px">Needs upload ${n('needs_upload')} · draft ${n('uploaded_draft')} · in review ${n('in_review')} · live ${n('live')} · planned ${n('planned') + n('built')}</div>
+    <div class="list" style="margin-top:8px">${books.map((b) => bookCard(b, kits[`book:${b.slug}`])).join('') || '<div class="card empty">No books yet. The Book Studio adds them on its next daily run.</div>'}</div>`;
+
+  on(host, 'click', '[data-copybook]', (e, btn) => {
+    const ta = btn.parentElement.querySelector('textarea');
+    navigator.clipboard?.writeText(ta.value).then(() => toast('Copied'), () => { ta.select(); toast('Press Cmd+C to copy'); });
+  });
+  on(host, 'click', '[data-bookstatus]', (e, btn) => {
+    const card = btn.closest('[data-book]');
+    act(btn, async () => {
+      await booksApi('POST', {
+        slug: card.dataset.book, status: btn.dataset.bookstatus,
+        kdp_title_id: card.querySelector('[data-kdpid]')?.value.trim() || undefined,
+        list_price: card.querySelector('[data-listprice]')?.value.trim() || undefined,
+      });
+      window.hqRefresh();
+    }, 'Saved');
+  });
 }

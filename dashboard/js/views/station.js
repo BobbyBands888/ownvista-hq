@@ -39,6 +39,7 @@ const CREW = {
   product_scout:  { room: 'lab',     desk: [80, 75],   color: '#22d3ee' },
   dropship_scout: { room: 'lab',     desk: [140, 75],  color: '#fb923c' },
   autopilot:      { room: 'deck',    desk: [245, 175], color: '#facc15' },
+  book_studio:    { room: 'library', desk: [220, 270], color: '#a3e635' },
 };
 const DECK_SPOTS = [[200, 140], [240, 140], [280, 140], [200, 170], [280, 170]];
 

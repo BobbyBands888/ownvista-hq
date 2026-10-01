@@ -35,7 +35,7 @@ export const BASE_TOKENS = {
   operator: 60000, villa_outreach: 40000, villa_studio: 150000, researcher: 100000, strategist: 15000, scout: 15000,
   product_scout: 20000, dropship_scout: 15000, autopilot: 1000,
   analyst: 20000, builder: 20000, judge: 10000, learner: 20000, launcher: 30000, asset_studio: 20000,
-  economist: 6000, architect: 15000, paper_trader: 30000,
+  economist: 6000, architect: 15000, paper_trader: 30000, book_studio: 8000,
 };
 export const BASE_IMAGES = 100;
 

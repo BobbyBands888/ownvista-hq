@@ -26,6 +26,7 @@ export const MODULES = {
   dropship_scout: () => import('./lab/dropship_scout.js'),
   autopilot: () => import('./lab/autopilot_agent.js'),
   marketer: () => import('./lab/marketer.js'),
+  book_studio: () => import('./lab/book_studio.js'),
 };
 
 // Extra manual-only commands.
@@ -42,6 +43,7 @@ const NEW_ROWS = {
   dropship_scout: { name: 'Dropship Scout', description: 'Hunts trending physical products with margin, shipping time and saturation scored; results on the Radar page.', sort: 35 },
   autopilot: { name: 'Autopilot', description: 'Approves new ideas on Bobby\'s behalf (caps, IP and copy checks) so they build and go live without waiting.', sort: 36 },
   marketer: { name: 'Marketer', description: 'Writes draft-only marketing kits for live offers and itch.io packs: better listing, tags, Pinterest pins, Reddit drafts, search text. Bobby posts; it never does.', sort: 37 },
+  book_studio: { name: 'Book Studio', description: 'Amazon KDP paperbacks: plans seasonal and evergreen coloring books (max 2 new titles a week), builds print-ready PDFs, writes the listing and an upload pack. Claude uploads; Bobby clicks Publish. Never logs into Amazon.', sort: 38 },
 };
 const ensured = new Set();
 export async function ensureAgentRow(id) {
