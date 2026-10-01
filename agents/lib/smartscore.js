@@ -40,11 +40,11 @@ export const METRICS = [
   { id: 'product_first_pass', label: 'Products passing quality on try 1', unit: '%', better: 'up', what: 'Launcher products that passed the quality bar with no rewrite.' },
   { id: 'image_pass', label: 'Images passing QA', unit: '%', better: 'up', what: 'Asset Studio images that passed QA, out of all images made.' },
   { id: 'launches', label: 'New launches', unit: '', better: 'info', what: 'Offers and itch packs that went live that week.' },
-  { id: 'revenue', label: 'Agent revenue', unit: '$', better: 'up', what: 'Real money from Stripe/itch (ledger, not manual entries).' },
+  { id: 'revenue', label: 'Agent revenue', unit: '$', better: 'up', what: 'Real money from Stripe/itch (ledger, not manual entries) plus Amazon KDP royalties.' },
   { id: 'lessons', label: 'Lessons learned', unit: '', better: 'info', what: 'New Playbook rules + feedback items the Learner had to work with.' },
 ];
 
-// rows: { ideas, drafts, productLogs, packs, launches, ledger, rules, feedback }. now: Date.
+// rows: { ideas, drafts, productLogs, packs, launches, ledger, rules, feedback, books }. now: Date.
 export function buildScore(rows, now = new Date()) {
   const thisWeek = weekOf(now);
   const weeks = Array.from({ length: WEEKS }, (_, i) => addDays(thisWeek, -7 * (WEEKS - 1 - i)));
@@ -93,6 +93,8 @@ export function buildScore(rows, now = new Date()) {
 
   const revenue = cell();
   for (const r of rows.ledger || []) if (r.source !== 'manual' && Number(r.revenue) > 0) put(revenue, `${r.day}T12:00:00Z`, Number(r.revenue));
+  // Amazon KDP royalties (no API): dated changes Bobby/Claude recorded from the KDP report.
+  for (const b of rows.books || []) for (const e of b.sales_log || []) if (Number(e.royalties)) put(revenue, `${e.day}T12:00:00Z`, Number(e.royalties));
 
   const lessons = cell();
   for (const r of rows.rules || []) if (r.origin !== 'manual') put(lessons, r.created_at, 1);

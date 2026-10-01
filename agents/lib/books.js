@@ -511,3 +511,21 @@ export function weeklyReview(books, today = new Date().toISOString().slice(0, 10
     bobby, claude,
   };
 }
+
+// ---------- Sales (Amazon has no sales API: Bobby or Claude copies lifetime totals from the KDP report) ----------
+export const SALES_STATUSES = ['in_review', 'live', 'paused'];
+
+// Pure: new lifetime totals → the patch for the book, or { error }. Each change is kept in sales_log
+// as a dated delta (so weekly revenue can be charted). Lower totals are allowed (corrections, refunds).
+export function salesUpdate(book, { sales, royalties }, day = new Date().toISOString().slice(0, 10)) {
+  if (!SALES_STATUSES.includes(book.status)) return { error: 'Record sales once the book is in review or live' };
+  const s = Number(sales), r = Number(royalties);
+  if (!Number.isInteger(s) || s < 0 || s > 100000) return { error: 'Copies sold must be a whole number (lifetime total from the KDP report)' };
+  if (!Number.isFinite(r) || r < 0 || r > 1000000) return { error: 'Royalties must be a dollar amount (lifetime total)' };
+  const royal = Math.round(r * 100) / 100;
+  const dSales = s - (Number(book.sales) || 0);
+  const dRoyal = Math.round((royal - (Number(book.royalties) || 0)) * 100) / 100;
+  if (!dSales && !dRoyal) return { error: 'No change from the last numbers' };
+  const log = [...(book.sales_log || []), { day, sales: dSales, royalties: dRoyal }].slice(-200);
+  return { set: { sales: s, royalties: royal, sales_updated_at: day, sales_log: log }, delta: { sales: dSales, royalties: dRoyal } };
+}

@@ -1,9 +1,10 @@
 // levelingclips.com/api/books — the Shop page's Amazon (KDP) section. Bobby's dashboard login only.
 //   GET                                   → books (kv amazon_books) + short-lived signed links to their PDFs
 //   POST { slug, status, kdp_title_id?, list_price? } → records a step Bobby/Claude did on KDP (allowed moves only)
+//   POST { slug, action: 'sales', sales, royalties } → lifetime totals copied from the KDP report (no status change)
 // Records what happened on Amazon; it never talks to Amazon, publishes or changes a price there.
 import { sb, SB, json } from './_supabase.js';
-import { KV_KEY, BUCKET, canMove, applyPatches, uploadPack, priceAdvice } from '../agents/lib/books.js';
+import { KV_KEY, BUCKET, canMove, applyPatches, uploadPack, priceAdvice, salesUpdate } from '../agents/lib/books.js';
 
 const ALLOWED = 'bobbybands888@gmail.com';
 
@@ -50,6 +51,17 @@ export async function POST(request) {
   const books = await loadBooks();
   const book = books.find((b) => b.slug === body.slug);
   if (!book) return json({ error: 'No such book' }, 404);
+  if (body.action === 'sales') {
+    const today = new Date().toISOString().slice(0, 10);
+    const up = salesUpdate(book, body, today);
+    if (up.error) return json({ error: up.error }, 400);
+    const { books: next, skipped } = applyPatches(books, [{ slug: book.slug, expect: book.status, set: up.set, by: 'bobby' }]);
+    if (skipped.length) return json({ error: 'Book changed meanwhile; reload and try again' }, 409);
+    await sb('POST', '/rest/v1/kv?on_conflict=key', [{ key: KV_KEY, value: next, updated_at: new Date().toISOString() }], { Prefer: 'resolution=merge-duplicates,return=minimal' });
+    const d = up.delta;
+    await sb('POST', '/rest/v1/activity', [{ agent: 'book_studio', kind: 'books', message: `KDP sales: "${book.title.slice(0, 80)}" now ${up.set.sales} sold, $${up.set.royalties.toFixed(2)} royalties (${d.sales >= 0 ? '+' : ''}${d.sales} sold, ${d.royalties >= 0 ? '+' : '-'}$${Math.abs(d.royalties).toFixed(2)})` }], { Prefer: 'return=minimal' }).catch(() => {});
+    return json({ ok: true, delta: d });
+  }
   if (!canMove(book.status, body.status, 'human')) return json({ error: `Can't move a book from ${book.status} to ${body.status}` }, 400);
   const set = { status: body.status };
   const today = new Date().toISOString().slice(0, 10);

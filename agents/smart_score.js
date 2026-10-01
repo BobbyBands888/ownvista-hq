@@ -30,7 +30,8 @@ export async function run(ctx) {
     safe(all('playbook_rules', { created_at: `gte.${since}`, select: 'created_at,origin', order: 'created_at.asc' })),
     safe(all('feedback', { created_at: `gte.${since}`, select: 'created_at', order: 'created_at.asc' })),
   ]);
-  const score = buildScore({ ideas, drafts, productLogs, packs, launches, ledger, rules, feedback });
+  const books = await kvGet('amazon_books', []).catch(() => []);
+  const score = buildScore({ ideas, drafts, productLogs, packs, launches, ledger, rules, feedback, books: Array.isArray(books) ? books : [] });
   // Freeze the starting point the first time this runs, so later weeks are judged against it.
   let start = await kvGet('smart_score_start', null);
   if (!start) {

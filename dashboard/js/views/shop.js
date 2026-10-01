@@ -192,6 +192,13 @@ function bookCard(b, kit) {
       ${(b.listing_dropped || []).length ? `<div class="small muted">Dropped by checks: ${esc(b.listing_dropped.join(' | '))}</div>` : ''}
     </details>` : ''}
     ${next ? `<div class="row">${b.status === 'needs_upload' || b.status === 'uploaded_draft' ? `<input data-kdpid placeholder="KDP title ID" value="${esc(b.kdp_title_id || '')}" style="width:150px">` : ''}${b.status === 'in_review' || b.status === 'live' ? `<input data-listprice placeholder="price on KDP" value="${esc(b.list_price ?? '')}" style="width:110px">` : ''}${next}</div>` : ''}
+    ${['in_review', 'live', 'paused'].includes(b.status) ? `<div class="stack" style="gap:6px">
+      <div class="small"><strong>Sales</strong> ${b.sales_updated_at ? `· ${Number(b.sales || 0)} sold · ${money(b.royalties || 0)} royalties · updated ${esc(b.sales_updated_at)}` : '<span class="muted">· none recorded yet</span>'}</div>
+      <div class="row"><input data-sales type="number" min="0" step="1" placeholder="copies sold (lifetime)" value="${esc(b.sales ?? '')}" style="width:170px">
+        <input data-royalties type="number" min="0" step="0.01" placeholder="royalties $ (lifetime)" value="${esc(b.royalties ?? '')}" style="width:170px">
+        <button data-booksales>Save sales</button></div>
+      <div class="small muted">Copy the lifetime totals from the KDP Reports page. Amazon has no sales feed, so this is how the agents learn what sells.</div>
+    </div>` : ''}
     ${kitHtml(kit)}
   </div>`;
 }
@@ -211,6 +218,13 @@ async function renderBooks(host, kits = {}) {
   on(host, 'click', '[data-copybook]', (e, btn) => {
     const ta = btn.parentElement.querySelector('textarea');
     navigator.clipboard?.writeText(ta.value).then(() => toast('Copied'), () => { ta.select(); toast('Press Cmd+C to copy'); });
+  });
+  on(host, 'click', '[data-booksales]', (e, btn) => {
+    const card = btn.closest('[data-book]');
+    act(btn, async () => {
+      await booksApi('POST', { slug: card.dataset.book, action: 'sales', sales: card.querySelector('[data-sales]').value.trim(), royalties: card.querySelector('[data-royalties]').value.trim() });
+      window.hqRefresh();
+    }, 'Sales saved');
   });
   on(host, 'click', '[data-bookstatus]', (e, btn) => {
     const card = btn.closest('[data-book]');
