@@ -139,3 +139,20 @@ ${results ? `${results}\n` : ''}JSON only: {"products":[{"type":"text|asset_pack
   if (ideas || radarAdded || packHints) ctx.log('scout', `Product Scout: ${ideas} sellable product idea(s) sent to Autopilot, ${packHints} pack niche(s) to the Asset Studio, ${radarAdded} to the Radar`);
   return [`evidence ${evidence.length}`, `ideas ${ideas}`, `pack niches ${packHints}`, `radar ${radarAdded}`, gated && `guide ideas without proof ${gated}`, ...notes].filter(Boolean).join(' · ');
 }
+
+// Manual: check the Etsy key with one tiny read-only search. No AI, so it works even when the daily token cap is hit.
+export async function etsyCheck(ctx) {
+  if (!etsyReady()) return 'Etsy OFF: no ETSY_API_KEY secret on this run';
+  const key = process.env.ETSY_API_KEY || '';
+  const shape = key.includes(':') ? 'keystring:shared_secret format' : 'NO colon (expected keystring:shared_secret)';
+  try {
+    const rows = await etsyListings('coloring book', { limit: 3 });
+    const msg = `Etsy key WORKS (${shape}): ${rows.length} listings, e.g. "${truncate(rows[0]?.title || '—', 60)}" $${rows[0]?.price ?? '—'}`;
+    ctx.log('report', msg);
+    return msg;
+  } catch (e) {
+    const msg = `Etsy key REJECTED (${shape}): ${truncate(e.message, 200)}`;
+    ctx.log('report', msg);
+    return msg;
+  }
+}

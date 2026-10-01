@@ -37,6 +37,7 @@ export const COMMANDS = {
   villa_preflight: { agent: 'villa_outreach', fn: 'preflight' },
   trader_probe: { agent: 'paper_trader', fn: 'probe' },
   trader_backtest: { agent: 'paper_trader', fn: 'backtest' },
+  etsy_check: { agent: 'product_scout', fn: 'etsyCheck' },
 };
 
 // Station/World rows for agents added after the original SQL seed (no SQL block needed).

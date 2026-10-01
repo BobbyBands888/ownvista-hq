@@ -33,6 +33,7 @@ on:
           - ceo_review
           - trader_probe
           - trader_backtest
+          - etsy_check
           - villa_outreach
           - villa_studio
           - villa_preflight
