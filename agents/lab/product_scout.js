@@ -3,6 +3,8 @@
 //   evidence → Etsy Open API (if ETSY_API_KEY), itch.io + Product Hunt feeds (robots.txt respected), recent research
 //   text products (guides, templates, checklists, scripts) → a venture idea that Autopilot approves → Builder →
 //                     Launcher builds it to the quality bar and publishes it at levelingclips.com/p/<slug>
+//   print-on-demand designs (shirts, mugs, stickers, posters) → the Radar page, lane "pod" (scout only: nothing is
+//                     designed, listed or sold until Bobby funds a store and picks a design)
 //   everything else (physical, printables, graphics) → the Radar page
 // Never copies a listing: titles/prices are evidence of demand only; products must be our own work, no brands.
 import { db, kvGet, kvSet } from '../lib/db.js';
@@ -23,7 +25,12 @@ export const FEEDS = [
 export const ETSY_KEYWORDS = [
   'small business template', 'notion template', 'budget planner', 'resume template', 'social media planner',
   'contractor forms', 'etsy seller guide', 'wedding planner checklist',
-  'cleaning business forms', 'meal plan', 'lesson plan template', 'airbnb host guide', 'study guide',
+  'cleaning business forms', 'meal plan', 'lesson plan template', 'study guide',
+];
+// Print-on-demand demand checks (one per run). Evidence of what sells, never designs to copy.
+export const POD_KEYWORDS = [
+  'funny t-shirt', 'graphic tee', 'coffee mug gift', 'vinyl sticker', 'wall art print', 'tote bag design',
+  'hoodie design', 'teacher gift shirt', 'nurse gift mug', 'dog lover shirt', 'hiking sticker', 'gamer poster',
 ];
 
 export async function run(ctx) {
@@ -33,12 +40,13 @@ export async function run(ctx) {
   // 1. Etsy (official API only).
   if (etsyReady()) {
     const i = Number(await kvGet('etsy_keyword_i', 0)) || 0;
-    const words = [ETSY_KEYWORDS[i % ETSY_KEYWORDS.length], ETSY_KEYWORDS[(i + 1) % ETSY_KEYWORDS.length]];
+    const words = [ETSY_KEYWORDS[i % ETSY_KEYWORDS.length], ETSY_KEYWORDS[(i + 1) % ETSY_KEYWORDS.length], POD_KEYWORDS[Math.floor(i / 2) % POD_KEYWORDS.length]];
     await kvSet('etsy_keyword_i', i + 2);
     for (const w of words) {
+      const tag = POD_KEYWORDS.includes(w) ? 'Etsy POD' : 'Etsy';
       try {
         const rows = (await etsyListings(w)).sort((a, b) => (b.favorers || 0) - (a.favorers || 0)).slice(0, 10);
-        for (const r of rows) evidence.push({ url: r.url, text: `[Etsy "${w}"] ${r.title} — $${r.price ?? '?'}, ${r.favorers ?? '?'} favorites, ${r.views ?? '?'} views${r.digital ? ', digital download' : ''}` });
+        for (const r of rows) evidence.push({ url: r.url, text: `[${tag} "${w}"] ${r.title} — $${r.price ?? '?'}, ${r.favorers ?? '?'} favorites, ${r.views ?? '?'} views${r.digital ? ', digital download' : ''}` });
       } catch (e) { notes.push(`etsy: ${truncate(e.message, 80)}`); }
     }
   } else notes.push('Etsy off (no ETSY_API_KEY)');
@@ -70,11 +78,14 @@ From the marketplace evidence, find up to 4 products we can sell that people are
 Make each one ORIGINAL: never copy a listing's title, text or design; no brand, character, team or celebrity names.
 type "text": a product delivered as ONE web page of written content — a guide, playbook, template set written as tables,
 checklists, scripts, swipe files, worksheets. Our Launcher can build and sell these with no human.
+type "pod": an ORIGINAL print-on-demand design (shirt, mug, sticker, poster, tote) a supplier like Printify prints and
+ships per order. Describe the design concept in "deliverable" (no copied slogans, no trademarks, no brand/character/
+team/celebrity names, no real-estate themes). "est_cost" = the supplier's typical base cost per item. Radar only, for later.
 type "other": printables/graphics, physical goods or anything needing shipping — these go on a radar for later.
 Each needs at least one evidence URL copied exactly from the list, a one-time price, and an honest score 0–100
 (demand evidence 40, ease to make it excellent as a web page 30, low competition 30).
 Avoid ideas like these rejected ones: ${rejected.join('; ') || '(none)'}.
-JSON only: {"products":[{"type":"text|other","title":"","buyer":"who buys it","deliverable":"exactly what they get","price_usd":19,
+JSON only: {"products":[{"type":"text|pod|other","title":"","buyer":"who buys it","deliverable":"exactly what they get","price_usd":19,
 "why_now":"the evidence in one sentence","score":0,"evidence":["url"],"channel":"etsy|itch|web|amazon|other","est_cost":0}]}`);
   const user = evidence.slice(0, 60).map((e) => untrusted(e.url, e.text, 300)).join('\n');
   const { json } = await chat({ ctx, tier: 'smart', json: true, maxTokens: 2000, system, messages: [{ role: 'user', content: user }] });
@@ -96,7 +107,8 @@ JSON only: {"products":[{"type":"text|other","title":"","buyer":"who buys it","d
       });
       ideas++;
     } else {
-      onRadar.push({ title: p.title, lane: 'products', channel: p.channel, sell_price: price, est_cost: p.est_cost, score, why: `${p.deliverable} — ${p.why_now}`, evidence: urls, found_by: 'product_scout' });
+      const pod = p.type === 'pod';
+      onRadar.push({ title: p.title, lane: pod ? 'pod' : 'products', channel: pod ? (p.channel || 'etsy') + ' · print-on-demand' : p.channel, sell_price: price, est_cost: p.est_cost, score, why: `${p.deliverable} — ${p.why_now}`, evidence: urls, supplier_search: pod ? 'Printify / Printful base product' : '', found_by: 'product_scout' });
     }
   }
   const radarAdded = onRadar.length ? await addToRadar(onRadar) : 0;

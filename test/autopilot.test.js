@@ -51,3 +51,11 @@ test('Hourly job only runs research as a backup when the tick has been quiet', (
   assert.equal(isDue(s, now, [{ status: 'ok', started_at: '2026-10-01T14:10:00Z' }]), true);
   assert.equal(isDue(s, now, []), true);
 });
+
+test('Product Scout keywords stay out of real estate; POD goes to the Radar only', async () => {
+  const { ETSY_KEYWORDS, POD_KEYWORDS } = await import('../agents/lab/product_scout.js');
+  const { realEstateRisk } = await import('../agents/lib/guard.js');
+  for (const w of [...ETSY_KEYWORDS, ...POD_KEYWORDS]) assert.equal(realEstateRisk(w), null, w);
+  assert.ok(!ETSY_KEYWORDS.some((w) => /airbnb|rental|property/i.test(w)));
+  assert.match(src('agents/lab/product_scout.js'), /lane: pod \? 'pod'/);
+});

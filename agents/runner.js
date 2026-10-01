@@ -37,7 +37,7 @@ export const COMMANDS = {
 
 // Station/World rows for agents added after the original SQL seed (no SQL block needed).
 const NEW_ROWS = {
-  product_scout: { name: 'Product Scout', description: 'Scans Etsy (official API), itch.io and Product Hunt for products people buy; digital ones go straight to the Launcher, physical ones to the Radar.', sort: 34 },
+  product_scout: { name: 'Product Scout', description: 'Scans Etsy (official API), itch.io and Product Hunt for products people buy; digital ones go straight to the Launcher; print-on-demand designs and physical ones go to the Radar (scout only).', sort: 34 },
   dropship_scout: { name: 'Dropship Scout', description: 'Hunts trending physical products with margin, shipping time and saturation scored; results on the Radar page.', sort: 35 },
   autopilot: { name: 'Autopilot', description: 'Approves new ideas on Bobby\'s behalf (caps, IP and copy checks) so they build and go live without waiting.', sort: 36 },
 };
