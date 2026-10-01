@@ -16,7 +16,7 @@ import { KV_KEY as BOOKS_KEY } from '../lib/books.js';
 export const KIT_KEY = 'marketing_kits';
 const SITE = 'https://www.levelingclips.com';
 const TREND_FEED = 'https://itch.io/game-assets/top-sellers.xml';
-export const KIT_VERSION = 3; // bump to rewrite every kit with new rules
+export const KIT_VERSION = 4; // bump to rewrite every kit with new rules
 const HANDMADE = /\b(hand[- ]?(painted|drawn|crafted|made|illustrated)|handmade|artist[- ]made|drawn by (an? )?(artist|illustrator)|by a human)\b/i;
 const RULES = async () => ({ per_run: 2, refresh_days: 7, ...(await kvGet('marketer_rules', {})) });
 
@@ -27,6 +27,14 @@ export function pickTargets(targets, kits = {}, { per_run = 2, refresh_days = 7,
     .filter((t) => stale(kits[t.key]))
     .sort((a, b) => Date.parse(kits[a.key]?.made_at || 0) - Date.parse(kits[b.key]?.made_at || 0))
     .slice(0, per_run);
+}
+
+// Pure: a number of items in the text that isn't the real count ("16 potion icons" when 14 shipped). Ignores pixel sizes.
+const COUNT_RE = /\b(\d{1,3})(?!\s*(?:px|x\b|%|\$))\s+(?:[\w-]+\s+){0,3}?(icons?|potions?|images?|items?|pngs?|sprites?|assets?|illustrations?|designs?|files?)\b/gi;
+export function wrongCount(text, count) {
+  if (!Number.isInteger(count) || count <= 0) return null;
+  for (const m of String(text || '').matchAll(COUNT_RE)) if (Number(m[1]) !== count) return Number(m[1]);
+  return null;
 }
 
 // Pure: run every text piece through the guards. Returns { kit, dropped: [reasons] }.
@@ -41,6 +49,7 @@ export function vetKit(raw = {}, target) {
     const re = realEstateRisk(t); if (re) problems.push(`real estate ("${re}")`);
     const ip = ipRisk(t); if (ip) problems.push(`brand/character ("${ip}")`);
     if (['asset_pack', 'book'].includes(target.kind) && HANDMADE.test(t)) problems.push('calls AI-generated art hand-made');
+    const wrong = wrongCount(t, target.count); if (wrong) problems.push(`says ${wrong} items, the pack has ${target.count}`);
     if (/\b(\d+\s*\+?\s*(happy )?(customers|buyers|downloads|sales)|best[- ]?selling|#1|five[- ]star|5[- ]star)\b/i.test(t)) problems.push('claims sales/reviews we do not have');
     if (problems.length) { dropped.push(`${label}: ${problems.join('; ')}`); return false; }
     return true;
@@ -76,9 +85,9 @@ async function loadTargets() {
       key: `launch:${l.id}`, kind: 'offer', title: l.title, price: l.price_usd, url: `${SITE}/p/${l.slug}`,
       facts: `Live offer page: ${SITE}/p/${l.slug}\nPrice: $${l.price_usd} one-time, delivered as a web page.\nSales so far: ${l.sales}/${l.goal_sales}.\nPage text:\n${truncate(htmlToText(l.page_html || ''), 3500)}`,
     })),
-    ...packs.map((p) => ({
-      key: `pack:${p.id}`, kind: 'asset_pack', title: p.title, price: p.price_usd, url: p.itch_url || null, itch_url: p.itch_url || null,
-      facts: `itch.io game asset pack (${p.status === 'ready' ? 'not published yet' : 'published'}${p.itch_url ? `: ${p.itch_url}` : ''}).\nTheme: ${p.theme || ''}\nStyle: ${p.style || ''}\nItems: ${(p.items || []).map((i) => i.name || i.title).filter(Boolean).slice(0, 20).join(', ')}\nPrice: $${p.price_usd}\nCurrent tags: ${(p.tags || []).join(', ')}\nStats: ${p.views} views, ${p.downloads} downloads, ${p.sales} sales.\nAI-generated graphics (must stay disclosed).\nCurrent description:\n${truncate(p.page_copy || '', 2500)}`,
+    ...packs.map((p) => ({ p, shipped: (p.items || []).filter((i) => i.done && i.path) })).map(({ p, shipped }) => ({
+      key: `pack:${p.id}`, kind: 'asset_pack', title: p.title, price: p.price_usd, url: p.itch_url || null, itch_url: p.itch_url || null, count: shipped.length,
+      facts: `itch.io game asset pack (${p.status === 'ready' ? 'not published yet' : 'published'}${p.itch_url ? `: ${p.itch_url}` : ''}).\nTheme: ${p.theme || ''}\nStyle: ${p.style || ''}\nThe pack contains EXACTLY ${shipped.length} items. Never say any other number.\nItems: ${shipped.map((i) => i.name || i.title).filter(Boolean).slice(0, 20).join(', ')}\nPrice: $${p.price_usd}\nCurrent tags: ${(p.tags || []).join(', ')}\nStats: ${p.views} views, ${p.downloads} downloads, ${p.sales} sales.\nAI-generated graphics (must stay disclosed).\nCurrent description:\n${truncate(p.page_copy || '', 2500)}`,
     })),
     // Live Amazon paperbacks (Book Studio). No Amazon link is stored, so kits use no links.
     ...(Array.isArray(books) ? books : []).filter((b) => b.status === 'live').map((b) => ({

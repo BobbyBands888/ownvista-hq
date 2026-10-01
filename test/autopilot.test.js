@@ -110,3 +110,21 @@ test('Product Scout only proposes written products when the evidence is a paid w
   assert.ok(!WRITTEN.test('[itch.io] Cute & Cozy UI SFX'));
   assert.match(src('agents/lab/asset_studio.js'), /asset_pack_ideas/);
 });
+
+test('Marketer kits must state the real item count (Fantasy Potion: 14 shipped, not 16 planned)', async () => {
+  const { vetKit, wrongCount } = await import('../agents/lab/marketer.js');
+  assert.equal(wrongCount('Download a set of 16 painterly AI-generated potion icons.', 14), 16);
+  assert.equal(wrongCount('14 potion icons, each at 512 px and 128 px.', 14), null);
+  assert.equal(wrongCount('Transparent PNGs at 512px, 128 px icons too', 14), null);
+  assert.equal(wrongCount('16 icons', undefined), null, 'no count known = no check');
+  const target = { kind: 'asset_pack', price: 4, count: 14, itch_url: 'https://ownvista.itch.io/fantasy-potion-icons-pack' };
+  const { kit, dropped } = vetKit({
+    pins: [
+      { title: 'Fantasy Potion Icons', description: 'Download a set of 16 painterly AI-generated potion icons.', board: 'Game Art' },
+      { title: 'Potion Icons for RPGs', description: '14 painterly AI-generated potion icons for inventory screens.', board: 'Game Art' },
+    ],
+  }, target);
+  assert.equal(kit.pins.length, 1);
+  assert.match(kit.pins[0].description, /^14 /);
+  assert.ok(dropped.some((d) => /says 16 items, the pack has 14/.test(d)));
+});
