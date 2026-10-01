@@ -390,3 +390,58 @@ export async function probe(ctx) {
   console.log(msg);
   return msg;
 }
+
+// Manual: replay ~5 years of daily bars for the biggest US stocks and compare the current rules with the
+// proposed "aggressive, not reckless" rules. Older years pick the winner; the last 12 months confirm it.
+// Saves a summary for the Trader page. It never changes the live rules or places anything.
+const FALLBACK_UNIVERSE = ['AAPL', 'MSFT', 'NVDA', 'AMZN', 'GOOGL', 'META', 'AVGO', 'TSLA', 'JPM', 'LLY', 'V', 'UNH', 'XOM', 'MA', 'COST',
+  'HD', 'PG', 'JNJ', 'NFLX', 'ABBV', 'BAC', 'CRM', 'ORCL', 'AMD', 'KO', 'CVX', 'MRK', 'PEP', 'ADBE', 'WMT', 'TMO', 'LIN', 'ACN', 'MCD',
+  'CSCO', 'ABT', 'DIS', 'WFC', 'INTU', 'QCOM', 'TXN', 'IBM', 'GE', 'AMAT', 'CAT', 'NOW', 'ISRG', 'GS', 'UBER', 'PM', 'AMGN', 'BKNG',
+  'SPGI', 'RTX', 'HON', 'LOW', 'UNP', 'PFE', 'BLK', 'MS', 'SYK', 'ELV', 'DE', 'LRCX', 'PANW', 'ADI', 'MU', 'KLAC', 'SBUX', 'GILD'];
+
+export async function backtest(ctx) {
+  const { prepare, runAll, CONFIGS } = await import('./backtest.js');
+  let symbols;
+  try {
+    const rows = await M.universe();
+    symbols = rows
+      .filter((r) => /^[A-Z]{1,5}$/.test(r.symbol) && r.price >= 10 && r.market_cap)
+      .sort((a, b) => b.market_cap - a.market_cap)
+      .slice(0, 120)
+      .map((r) => r.symbol);
+  } catch (e) {
+    ctx.note(`screener failed (${truncate(e.message, 80)}), using the built-in list`);
+  }
+  if (!symbols?.length) symbols = FALLBACK_UNIVERSE;
+
+  const spy = await M.chart('SPY', { range: '5y', interval: '1d' });
+  const series = {};
+  let failed = 0;
+  for (let i = 0; i < symbols.length; i += 4) {
+    if (ctx.outOfTime(240000)) { ctx.note(`stopped fetching at ${i}/${symbols.length} to leave time for the replay`); break; }
+    await Promise.all(symbols.slice(i, i + 4).map(async (sym) => {
+      try { series[sym] = (await M.chart(sym, { range: '5y', interval: '1d' })).bars; } catch { failed++; }
+    }));
+  }
+  const data = prepare(series, spy.bars);
+  const n = Object.keys(data.syms).length;
+  if (n < 30) throw new Error(`only ${n} stocks had 5 years of data (${failed} failed); not enough to judge`);
+
+  const res = runAll(data);
+  const out = {
+    ran_at: new Date().toISOString(),
+    universe: n,
+    failed,
+    configs: CONFIGS,
+    older: res.older,
+    recent: res.recent,
+    verdict: res.verdict,
+  };
+  await kvSet('pt_backtest', out);
+  const pct = (x) => (x == null ? '—' : `${x >= 0 ? '+' : ''}${(x * 100).toFixed(1)}%`);
+  const line = (w, k) => `${k} ${pct(res[w][k].ret)} (SPY ${pct(res[w][k].spy_ret)}, worst drop ${pct(-res[w][k].max_dd)}, ${res[w][k].all.n} trades)`;
+  const msg = `Backtest on ${n} stocks. Older years: ${line('older', 'current')}; ${line('older', 'proposed')}. Last 12 months: ${line('recent', 'current')}; ${line('recent', 'proposed')}. Verdict: ${res.verdict.winner}.`;
+  ctx.log('report', `Paper Trader ${msg}`);
+  console.log(msg);
+  return msg;
+}

@@ -63,9 +63,11 @@ export function parseChart(json) {
   const r = json?.chart?.result?.[0];
   if (!r) throw new Error(json?.chart?.error?.description || 'no chart result');
   const q = r.indicators?.quote?.[0] || {};
+  const adj = r.indicators?.adjclose?.[0]?.adjclose || [];
   const bars = [];
   (r.timestamp || []).forEach((t, i) => {
     const b = { t: t * 1000, open: q.open?.[i], high: q.high?.[i], low: q.low?.[i], close: q.close?.[i], volume: q.volume?.[i] ?? 0 };
+    if (typeof adj[i] === 'number' && Number.isFinite(adj[i])) b.adj = adj[i]; // dividend-adjusted close (for the SPY benchmark)
     if ([b.open, b.high, b.low, b.close].every((x) => typeof x === 'number' && Number.isFinite(x))) bars.push(b);
   });
   return { bars, meta: { price: r.meta?.regularMarketPrice ?? null, time: (r.meta?.regularMarketTime ?? 0) * 1000, currency: r.meta?.currency } };

@@ -13,7 +13,7 @@ export const DEFAULT_RULES = {
   max_open: 8,
   max_new_per_day: 3,
   min_reward_risk: 2,
-  min_price: 1,                // no sub-$1 stocks: aggressive, not reckless
+  min_price: 5,                // no stocks under $5 (Oct 1): penny names made every result noise
   penny_below: 5,
   min_dollar_volume: 5e6,
   min_penny_dollar_volume: 3e6,

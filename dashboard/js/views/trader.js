@@ -27,7 +27,7 @@ export async function render(el) {
       <p class="muted small">Run the Paper Trader SQL block in Supabase once. Claude has it ready for you.</p></div>`;
     return;
   }
-  const [state, card, weekly, bench] = await Promise.all([kvGet('pt_state', null), kvGet('pt_scorecard', null), kvGet('pt_weekly_note', null), kvGet('pt_bench', {})]);
+  const [state, card, weekly, bench, bt] = await Promise.all([kvGet('pt_state', null), kvGet('pt_scorecard', null), kvGet('pt_weekly_note', null), kvGet('pt_bench', {}), kvGet('pt_backtest', null)]);
   const start = Number(state?.start_cash || 10000);
   const posValue = open.reduce((n, t) => n + Number(t.mark_price ?? t.entry_price) * Number(t.qty) * (t.kind === 'stock' ? 1 : 100), 0);
   const equity = state ? Number(state.cash) + posValue : start;
@@ -63,6 +63,8 @@ export async function render(el) {
       <table class="table"><tbody>${card.checks.map((c) => `<tr><td>${c.pass ? '✅' : '⬜'}</td><td>${esc(c.label)}</td><td class="num">${esc(c.value)}</td></tr>`).join('')}</tbody></table>` : '<div class="small muted">Scorecard appears after the first 4pm close.</div>'}
     <div class="small muted">Even when every box is checked, the trader only suggests. You place any real trade yourself, small, and we keep tracking real against paper.</div>
   </div></div>
+
+  ${backtestSection(bt)}
 
   <div class="section"><h2>Open positions (${open.length})</h2>
     ${open.length ? `<div class="card"><table class="table"><thead><tr><th>Symbol</th><th>Position</th><th>Setup</th><th>Entry</th><th>Now</th><th>P&amp;L</th><th>Stop / target</th></tr></thead><tbody>
@@ -116,4 +118,29 @@ export async function render(el) {
       act(btn, async () => { await q(sb.from('pt_lessons').update({ active: false }).eq('id', id)); window.hqRefresh(); }, 'Dropped');
     }
   });
+}
+
+// Backtest: the same setups replayed on ~5 years of daily bars. Older years pick a winner; the last 12 months confirm it.
+function backtestSection(bt) {
+  if (!bt?.older) return '';
+  const rows = [['older', 'Older years'], ['recent', 'Last 12 months (unseen)']];
+  const names = Object.keys(bt.configs || {});
+  const cell = (r) => `<td class="num">${pctS(r.ret)}</td><td class="num">${pctS(r.spy_ret)}</td><td class="num">${pctS(-r.max_dd)}</td>
+    <td class="num">${r.all.n}</td><td class="num">${Math.round(r.all.win_rate * 100)}%</td><td class="num">${Number(r.all.avg_r).toFixed(2)}R</td>`;
+  const setups = [...new Set(names.flatMap((k) => Object.keys(bt.older[k]?.by_setup || {})))];
+  const tone = bt.verdict?.winner === 'proposed' ? 'ok' : bt.verdict?.winner === 'current' ? '' : 'warn';
+  return `<div class="section"><h2>Backtest</h2><div class="card stack">
+    <div>${badge(bt.verdict?.winner === 'proposed' ? 'new rules won' : bt.verdict?.winner === 'current' ? 'current rules won' : 'mixed result', tone)}
+      <span class="small muted">${esc(bt.universe)} stocks · ran ${ago(bt.ran_at)}</span></div>
+    <div class="small">${esc(bt.verdict?.text || '')}</div>
+    <table class="table"><thead><tr><th>Period</th><th>Rules</th><th>Return</th><th>SPY</th><th>Worst drop</th><th>Trades</th><th>Wins</th><th>Avg</th></tr></thead><tbody>
+      ${rows.map(([w, label]) => names.map((k, i) => `<tr><td class="small">${i ? '' : `${esc(label)}<div class="muted">${esc(bt[w][k].from)} → ${esc(bt[w][k].to)}</div>`}</td>
+        <td>${esc(bt.configs[k].label)}</td>${cell(bt[w][k])}</tr>`).join('')).join('')}
+    </tbody></table>
+    <details><summary class="small">By setup (older years)</summary>
+      <table class="table"><thead><tr><th>Setup</th>${names.map((k) => `<th>${esc(bt.configs[k].label)}</th>`).join('')}</tr></thead><tbody>
+      ${setups.map((s) => `<tr><td>${esc(s)}</td>${names.map((k) => { const g = bt.older[k]?.by_setup?.[s]; return `<td class="num small">${g ? `${g.n} trades · ${Math.round(g.win_rate * 100)}% wins · ${badge(`${Number(g.avg_r).toFixed(2)}R`, g.avg_r > 0 ? 'ok' : g.avg_r < 0 ? 'bad' : '')}` : '—'}</td>`; }).join('')}</tr>`).join('')}
+      </tbody></table></details>
+    <div class="small muted">Limits: a fixed ranking stands in for the AI's picks; the stock list is today's biggest companies (past losers are missing, which flatters results); long stocks only, no options or penny stocks. Paper only: the backtest never changes the live rules by itself.</div>
+  </div></div>`;
 }

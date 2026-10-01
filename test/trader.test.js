@@ -28,12 +28,13 @@ test('partial-day volume is projected so 10am rvol is not undercounted', () => {
   assert.ok(stats(bars, 0.25).rvol > stats(bars, 1).rvol * 3.9);
 });
 
-test('universe skips sub-$1 stocks, warrants and thin names', () => {
+test('universe skips stocks under $5, warrants and thin names', () => {
   assert.equal(isTradableRow({ symbol: 'ABCD', price: 0.6, volume: 9e7 }), false);
   assert.equal(isTradableRow({ symbol: 'ABCDW', price: 2, volume: 9e7 }), false);
   assert.equal(isTradableRow({ symbol: 'BRK.B', price: 400, volume: 9e7 }), false);
   assert.equal(isTradableRow({ symbol: 'THIN', price: 3, volume: 1e5 }), false);
-  assert.equal(isTradableRow({ symbol: 'SOFI', price: 3, volume: 5e6 }), true);
+  assert.equal(isTradableRow({ symbol: 'SOFI', price: 3, volume: 5e6 }), false);
+  assert.equal(isTradableRow({ symbol: 'SOFI', price: 12, volume: 5e6 }), true);
 });
 
 test('drawdown brakes: half size at -10%, pause at -20%', () => {

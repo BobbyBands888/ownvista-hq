@@ -32,6 +32,7 @@ on:
           - book_studio
           - ceo_review
           - trader_probe
+          - trader_backtest
           - villa_outreach
           - villa_studio
           - villa_preflight
