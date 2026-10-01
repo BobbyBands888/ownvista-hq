@@ -81,7 +81,7 @@ async function planPack(ctx, rules) {
 
   const { json } = await chat({
     ctx, tier: 'smart', json: true, maxTokens: 3500, temperature: 0.7,
-    system: systemPrompt('the Asset Studio planning an itch.io game asset pack', `${pb.text(['guardrails'])}
+    system: systemPrompt('the Asset Studio planning an itch.io game asset pack', `${pb.text(['guardrails', 'results'])}
 Lessons learned so far:
 ${lessons.map((l) => `- ${l.rule}`).join('\n') || '- (none yet)'}
 

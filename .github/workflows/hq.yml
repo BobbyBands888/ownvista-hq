@@ -30,6 +30,7 @@ on:
           - dropship_scout
           - marketer
           - book_studio
+          - ceo_review
           - trader_probe
           - villa_outreach
           - villa_studio

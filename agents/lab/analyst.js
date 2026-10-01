@@ -26,7 +26,7 @@ export async function run(ctx) {
     const allowed = new Set([s.url, ...related.map((k) => k.url)].filter(Boolean));
 
     const system = systemPrompt('the Analyst in the Venture Lab', `
-${pb.text(['lab', 'guardrails'])}
+${pb.text(['lab', 'guardrails', 'results'])}
 
 Write a one-page business case for this signal. Use ONLY numbers that appear in the evidence, or clearly labeled assumptions (prefix "assumption:").
 Unit economics: price, unit cost, fees, shipping, margin per sale, and how many sales it takes to make $1,000 profit.

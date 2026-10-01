@@ -19,6 +19,7 @@ import { similarTitle, truncate } from '../lib/text.js';
 // A written product (guide/template/checklist) only counts as proven when the evidence itself is a paid written product.
 export const WRITTEN = /\b(templates?|guides?|checklists?|planners?|worksheets?|e-?books?|playbooks?|swipe files?|workbooks?|spreadsheets?|printables?|notion|course|scripts? pack)\b/i;
 import { daysAgoIso } from '../lib/time.js';
+import { KV_KEY as RESULTS_KEY } from '../lib/review.js';
 
 export const FEEDS = [
   'https://itch.io/game-assets/top-sellers.xml',
@@ -76,6 +77,7 @@ export async function run(ctx) {
   const recent = await db.select('ideas', { created_at: `gte.${daysAgoIso(45)}`, select: 'title,status', limit: 400 });
   const rejected = recent.filter((r) => r.status === 'rejected').map((r) => r.title).slice(0, 15);
 
+  const results = String((await kvGet(RESULTS_KEY, null).catch(() => null))?.text || '').slice(0, 1200);
   const system = systemPrompt('the Product Scout', `
 From the marketplace evidence, find up to 4 products we can sell that people are clearly paying for.
 Make each one ORIGINAL: never copy a listing's title, text or design; no brand, character, team or celebrity names.
@@ -97,7 +99,7 @@ type "other": printables/graphics, physical goods or anything needing shipping â
 Each needs at least one evidence URL copied exactly from the list, a one-time price, and an honest score 0â€“100
 (demand evidence 40, ease to make it excellent as a web page 30, low competition 30).
 Avoid ideas like these rejected ones: ${rejected.join('; ') || '(none)'}.
-JSON only: {"products":[{"type":"text|asset_pack|pod|other","title":"","buyer":"who buys it","deliverable":"exactly what they get","price_usd":19,
+${results ? `${results}\n` : ''}JSON only: {"products":[{"type":"text|asset_pack|pod|other","title":"","buyer":"who buys it","deliverable":"exactly what they get","price_usd":19,
 "why_now":"the evidence in one sentence","score":0,"evidence":["url"],"channel":"etsy|itch|web|amazon|other","est_cost":0}]}`);
   const user = evidence.slice(0, 60).map((e) => untrusted(e.url, e.text, 300)).join('\n');
   const { json } = await chat({ ctx, tier: 'smart', json: true, maxTokens: 2000, system, messages: [{ role: 'user', content: user }] });

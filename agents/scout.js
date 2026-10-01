@@ -36,7 +36,7 @@ export async function run(ctx) {
   const allowedUrls = new Set(evidence.map((e) => e.url));
 
   const system = systemPrompt('the Scout', `
-${pb.text(['scout', 'lab', 'businesses', 'guardrails'])}
+${pb.text(['scout', 'lab', 'businesses', 'guardrails', 'results'])}
 
 Find up to 3 NEW business opportunities for Bobby (not the existing businesses).
 Hard requirements: nothing to do with real estate, housing, mortgages or Bobby's real estate license; start for $0–200, no new licenses, no phone calls, workable by one person by email and the web.

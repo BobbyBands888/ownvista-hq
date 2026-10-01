@@ -29,6 +29,7 @@ export const SCHEDULE = [
   { id: 'learner', type: 'hourly', hours: range(0, 23), budgetMin: 5, label: 'Hourly, 24/7 (grades the day at 11pm ET)' },
   { id: 'paper_trader', type: 'hourly', hours: range(10, 16), weekdays: [1, 2, 3, 4, 5], budgetMin: 5, label: 'Weekdays hourly 10am–4pm ET (paper money)' },
   { id: 'economist', type: 'daily', hour: 23, budgetMin: 3, label: 'Daily 11pm ET (books, budgets)' },
+  { id: 'ceo_review', type: 'weekly', days: [0], hour: 20, budgetMin: 3, label: 'Sundays 8pm ET (scores every lane on real sales, writes results lessons)' },
   { id: 'architect', type: 'hourly', hours: range(0, 23), budgetMin: 4, label: 'Hourly check for new gaps; full crew review Sundays 7pm ET' },
 ];
 

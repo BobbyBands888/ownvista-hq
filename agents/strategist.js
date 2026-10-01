@@ -27,7 +27,7 @@ export async function run(ctx) {
   const canSearch = await searchAvailable();
 
   const system = systemPrompt('the Strategist', `
-${pb.text(['growth', 'businesses', 'guardrails', 'lab'])}
+${pb.text(['growth', 'businesses', 'guardrails', 'lab', 'results'])}
 
 Propose up to 3 growth ideas for Bobby's CURRENT businesses. Each needs: which business, the idea, why now (cite knowledge URLs you were given — never invent links), and 3–6 concrete steps that can be done by email and the web.
 Learn from past decisions: do not repeat rejected ideas; lean toward what Bobby approved or launched.
