@@ -90,12 +90,12 @@ must line up, animation frames/sprite sheets, consistent characters across poses
 Pick a niche with buyer demand (use the best-seller titles as a signal, don't copy them) that plays to those strengths.
 Rules: no trademarks, franchises, real brands or living artists' names; no "in the style of <artist>". Distinct from our past packs.
 kind: one of sprites | icons | items | characters | props (these get transparent backgrounds) or portraits | textures | backgrounds (full frame).
-style: one short visual style clause appended to every prompt so the pack looks consistent (e.g. "hand-painted fantasy game icon, bold outline, soft shading").
+style: one short visual style clause appended to every prompt so the pack looks consistent (e.g. "painted fantasy game icon, bold outline, soft shading").
 items: exactly ${rules.items_per_pack}, each {"name":"Short name","prompt":"what to draw, one subject"}.
 price_usd: 2–8 (itch.io asset buyers pay little; low price + volume). tags: up to 10 itch.io tags.
 page_copy: markdown for the itch.io page — hook, what's included (${rules.items_per_pack} PNGs, 512px + 128px${'${transparent}'}), suggested uses,
 license summary (use in commercial and non-commercial games; do not resell or redistribute the files as-is), and the line
-"Made with AI image generation (FLUX.1 schnell), curated and cleaned by hand-checked tools." No fake reviews, no download counts.
+"Made with AI image generation (FLUX.1 schnell), then checked and cleaned up." Never call the images hand-painted or hand-drawn. No fake reviews, no download counts.
 JSON only: {"title":"","theme":"","kind":"icons","style":"","items":[{"name":"","prompt":""}],"tags":[],"price_usd":3,"page_copy":""}`),
     messages: [{ role: 'user', content: `${untrusted('itch.io best sellers right now', trends.join('\n') || '(feed unavailable)', 4000)}
 
@@ -286,6 +286,7 @@ Made with AI image generation (FLUX.1 schnell) and checked before release.
   await upload(BUCKET, `${prefix}/${slug(pack.title)}.zip`, await readFile(zip), 'application/zip');
   await db.update('asset_packs', { id: `eq.${pack.id}` }, {
     status: 'ready', preview_path: `${prefix}/preview.png`, zip_path: `${prefix}/${slug(pack.title)}.zip`, ready_at: new Date().toISOString(),
+    page_copy: packCopy(pack, good), tags: honestTags(pack.tags),
   });
   await db.insertOne('approvals', {
     kind: 'asset_pack', ref_table: 'asset_packs', ref_id: pack.id, created_by: 'asset_studio',
@@ -362,3 +363,26 @@ async function enforceKillRule(ctx, rules) {
   return `paused by kill rule: ${why}`;
 }
 export const _test = { keyOut, backgroundColor };
+
+// The itch.io text is rebuilt from what actually made it into the zip (the plan's count and wording can drift),
+// and never calls AI images "hand-painted" / "hand-drawn".
+const HAND = /\bhand[\s\u2010-\u2015-]*(painted|drawn|made|crafted)\b/gi;
+export function honestTags(tags = []) {
+  return [...new Set((tags || []).map((t) => String(t).replace(HAND, (_, w) => (w.toLowerCase() === 'drawn' ? 'drawn' : 'painted')).trim()).filter(Boolean))].slice(0, 10);
+}
+export function packCopy(pack, good) {
+  const n = good.length;
+  const transparent = good[0]?.keyed ? ' with transparent backgrounds' : '';
+  const kind = pack.kind || 'icons';
+  return `${n} ${String(pack.theme || pack.title).replace(HAND, '').trim()} ${kind} in one consistent style for your game.
+
+What's included
+- ${n} PNG files${transparent}
+- Each at 512 px and 128 px
+- Items: ${good.map((i) => i.name).join(', ')}
+
+License
+Use in commercial and non-commercial games. Don't resell or redistribute the files as-is.
+
+Made with AI image generation (FLUX.1 schnell), then checked and cleaned up.`;
+}

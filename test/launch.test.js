@@ -80,3 +80,11 @@ test('Product headings shown to buyers have no build notes or double numbering',
   assert.equal(cleanHeading('1. Operations Blueprint Overview'), 'Operations Blueprint Overview');
   assert.equal(cleanHeading('Pricing (2026)'), 'Pricing (2026)');
 });
+
+test('Asset pack listing matches the zip and never claims hand-made art', async () => {
+  const { packCopy, honestTags } = await import('../agents/lab/asset_studio.js');
+  const good = [{ name: 'Mana Brew', keyed: true }, { name: 'Healing Elixir', keyed: true }];
+  const copy = packCopy({ title: 'Potions', theme: 'fantasy potion', kind: 'icons' }, good);
+  assert.ok(/^2 fantasy potion icons/.test(copy) && /Mana Brew, Healing Elixir/.test(copy) && /transparent/.test(copy) && !/hand/i.test(copy));
+  assert.deepEqual(honestTags(['fantasy', 'hand‑painted', 'hand-drawn', 'rpg']), ['fantasy', 'painted', 'drawn', 'rpg']);
+});
