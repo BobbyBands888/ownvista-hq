@@ -73,3 +73,10 @@ test('Delivery page renders markdown tables as real tables', () => {
   const h = mdToHtml('| A | B |\n|---|---|\n| 1 | 2 |');
   assert.ok(/<table>/.test(h) && /<th>A<\/th>/.test(h) && /<td>2<\/td>/.test(h) && !/---/.test(h));
 });
+
+test('Product headings shown to buyers have no build notes or double numbering', async () => {
+  const { cleanHeading } = await import('../agents/lab/product.js');
+  assert.equal(cleanHeading('4. Excel‑Style Quote Tracker (Written as Markdown Table)'), 'Excel‑Style Quote Tracker');
+  assert.equal(cleanHeading('1. Operations Blueprint Overview'), 'Operations Blueprint Overview');
+  assert.equal(cleanHeading('Pricing (2026)'), 'Pricing (2026)');
+});

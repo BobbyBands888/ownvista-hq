@@ -93,7 +93,7 @@ async function writeOutline(ctx, idea, plan, lastProblems) {
     system: systemPrompt('the Launcher planning a paid product', `Plan the COMPLETE digital product a buyer receives: ${plan.deliverable || 'the product described'}.
 The buyer gets ONE web page they can read, print or save as PDF — no files, downloads, emails, calls or support.
 So every template, spreadsheet, tracker, script or checklist must be WRITTEN OUT inside a section (as markdown tables, numbered steps, word-for-word scripts).
-Plan 7-9 sections. Each section is substantial (1,500-2,500 characters) and concrete for the target buyer.
+Plan 7-9 sections with plain buyer-facing headings (no numbers, no notes about formatting). Each section is substantial (1,500-2,500 characters) and concrete for the target buyer.
 JSON only: {"title":"product title","promise":"one sentence: what the buyer can do after using it","sections":[{"heading":"","contains":"exactly what this section includes, naming each table/script/checklist"}]}`),
     messages: [{ role: 'user', content: `Idea: ${idea.title}\nSummary: ${truncate(idea.summary, 2500)}\nSteps: ${truncate(JSON.stringify(idea.steps || []), 1500)}\nBobby's note: ${idea.feedback || '(none)'}${lastProblems ? `\nThe last version was rejected because: ${lastProblems.join('; ')}. Fix that.` : ''}` }],
   });
@@ -125,9 +125,17 @@ No invented statistics, no testimonials, no guarantees. Output the markdown only
   return md;
 }
 
+// Buyer-facing headings: no "1." numbering (the contents list numbers them) and no build notes like "(written as a markdown table)".
+export const cleanHeading = (h = '') => String(h)
+  .replace(/^\s*\d+\s*[.):-]\s*/, '')
+  .replace(/\s*\((?=[^)]*\b(markdown|written as|as a table|inline)\b)[^)]*\)/gi, '')
+  .replace(/\bmarkdown\b\s*/gi, '')
+  .trim();
+
 export function assemble(outline, sections) {
-  const toc = outline.sections.map((s, i) => `${i + 1}. ${s.heading}`).join('\n');
-  return `# ${outline.title}\n\n${outline.promise}\n\n**What's inside**\n\n${toc}\n\n${sections.join('\n\n')}\n`;
+  const toc = outline.sections.map((s, i) => `${i + 1}. ${cleanHeading(s.heading)}`).join('\n');
+  const body = sections.map((md) => md.replace(/^## (.*)$/m, (_, h) => `## ${cleanHeading(h)}`));
+  return `# ${outline.title}\n\n${outline.promise}\n\n**What's inside**\n\n${toc}\n\n${body.join('\n\n')}\n`;
 }
 
 function safeJson(s) { try { return JSON.parse(s); } catch { return null; } }
