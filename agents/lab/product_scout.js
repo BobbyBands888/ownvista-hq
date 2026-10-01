@@ -76,6 +76,10 @@ export async function run(ctx) {
   const system = systemPrompt('the Product Scout', `
 From the marketplace evidence, find up to 4 products we can sell that people are clearly paying for.
 Make each one ORIGINAL: never copy a listing's title, text or design; no brand, character, team or celebrity names.
+Bobby's standing rejections (Oct 1): (1) nothing for short-term rental / Airbnb hosts, landlords, property owners or
+property managers until he decides otherwise; (2) evidence must show people PAYING for this kind of product (sales,
+favorites, top-seller lists), not just that a free thing is popular; (3) never guides on repackaging or reselling
+other people's free assets, templates or libraries (licensing risk); we sell only our own original work.
 type "text": a product delivered as ONE web page of written content — a guide, playbook, template set written as tables,
 checklists, scripts, swipe files, worksheets. Our Launcher can build and sell these with no human.
 type "pod": an ORIGINAL print-on-demand design (shirt, mug, sticker, poster, tote) a supplier like Printify prints and
