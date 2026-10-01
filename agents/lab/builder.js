@@ -9,6 +9,7 @@ import { checkCopy } from '../lib/guard.js';
 import { createDraft } from '../lib/gmail.js';
 import { playbook, signoff } from '../lib/context.js';
 import { truncate } from '../lib/text.js';
+import { retireRealEstate } from '../lib/no_real_estate.js';
 
 const KINDS = {
   growth: ['copy', 'outreach_draft', 'step_plan'],
@@ -17,6 +18,7 @@ const KINDS = {
 };
 
 export async function run(ctx) {
+  await retireRealEstate(ctx);
   // Growth ideas are built by the Operator; the Builder handles business + venture ideas.
   // Pick the oldest approved idea that has no assets yet. An idea marked built but holding
   // zero assets (an earlier empty build) counts as not built, so it gets retried.

@@ -9,11 +9,15 @@
 //   - more than max_per_day approvals (Builder/Launcher work on Groq's free limits) or business ideas below min_score
 // Pause it from the Radar page (kv autopilot.enabled = false). Approving never sends, spends or signs up.
 import { db, kvGet } from './db.js';
-import { checkCopy } from './guard.js';
+import { checkCopy, realEstateRisk } from './guard.js';
 import { truncate } from './text.js';
 import { daysAgoIso, etToUtc, etDate } from './time.js';
 
-export const DEFAULTS = { enabled: true, max_per_day: 6, min_score: 50, skip_businesses: ['ma-real-estate', 'villa-cinema'] };
+// Hard pause set by Bobby (Oct 1, 2026, 9am) while the real-estate filter and daily cap were fixed.
+// Overrides the kv switch. Set back to false only when Bobby says to unpause.
+export const HARD_PAUSE = true;
+
+export const DEFAULTS = { enabled: true, max_per_day: 6, min_score: 50, skip_businesses: ['ma-real-estate', 'nashville-buys', 'villa-cinema'] };
 
 // Names of brands, characters and celebrities that must never be in a product we sell.
 const IP = /\b(disney|marvel|pixar|star ?wars|pok[eé]mon|nintendo|mario|zelda|harry potter|hogwarts|barbie|lego|minecraft|roblox|fortnite|nfl|nba|mlb|nhl|fifa|taylor swift|beyonc[eé]|nike|adidas|gucci|louis vuitton|chanel|coca[- ]?cola|sanrio|hello kitty|bluey|peppa|paw patrol|sesame street|looney tunes|dr\.? seuss|grinch|snoopy|peanuts|hasbro|mattel|rolex|apple watch|iphone|stanley cup|yeti|labubu|squishmallow|sonic|spongebob|scooby|batman|superman|spider-?man|avengers|frozen|elsa|mickey|minnie|winnie the pooh|stitch|moana|encanto|wednesday addams|stranger things|game of thrones|lord of the rings|tolkien|anime character)\b/i;
@@ -27,6 +31,8 @@ export function ipRisk(text = '') {
 export function skipReason(idea, rules = DEFAULTS) {
   const text = [idea.title, idea.summary, ...(idea.steps || [])].filter(Boolean).join('\n');
   if ((rules.skip_businesses || []).includes(idea.business)) return `${idea.business} stays with Bobby`;
+  const re = realEstateRisk(text);
+  if (re) return `touches real estate ("${re}") — never auto-approved`;
   const ip = ipRisk(text);
   if (ip) return `uses a protected brand/character ("${ip}")`;
   const problems = checkCopy(text, { business: idea.business });
@@ -41,9 +47,15 @@ export async function rules() {
 
 export async function autoApprove(ctx) {
   const r = await rules();
+  if (HARD_PAUSE) return 'paused (hard pause in code)';
   if (r.enabled === false) return 'paused (Radar page)';
   const dayStart = etToUtc(etDate(), 0, 0).toISOString();
-  const today = await db.count('activity', { agent: 'eq.autopilot', kind: 'eq.autopilot', created_at: `gte.${dayStart}` }).catch(() => 0);
+  let today;
+  try {
+    today = await db.count('activity', { agent: 'eq.autopilot', kind: 'eq.autopilot', at: `gte.${dayStart}` });
+  } catch (e) {
+    return `could not count today's approvals (${truncate(e.message, 80)}) — approving nothing`;
+  }
   let left = Math.max(0, r.max_per_day - today);
   if (!left) return `daily limit reached (${r.max_per_day})`;
   const ideas = await db.select('ideas', {

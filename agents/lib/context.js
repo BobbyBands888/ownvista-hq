@@ -55,5 +55,6 @@ export function formatKnowledge(items) {
 export function signoff(business) {
   if (business === 'followup') return 'Bobby\nFounder & CEO, Ownvista';
   if (business === 'villa-cinema') return 'Bobby\nVilla Cinema';
-  return 'Bobby\nFounder, Nashville Buys';
+  if (business === 'nashville-buys') return 'Bobby\nFounder, Nashville Buys';
+  return 'Bobby\nOwnvista';
 }

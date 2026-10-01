@@ -14,6 +14,7 @@ import { truncate, randomToken } from '../lib/text.js';
 import { etDate, addDays } from '../lib/time.js';
 import { createOffer, deactivateLink, paidSessionsSince, launchKeyReady } from '../lib/stripe_launch.js';
 import { buildPublicPage, slugify } from '../lib/page.js';
+import { retireRealEstate } from '../lib/no_real_estate.js';
 import { advanceProduct, productProblems, FAKE_DELIVERY } from './product.js';
 
 const SITE = 'https://www.levelingclips.com';
@@ -22,6 +23,8 @@ export async function run(ctx) {
   if (!(await tablesReady())) return 'waiting for the database update (run the Launcher SQL block in Supabase)';
   const rules = { goal_sales: 5, days: 14, ...(await kvGet('launch_rules', {})) };
   const out = [];
+  const retired = await retireRealEstate(ctx);
+  if (retired) out.push(retired);
   const made = await prepareLaunches(ctx, rules);
   if (made) out.push(`prepared ${made}`);
   const live = await goLive(ctx);

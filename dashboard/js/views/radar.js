@@ -6,7 +6,7 @@ export async function render(el) {
     kvGet('product_radar', []),
     kvGet('autopilot', {}),
     kvGet('tick_lock', null),
-    q(sb.from('activity').select('message,created_at,ref_id').eq('agent', 'autopilot').order('created_at', { ascending: false }).limit(15)),
+    q(sb.from('activity').select('message,at,ref_id').eq('agent', 'autopilot').order('at', { ascending: false }).limit(15)),
     q(sb.from('launches').select('title,status,slug,price_usd,sales').order('created_at', { ascending: false }).limit(8)),
   ]);
   const enabled = pilot?.enabled !== false;
@@ -30,7 +30,7 @@ export async function render(el) {
     </div>
   </div>
   <div class="card section"><h2>Sent live by Autopilot</h2><div class="list">
-    ${approvals.map((a) => `<div class="item"><div class="small">${esc(a.message)}</div><div class="small muted">${ago(a.created_at)}</div></div>`).join('') || '<div class="empty">Nothing approved yet.</div>'}
+    ${approvals.map((a) => `<div class="item"><div class="small">${esc(a.message)}</div><div class="small muted">${ago(a.at)}</div></div>`).join('') || '<div class="empty">Nothing approved yet.</div>'}
   </div>
   <div class="small muted section">Offers: ${launches.map((l) => `${esc(l.title)} ${badge(l.status, l.status === 'live' ? 'ok' : '')}${l.status === 'live' ? ` <a href="/p/${esc(l.slug)}" target="_blank" rel="noopener">page</a>` : ''}`).join(' · ') || 'none yet'}</div></div>
   <div class="card scroll-x section"><h2>Products found (${rows.length})</h2>

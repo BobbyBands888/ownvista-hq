@@ -3,7 +3,7 @@
 // source links from collected knowledge/signals; #1 gets a full launch kit.
 import { db } from './lib/db.js';
 import { chat } from './lib/llm.js';
-import { systemPrompt, untrusted } from './lib/guard.js';
+import { systemPrompt, untrusted, realEstateRisk } from './lib/guard.js';
 import { playbook } from './lib/context.js';
 import { similarTitle, truncate } from './lib/text.js';
 import { daysAgoIso } from './lib/time.js';
@@ -39,7 +39,7 @@ export async function run(ctx) {
 ${pb.text(['scout', 'lab', 'businesses', 'guardrails'])}
 
 Find up to 3 NEW business opportunities for Bobby (not the existing businesses).
-Hard requirements: start for $0–200, no new licenses, no phone calls, workable by one person by email and the web.
+Hard requirements: nothing to do with real estate, housing, mortgages or Bobby's real estate license; start for $0–200, no new licenses, no phone calls, workable by one person by email and the web.
 Every opportunity must cite at least one source URL copied exactly from the evidence list. No other links.
 Score each: time_to_revenue (0–30), fit (0–25), cost (0–20, cheaper = higher), hours (0–15, fewer of Bobby's hours = higher), evidence (0–10).
 Do not repeat rejected ideas.
@@ -59,6 +59,7 @@ JSON only: {"opportunities":[{"title":"","summary":"","why_bobby":"","startup_co
     const cost = Number(o.startup_cost_usd);
     if (!o.title || !urls.length || o.needs_license || o.needs_calls || !(cost >= 0 && cost <= 200)) continue;
     if (recent.some((r) => similarTitle(r.title, o.title))) continue;
+    if (realEstateRisk(`${o.title}\n${o.summary}\n${(o.steps || []).join('\n')}`)) continue; // Bobby's rule: no real estate
     const { total, breakdown } = scoreOf(o.scores);
     kept.push({ ...o, urls, total, breakdown, cost });
   }

@@ -7,7 +7,7 @@
 // Never copies a listing: titles/prices are evidence of demand only; products must be our own work, no brands.
 import { db, kvGet, kvSet } from '../lib/db.js';
 import { chat } from '../lib/llm.js';
-import { systemPrompt, untrusted } from '../lib/guard.js';
+import { systemPrompt, untrusted, realEstateRisk } from '../lib/guard.js';
 import { fetchFeed } from '../lib/feeds.js';
 import { etsyListings, etsyReady } from '../lib/etsy.js';
 import { ipRisk } from '../lib/autopilot.js';
@@ -22,7 +22,7 @@ export const FEEDS = [
 ];
 export const ETSY_KEYWORDS = [
   'small business template', 'notion template', 'budget planner', 'resume template', 'social media planner',
-  'contractor forms', 'real estate agent checklist', 'etsy seller guide', 'wedding planner checklist',
+  'contractor forms', 'etsy seller guide', 'wedding planner checklist',
   'cleaning business forms', 'meal plan', 'lesson plan template', 'airbnb host guide', 'study guide',
 ];
 
@@ -83,6 +83,7 @@ JSON only: {"products":[{"type":"text|other","title":"","buyer":"who buys it","d
   for (const p of (json.products || []).slice(0, 4)) {
     const urls = (p.evidence || []).filter((u) => allowed.has(u));
     if (!p.title || !urls.length || ipRisk(`${p.title} ${p.deliverable}`)) continue;
+    if (realEstateRisk(`${p.title} ${p.deliverable} ${p.buyer}`)) continue; // Bobby's rule: no real estate
     if (recent.some((r) => similarTitle(r.title, p.title))) continue;
     const price = Number(p.price_usd);
     const score = Math.max(0, Math.min(100, Math.round(Number(p.score) || 0)));

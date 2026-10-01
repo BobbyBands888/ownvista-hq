@@ -2,7 +2,7 @@
 // up to 3 new research sources (search queries) to fill gaps.
 import { db } from './lib/db.js';
 import { chat } from './lib/llm.js';
-import { systemPrompt, untrusted } from './lib/guard.js';
+import { systemPrompt, untrusted, realEstateRisk } from './lib/guard.js';
 import { playbook, BUSINESSES } from './lib/context.js';
 import { similarTitle, truncate } from './lib/text.js';
 import { daysAgoIso } from './lib/time.js';
@@ -34,7 +34,7 @@ Learn from past decisions: do not repeat rejected ideas; lean toward what Bobby 
 Create up to 3 tasks YOU (the agents) can execute with writing alone (research summaries, copy, outreach drafts, step plans). No tasks that need sending, paying, signing up, calls or publishing.
 Suggest up to 3 new research search queries to fill gaps in coverage (short, specific web-search phrasing).
 JSON only:
-{"ideas":[{"business":"${BUSINESSES.slice(0, 5).join('|')}","title":"","summary":"","why_now":"","steps":["..."],"source_urls":["..."]}],
+{"ideas":[{"business":"${BUSINESSES.filter((b) => b !== 'ma-real-estate').slice(0, 5).join('|')}","title":"","summary":"","why_now":"","steps":["..."],"source_urls":["..."]}],
  "tasks":[{"title":"","detail":"","business":""}],
  "sources":[{"name":"","query":"","business":""}]}`);
 
@@ -52,6 +52,8 @@ JSON only:
   let ideas = 0, newTasks = 0, newSources = 0;
   for (const idea of (json.ideas || []).slice(0, 3)) {
     if (!idea.title || recentIdeas.some((r) => similarTitle(r.title, idea.title))) continue;
+    // Bobby's rule: no ideas for his MA agent business or anything real-estate outside Nashville Buys.
+    if (idea.business === 'ma-real-estate' || (idea.business !== 'nashville-buys' && realEstateRisk(`${idea.title}\n${idea.summary}\n${(idea.steps || []).join('\n')}`))) continue;
     const urls = (idea.source_urls || []).filter((u) => knownUrls.has(u));
     await db.insertOne('ideas', {
       kind: 'growth', business: BUSINESSES.includes(idea.business) ? idea.business : null,
