@@ -53,7 +53,7 @@ JSON only:
   for (const idea of (json.ideas || []).slice(0, 3)) {
     if (!idea.title || recentIdeas.some((r) => similarTitle(r.title, idea.title))) continue;
     // Bobby's rule: no ideas for his MA agent business or anything real-estate outside Nashville Buys.
-    if (idea.business === 'ma-real-estate' || (idea.business !== 'nashville-buys' && realEstateRisk(`${idea.title}\n${idea.summary}\n${(idea.steps || []).join('\n')}`))) continue;
+    if (idea.business === 'ma-real-estate' || (idea.business !== 'nashville-buys' && idea.business !== 'villa-cinema' && realEstateRisk(`${idea.title}\n${idea.summary}\n${(idea.steps || []).join('\n')}`))) continue;
     const urls = (idea.source_urls || []).filter((u) => knownUrls.has(u));
     await db.insertOne('ideas', {
       kind: 'growth', business: BUSINESSES.includes(idea.business) ? idea.business : null,

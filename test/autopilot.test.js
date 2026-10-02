@@ -128,3 +128,17 @@ test('Marketer kits must state the real item count (Fantasy Potion: 14 shipped, 
   assert.match(kit.pins[0].description, /^14 /);
   assert.ok(dropped.some((d) => /says 16 items, the pack has 14/.test(d)));
 });
+
+test('Short-term rental / Airbnb / landlord products are blocked like real estate (Bobby, Oct 1)', async () => {
+  const { realEstateRisk } = await import('../agents/lib/guard.js');
+  for (const t of ['Short‑Term Rental Interior Design Guide', 'Airbnb host welcome book', 'VRBO listing kit', 'Vacation rental cleaning checklist', 'STR host playbook'])
+    assert.ok(realEstateRisk(t), t);
+  for (const t of ['Top-Down Game Asset Planning Workbook', 'RPG UI Asset Pack Design Checklist', 'Professional Cleaning Service Agreement'])
+    assert.equal(realEstateRisk(t), null, t);
+});
+
+test('Builder parks an idea after repeated failed builds instead of blocking the queue', () => {
+  const code = src('agents/lab/builder.js');
+  assert.match(code, /builder_failures/);
+  assert.match(code, /MAX_FAILS = 2/);
+});

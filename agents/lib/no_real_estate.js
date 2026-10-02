@@ -7,14 +7,15 @@ import { realEstateRisk } from './guard.js';
 import { deactivateLink } from './stripe_launch.js';
 import { truncate } from './text.js';
 
-const NOTE = 'Rejected automatically: Bobby rule — no real estate or license-related products.';
+const NOTE = 'Rejected automatically: Bobby rule — no real estate, license-related or short-term-rental/landlord products.';
 
 export async function retireRealEstate(ctx) {
   const ideas = await db.select('ideas', {
     kind: 'in.(business,venture)', status: 'in.(proposed,approved,launched)', select: 'id,title,summary,steps,business', limit: 200,
   });
+  // Villa Cinema is Bobby's own business (it serves rental managers); its ideas stay with him.
   const bad = ideas.filter((i) => i.business === 'ma-real-estate'
-    || realEstateRisk([i.title, i.summary, ...(i.steps || [])].filter(Boolean).join('\n')));
+    || (i.business !== 'villa-cinema' && i.business !== 'nashville-buys') && realEstateRisk([i.title, i.summary, ...(i.steps || [])].filter(Boolean).join('\n')));
   let pulled = 0;
   for (const idea of bad) {
     await db.update('ideas', { id: `eq.${idea.id}` }, { status: 'rejected', decided_at: new Date().toISOString(), feedback: NOTE });

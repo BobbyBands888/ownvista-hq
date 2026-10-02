@@ -1,9 +1,9 @@
 // Builder — hourly, 24/7, when there is work. For approved ideas/experiments it builds
 // everything that needs no account and no payment: listing copy, briefs, landing page,
 // outreach drafts (Gmail drafts, no recipient), pricing sheet, step plans. Never publishes.
-import { db } from '../lib/db.js';
+import { db, kvGet, kvSet } from '../lib/db.js';
 import { GMAIL_USER } from '../lib/env.js';
-import { chat } from '../lib/llm.js';
+import { chat, CapError } from '../lib/llm.js';
 import { systemPrompt } from '../lib/guard.js';
 import { checkCopy } from '../lib/guard.js';
 import { createDraft } from '../lib/gmail.js';
@@ -25,14 +25,38 @@ export async function run(ctx) {
   const approved = await db.select('ideas', {
     kind: 'in.(business,venture)', status: 'in.(approved,launched)', select: '*,assets(id)', order: 'decided_at.asc', limit: 20,
   });
-  const todo = approved.filter((i) => !i.assets_built_at || !(i.assets || []).length);
   const pushed = await pushMissingDrafts(ctx);
-  if (!todo.length) return pushed ? `pushed ${pushed} missing Gmail draft(s)` : 'nothing approved to build';
+  // One idea the model refuses (or keeps botching) must not block the whole queue: after MAX_FAILS
+  // failed builds it is parked and the next idea gets built. (Oct 2: a short-term-rental guide the model
+  // refused jammed the Builder for 12+ hours with 7 game-asset ideas waiting behind it.)
+  const fails = (await kvGet('builder_failures', {})) || {};
+  const todo = approved.filter((i) => (!i.assets_built_at || !(i.assets || []).length) && (fails[i.id]?.n || 0) < MAX_FAILS);
+  const parked = approved.filter((i) => (fails[i.id]?.n || 0) >= MAX_FAILS && !(i.assets || []).length).length;
+  if (!todo.length) return [pushed ? `pushed ${pushed} missing Gmail draft(s)` : 'nothing approved to build', parked ? `${parked} parked after failed builds` : ''].filter(Boolean).join(' · ');
   const { assets: _drop, ...idea } = todo[0];
-  const n = await buildAssetsFor(ctx, idea);
-  if (!n) throw new Error(`built 0 assets for "${truncate(idea.title, 60)}" — the model returned nothing usable; will retry next run`);
-  return `built ${n} asset(s) for "${truncate(idea.title, 60)}"`;
+  let n = 0, why = '';
+  try {
+    n = await buildAssetsFor(ctx, idea);
+    if (!n) why = 'the model returned nothing usable';
+  } catch (e) {
+    if (e instanceof CapError) throw e;
+    why = /can.?t help|cannot (create|proceed|help)|prohibited|not able to/i.test(e.message) ? `the model refused: ${truncate(e.message.replace(/^.*failed_generation":"/, ''), 140)}` : truncate(e.message, 160);
+  }
+  if (n) {
+    if (fails[idea.id]) { delete fails[idea.id]; await kvSet('builder_failures', fails); }
+    return `built ${n} asset(s) for "${truncate(idea.title, 60)}"`;
+  }
+  const f = { n: (fails[idea.id]?.n || 0) + 1, why, title: truncate(idea.title, 80), at: new Date().toISOString() };
+  fails[idea.id] = f;
+  await kvSet('builder_failures', fails);
+  if (f.n >= MAX_FAILS) {
+    ctx.log('builder_parked', `Parked "${truncate(idea.title, 80)}" after ${f.n} failed builds (${why}). Moving on to the next idea.`, { table: 'ideas', id: idea.id });
+    return `parked "${truncate(idea.title, 60)}" after ${f.n} failed builds — next idea builds next run`;
+  }
+  throw new Error(`build ${f.n}/${MAX_FAILS} failed for "${truncate(idea.title, 60)}": ${why}`);
 }
+
+const MAX_FAILS = 2;
 
 export async function buildAssetsFor(ctx, idea) {
   const pb = await playbook();
