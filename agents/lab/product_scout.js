@@ -106,7 +106,8 @@ ${failLog?.text ? truncate(failLog.text, 2500) : `Avoid ideas like these rejecte
 ${results ? `${results}\n` : ''}JSON only: {"products":[{"type":"text|asset_pack|pod|other","title":"","buyer":"who buys it","deliverable":"exactly what they get","price_usd":19,
 "why_now":"the evidence in one sentence","score":0,"evidence":["url"],"channel":"etsy|itch|web|amazon|other","est_cost":0}]}`);
   const user = evidence.slice(0, 60).map((e) => untrusted(e.url, e.text, 300)).join('\n');
-  const { json } = await chat({ ctx, tier: 'smart', json: true, maxTokens: 2000, system, messages: [{ role: 'user', content: user }] });
+  // fast tier (gpt-oss-20b): Product Scout used a third of the shared 120b cap on Oct 1 and starved the builders.
+  const { json } = await chat({ ctx, tier: 'fast', json: true, maxTokens: 2000, system, messages: [{ role: 'user', content: user }] });
 
   let ideas = 0, onRadar = [], packHints = 0, gated = 0, repeats = 0;
   const byUrl = new Map(evidence.map((e) => [e.url, e.text]));

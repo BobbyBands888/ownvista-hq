@@ -134,8 +134,11 @@ ${hints.length ? untrusted('pack niches the Product Scout found demand for (pick
 function promptFor(pack, item) {
   const style = String(pack.style || '').replace(/\b(icons?|sprites?|sheet|set|pack|collection)\b/gi, '').replace(/\s+,/g, ',').trim();
   if (!item.keyed) return `${item.prompt}. ${style}. Full-frame illustration, no text, no letters, no watermark, no border.`;
-  return `A single ${item.name.toLowerCase()} (${item.prompt}), exactly one object, shown whole and fully inside the frame, small in the center with lots of empty space on every side. `
-    + `${style}. Plain flat solid pure magenta #FF00FF background filling the whole image, no floor, no cast shadow, no other objects, no text, no letters.`;
+  // Oct 1 QA data: "small with lots of empty space" gave tiny subjects (keyed away) and FLUX filled the space with
+  // extra copies or collages. Ask for one medium-sized object with a clear margin instead.
+  return `One single ${item.name.toLowerCase()} (${item.prompt}), centered, shown whole, filling about half of the image, with a clear margin on every side. `
+    + `Only one object: not a set, not a collage, not a pattern, no duplicates. `
+    + `${style}. Plain flat solid pure magenta #FF00FF background filling the whole image, no floor, no cast shadow, no text, no letters.`;
 }
 
 // Raw pixels from ffmpeg (small sizes only).
@@ -186,7 +189,7 @@ async function keyOut(jpg, dir, item) {
     const cover = opaque / 4096;
     if (!bg.flat) checks = { ok: false, issue: 'background not flat' };
     else if (edge > 6) checks = { ok: false, issue: 'subject touches the edge' };
-    else if (cover < 0.03) checks = { ok: false, issue: 'subject too small or keyed away' };
+    else if (cover < 0.02) checks = { ok: false, issue: 'subject too small or keyed away' };
     else if (cover > 0.75) checks = { ok: false, issue: 'background not removed' };
   }
   return { big, small, checks, qa: `data:image/jpeg;base64,${(await readFile(qaFile)).toString('base64')}` };
@@ -200,12 +203,15 @@ async function grade(ctx, pack, item, qaUri) {
 matches: does it clearly show a ${item.name} (${item.prompt})?
 has_text: are there readable letters, words or a watermark anywhere?
 brand: does it look like a famous trademarked character or logo?
+copies: how many separate copies of the object are visible, counting partial copies at the edges (1 = just one)?
 quality: 1–5, how good would it look as a video game item image (5 = polished, 1 = garbled/broken).
-JSON only: {"matches":true,"has_text":false,"brand":false,"quality":4,"issue":"short or empty"}`),
+JSON only: {"matches":true,"has_text":false,"brand":false,"copies":1,"quality":4,"issue":"short or empty"}`),
     messages: [{ role: 'user', content: [{ type: 'text', text: `Item: ${item.name}` }, { type: 'image', url: qaUri }] }],
   });
   const quality = Math.max(1, Math.min(5, Number(json.quality) || 3));
-  const bad = json.matches === false ? 'does not match the item' : json.has_text === true ? 'text in image' : json.brand === true ? 'looks like a brand' : '';
+  // A pack sells one clean object per file: duplicates/collages failed silently at grade 4 before Oct 1.
+  const multi = Number(json.copies) > 1 || /multiple|duplicate|collage|repeated|instances/i.test(String(json.issue || ''));
+  const bad = json.matches === false ? 'does not match the item' : json.has_text === true ? 'text in image' : json.brand === true ? 'looks like a brand' : multi ? 'more than one copy of the object' : '';
   return { grade: bad ? Math.min(2, quality) : quality, issue: truncate(bad || json.issue || '', 120) };
 }
 

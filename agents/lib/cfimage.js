@@ -4,7 +4,6 @@
 // and stop for the day at the first "allowance used up" answer. Every image call goes through here.
 import { requireEnv, hasEnv } from './env.js';
 import { kvGet, kvSet } from './db.js';
-import { etDate } from './time.js';
 
 export class ImageCapReached extends Error {
   constructor(msg) { super(msg); this.name = 'ImageCapReached'; }
@@ -13,8 +12,12 @@ export class ImageCapReached extends Error {
 export const cfReady = () => hasEnv('CF_ACCOUNT_ID', 'CF_API_TOKEN');
 const MODEL = '@cf/black-forest-labs/flux-1-schnell';
 
+// Cloudflare's free daily allowance resets at 00:00 UTC (8pm New York), so the counter keeps UTC days.
+// (It used New York days before Oct 1: a late-night run used up the next UTC day and blocked the whole next ET day.)
+const cfDay = (d = new Date()) => d.toISOString().slice(0, 10);
+
 export async function imagesLeftToday(cap) {
-  const day = etDate();
+  const day = cfDay();
   const st = await kvGet('cf_images', {});
   if (st.day !== day) return cap;
   if (st.exhausted) return 0;
@@ -22,7 +25,7 @@ export async function imagesLeftToday(cap) {
 }
 
 async function bump(extra = {}) {
-  const day = etDate();
+  const day = cfDay();
   const st = await kvGet('cf_images', {});
   const cur = st.day === day ? st : { day, count: 0 };
   await kvSet('cf_images', { ...cur, count: (cur.count || 0) + (extra.exhausted ? 0 : 1), ...extra });
@@ -41,9 +44,13 @@ export async function generateImage(prompt, { cap, steps = 4 } = {}) {
   const data = await res.json().catch(() => ({}));
   if (!res.ok || !data.success) {
     const msg = (data.errors || []).map((e) => `${e.code}: ${e.message}`).join('; ') || `HTTP ${res.status}`;
-    if (res.status === 429 || /allocation|neurons|limit|quota|exceeded/i.test(msg)) {
-      await bump({ exhausted: true });
+    // Only the DAILY allowance stops images for the day; a per-minute rate limit just ends this run.
+    if (/daily|allocation|neurons|quota|3036/i.test(msg)) {
+      await bump({ exhausted: true, last_error: msg.slice(0, 200) });
       throw new ImageCapReached(`Cloudflare free allowance: ${msg}`);
+    }
+    if (res.status === 429 || /rate.?limit|too many|exceeded/i.test(msg)) {
+      throw new ImageCapReached(`Cloudflare rate limit (try next run): ${msg}`);
     }
     const err = new Error(`Cloudflare image ${msg}`);
     // A content-filter refusal (8007 NSFW, often a false positive) is about this prompt only; skip the item, not the run.

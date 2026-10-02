@@ -16,7 +16,7 @@ export async function render(el) {
   const tickLate = !lastTick || Date.now() - Date.parse(lastTick) > 20 * 60000;
 
   el.innerHTML = `
-  <div class="head"><h1>Radar</h1><div class="small muted">Research runs every 5 minutes. Autopilot approves new ideas so the Launcher builds and publishes them without waiting for you.</div></div>
+  <div class="head"><h1>Radar</h1><div class="small muted">Autopilot (every 15 min) approves new ideas so the Launcher builds and publishes them without waiting for you.</div></div>
   <div class="grid g2">
     <div class="card">
       <h2>Autopilot ${badge(enabled ? 'on' : 'paused', enabled ? 'ok' : 'warn')}</h2>
