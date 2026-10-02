@@ -10,6 +10,7 @@ import { createDraft } from '../lib/gmail.js';
 import { playbook, signoff } from '../lib/context.js';
 import { truncate } from '../lib/text.js';
 import { retireRealEstate } from '../lib/no_real_estate.js';
+import { TEXT_TO_AUTOPILOT } from './product_scout.js';
 
 const KINDS = {
   growth: ['copy', 'outreach_draft', 'step_plan'],
@@ -30,7 +31,9 @@ export async function run(ctx) {
   // failed builds it is parked and the next idea gets built. (Oct 2: a short-term-rental guide the model
   // refused jammed the Builder for 12+ hours with 7 game-asset ideas waiting behind it.)
   const fails = (await kvGet('builder_failures', {})) || {};
-  const todo = approved.filter((i) => (!i.assets_built_at || !(i.assets || []).length) && (fails[i.id]?.n || 0) < MAX_FAILS);
+  // Product Scout's written products wait for the Etsy decision (Bobby, Oct 2): not built, so never launched on our site.
+  const held = (i) => i.created_by === 'product_scout' && !TEXT_TO_AUTOPILOT;
+  const todo = approved.filter((i) => (!i.assets_built_at || !(i.assets || []).length) && (fails[i.id]?.n || 0) < MAX_FAILS && !held(i));
   const parked = approved.filter((i) => (fails[i.id]?.n || 0) >= MAX_FAILS && !(i.assets || []).length).length;
   if (!todo.length) return [pushed ? `pushed ${pushed} missing Gmail draft(s)` : 'nothing approved to build', parked ? `${parked} parked after failed builds` : ''].filter(Boolean).join(' · ');
   const { assets: _drop, ...idea } = todo[0];
