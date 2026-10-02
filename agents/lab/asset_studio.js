@@ -26,6 +26,7 @@ const BUCKET = 'asset-packs';
 const KEYED = new Set(['sprites', 'icons', 'items', 'characters', 'props']);
 const TREND_FEEDS = ['https://itch.io/game-assets/top-sellers.xml', 'https://itch.io/game-assets/new-and-popular.xml'];
 
+const MAX_TRIES = 3; // 2 was too few: the vision grader is noisy and good images were dropped
 const RULES = async () => ({ images_per_day: 100, items_per_pack: 16, max_waiting: 3, goal_sales: 5, days: 30, ...(await kvGet('asset_rules', {})) });
 const slug = (s) => String(s).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 40) || 'item';
 
@@ -210,7 +211,8 @@ JSON only: {"matches":true,"has_text":false,"brand":false,"copies":1,"quality":4
   });
   const quality = Math.max(1, Math.min(5, Number(json.quality) || 3));
   // A pack sells one clean object per file: duplicates/collages failed silently at grade 4 before Oct 1.
-  const multi = Number(json.copies) > 1 || /multiple|duplicate|collage|repeated|instances/i.test(String(json.issue || ''));
+  // Only the explicit count: the free-text issue often says "no duplicates", which a keyword match misreads.
+  const multi = Number(json.copies) >= 2;
   const bad = json.matches === false ? 'does not match the item' : json.has_text === true ? 'text in image' : json.brand === true ? 'looks like a brand' : multi ? 'more than one copy of the object' : '';
   return { grade: bad ? Math.min(2, quality) : quality, issue: truncate(bad || json.issue || '', 120) };
 }
@@ -220,7 +222,7 @@ async function generateItems(ctx, pack, rules) {
   const items = pack.items.map((i) => ({ ...i }));
   let made = 0, stop = '';
   for (const item of items) {
-    if (item.done || item.attempts >= 2) continue;
+    if (item.done || item.attempts >= MAX_TRIES) continue;
     if (ctx.outOfTime(100000)) { stop = 'out of time'; break; }
     try {
       const jpg = await generateImage(promptFor(pack, item), { cap: rules.images_per_day });
@@ -253,7 +255,7 @@ async function generateItems(ctx, pack, rules) {
     await db.update('asset_packs', { id: `eq.${pack.id}` }, { items, images_made: (pack.images_made || 0) + made });
   }
   const done = items.filter((i) => i.done).length;
-  const open = items.filter((i) => !i.done && i.attempts < 2).length;
+  const open = items.filter((i) => !i.done && i.attempts < MAX_TRIES).length;
   let status = pack.status;
   if (!open) status = done >= Math.min(12, items.length) ? 'packaging' : 'rejected';
   const patch = { items, images_made: (pack.images_made || 0) + made, status };
