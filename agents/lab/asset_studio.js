@@ -32,6 +32,8 @@ const slug = (s) => String(s).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(
 export async function hasWork() {
   if (!cfReady()) return false;
   try { await db.select('asset_packs', { select: 'id', limit: 1 }); } catch { return false; }
+  // A finished pack still needs ffmpeg to be packaged even after the day's image allowance is used.
+  if ((await db.count('asset_packs', { status: 'eq.packaging' }).catch(() => 0)) > 0) return true;
   const rules = await RULES();
   return (await imagesLeftToday(rules.images_per_day)) > 0;
 }
@@ -46,7 +48,12 @@ export async function run(ctx) {
   if (killed) return killed;
 
   if (!cfReady()) { out.push('waiting for Cloudflare (CF_ACCOUNT_ID, CF_API_TOKEN)'); return out.join(' · '); }
-  if (!(await hasFfmpeg())) { out.push('no ffmpeg on this run'); return out.join(' · '); }
+  if (!(await hasFfmpeg())) {
+    // The job installs ffmpeg only when hasWork() says yes, so say the real reason (usually: allowance used today).
+    const left = await imagesLeftToday(rules.images_per_day);
+    out.push(left <= 0 ? 'free image allowance used for today (ffmpeg skipped)' : 'no ffmpeg on this run');
+    return out.join(' · ');
+  }
 
   // Finish what's in progress before starting anything new.
   let pack = await db.one('asset_packs', { status: 'in.(generating,packaging)', order: 'created_at.asc' });
