@@ -22,6 +22,9 @@ export const WRITTEN = /\b(templates?|guides?|checklists?|planners?|worksheets?|
 import { daysAgoIso } from '../lib/time.js';
 import { KV_KEY as RESULTS_KEY } from '../lib/review.js';
 
+// Off since Oct 2 (Bobby's idea review): no own-site written products to Autopilot until Etsy is decided.
+export const TEXT_TO_AUTOPILOT = false;
+
 export const FEEDS = [
   'https://itch.io/game-assets/top-sellers.xml',
   'https://itch.io/tools/top-sellers.xml',
@@ -128,6 +131,12 @@ ${results ? `${results}\n` : ''}JSON only: {"products":[{"type":"text|asset_pack
       continue;
     }
     if (p.type === 'text' && !urls.some((u) => WRITTEN.test(byUrl.get(u) || ''))) { gated++; continue; } // no proof this kind of guide sells
+    if (p.type === 'text' && !TEXT_TO_AUTOPILOT) {
+      // Bobby, Oct 2: written products sold only on levelingclips.com get no traffic (23 rejected in one review).
+      // Until Etsy listings are decided they go to the Radar as Etsy candidates, never to Autopilot.
+      onRadar.push({ title: p.title, lane: 'products', channel: 'etsy · digital (needs Etsy OK)', sell_price: price, est_cost: 0, score, why: `${p.deliverable} — ${p.why_now}`, evidence: urls, supplier_search: '', found_by: 'product_scout' });
+      continue;
+    }
     if (p.type === 'text' && price >= 5 && price <= 300) {
       await db.insertOne('ideas', {
         kind: 'venture', business: 'venture-lab', title: truncate(p.title, 200),

@@ -142,3 +142,8 @@ test('Builder parks an idea after repeated failed builds instead of blocking the
   assert.match(code, /builder_failures/);
   assert.match(code, /MAX_FAILS = 2/);
 });
+
+test('Product Scout sends no written products to Autopilot until Etsy is decided (Bobby, Oct 2)', async () => {
+  const { TEXT_TO_AUTOPILOT } = await import('../agents/lab/product_scout.js');
+  assert.equal(TEXT_TO_AUTOPILOT, false);
+});
