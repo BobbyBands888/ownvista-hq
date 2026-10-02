@@ -1,5 +1,5 @@
 // Continuous shift (Vercel Cron, every 5 minutes — vercel.json "crons"). Runs the agents that should never stop:
-//   autopilot (every 15 min), then the most overdue of: researcher (5 min), product_scout (60 min),
+//   autopilot (every 15 min), then the most overdue of: product_scout (60 min),
 //   dropship_scout (90 min), architect gap check (30 min). One heavy agent per tick keeps each call under the time limit.
 // Safe to hit from outside: if CRON_SECRET is set Vercel signs the call; either way a database lock and the
 // intervals below mean extra calls do nothing, and every LLM call still obeys the daily token caps.
@@ -33,7 +33,8 @@ async function keepAwake() {
   return out;
 }
 
-export const INTERVALS = { autopilot: 15, researcher: 5, product_scout: 60, dropship_scout: 90, architect: 30 };
+// researcher: 0 = off here (Bobby, Oct 1: too much Vercel time). It runs hourly on the free GitHub job instead.
+export const INTERVALS = { autopilot: 15, researcher: 0, product_scout: 60, dropship_scout: 90, architect: 30 };
 const LIGHT = ['autopilot'];
 const BUDGET_MS = 270000;
 

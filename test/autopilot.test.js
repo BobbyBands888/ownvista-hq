@@ -37,8 +37,8 @@ test('Scouts read the web politely and never sell, send, spend or contact anyone
 });
 
 test('Tick runs autopilot plus one heavy agent, most overdue first', () => {
-  assert.deepEqual(pickAgents({}), ['autopilot', 'researcher']); // never run: everything overdue, ties keep order
-  assert.deepEqual(pickAgents({ autopilot: 3, researcher: 6, product_scout: 30, dropship_scout: 30, architect: 10 }), ['researcher']);
+  assert.deepEqual(pickAgents({}), ['autopilot', 'product_scout']); // never run: everything overdue, ties keep order (researcher is off on the tick)
+  assert.deepEqual(pickAgents({ autopilot: 3, researcher: 600, product_scout: 30, dropship_scout: 30, architect: 40 }), ['architect']);
   assert.deepEqual(pickAgents({ autopilot: 20, researcher: 5, product_scout: 90, dropship_scout: 30, architect: 10 }), ['autopilot', 'product_scout']);
   assert.deepEqual(pickAgents({ autopilot: 1, researcher: 1, product_scout: 1, dropship_scout: 1, architect: 1 }), []);
   assert.deepEqual(pickAgents({}, { ...INTERVALS, researcher: 0, autopilot: 0 }).includes('researcher'), false);
