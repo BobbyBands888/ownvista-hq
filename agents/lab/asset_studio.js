@@ -26,7 +26,7 @@ const BUCKET = 'asset-packs';
 const KEYED = new Set(['sprites', 'icons', 'items', 'characters', 'props']);
 const TREND_FEEDS = ['https://itch.io/game-assets/top-sellers.xml', 'https://itch.io/game-assets/new-and-popular.xml'];
 
-const MAX_TRIES = 3; // 2 was too few: the vision grader is noisy and good images were dropped
+const MAX_TRIES = 4; // the vision grader is noisy; Oct 1 a bad duplicate check also burned tries on good images
 const RULES = async () => ({ images_per_day: 100, items_per_pack: 16, max_waiting: 3, goal_sales: 5, days: 30, ...(await kvGet('asset_rules', {})) });
 const slug = (s) => String(s).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 40) || 'item';
 
@@ -204,16 +204,14 @@ async function grade(ctx, pack, item, qaUri) {
 matches: does it clearly show a ${item.name} (${item.prompt})?
 has_text: are there readable letters, words or a watermark anywhere?
 brand: does it look like a famous trademarked character or logo?
-copies: how many separate copies of the object are visible, counting partial copies at the edges (1 = just one)?
 quality: 1–5, how good would it look as a video game item image (5 = polished, 1 = garbled/broken).
-JSON only: {"matches":true,"has_text":false,"brand":false,"copies":1,"quality":4,"issue":"short or empty"}`),
+JSON only: {"matches":true,"has_text":false,"brand":false,"quality":4,"issue":"short or empty"}`),
     messages: [{ role: 'user', content: [{ type: 'text', text: `Item: ${item.name}` }, { type: 'image', url: qaUri }] }],
   });
   const quality = Math.max(1, Math.min(5, Number(json.quality) || 3));
-  // A pack sells one clean object per file: duplicates/collages failed silently at grade 4 before Oct 1.
-  // Only the explicit count: the free-text issue often says "no duplicates", which a keyword match misreads.
-  const multi = Number(json.copies) >= 2;
-  const bad = json.matches === false ? 'does not match the item' : json.has_text === true ? 'text in image' : json.brand === true ? 'looks like a brand' : multi ? 'more than one copy of the object' : '';
+  // (Oct 1: a "how many copies?" question was tried and removed: this vision model reported 2+ copies on clean
+  // single-object images and failed good items. Framing is handled by the pixel checks instead.)
+  const bad = json.matches === false ? 'does not match the item' : json.has_text === true ? 'text in image' : json.brand === true ? 'looks like a brand' : '';
   return { grade: bad ? Math.min(2, quality) : quality, issue: truncate(bad || json.issue || '', 120) };
 }
 
