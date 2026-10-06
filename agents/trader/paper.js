@@ -36,6 +36,7 @@ export async function run(ctx) {
 
   const out = [];
   const closed = await manageOpen(ctx, rules, state, today);
+  if (closed.failed?.length) out.push(`could not update ${closed.failed.join(', ')} (see run notes)`);
   if (closed.length) out.push(`closed ${closed.map((t) => `${t.symbol} ${t.pnl >= 0 ? '+' : ''}$${Math.round(t.pnl)}`).join(', ')}`);
 
   const equity = await equityNow(state);
@@ -125,15 +126,17 @@ async function manageOpen(ctx, rules, state, today) {
           else Object.assign(patch, closePatch(t, px, exit));
         }
       }
-      await db.update('pt_trades', { id: `eq.${t.id}` }, patch);
-      if (patch.status === 'closed') {
-        state.cash = round(Number(state.cash) + patch.proceeds, 2);
-        delete patch.proceeds;
-        closed.push({ ...t, ...patch });
-        ctx.log('trade', `Paper ${patch.pnl >= 0 ? 'win' : 'loss'}: ${t.symbol} ${t.kind} ${exit.reason}, ${patch.pnl >= 0 ? '+' : ''}$${Math.round(patch.pnl)} (${patch.r_multiple}R)`, { table: 'pt_trades', id: t.id });
+      // proceeds is not a pt_trades column; sending it made every close fail (Oct 6 fix), so it stays out of the update.
+      const { proceeds, ...row } = patch;
+      await db.update('pt_trades', { id: `eq.${t.id}` }, row);
+      if (row.status === 'closed') {
+        state.cash = round(Number(state.cash) + proceeds, 2);
+        closed.push({ ...t, ...row });
+        ctx.log('trade', `Paper ${row.pnl >= 0 ? 'win' : 'loss'}: ${t.symbol} ${t.kind} ${exit.reason}, ${row.pnl >= 0 ? '+' : ''}$${Math.round(row.pnl)} (${row.r_multiple}R)`, { table: 'pt_trades', id: t.id });
       }
     } catch (e) {
       ctx.note(`${t.symbol}: ${truncate(e.message, 120)}`);
+      closed.failed = [...(closed.failed || []), t.symbol];
     }
   }
   return closed;
