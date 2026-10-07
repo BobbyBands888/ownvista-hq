@@ -64,8 +64,32 @@ test('stocks use a trailing stop: no target, no reward:risk gate, full 40-day ho
   assert.equal(v.plan.target, null);
   assert.equal(v.plan.trail, 6);
   assert.equal(v.plan.hold, R.max_hold_days);
+  // Options: a short target is moved out to 2:1 instead of rejecting the pick.
   const o = validatePick({ instrument: 'put', setup: 'breakdown', stop: 103, target: 99 }, s, ['breakdown']);
-  assert.match(o.problems.join(), /reward:risk/);
+  assert.ok(o.ok, o.problems.join());
+  assert.equal(o.plan.target, 94);
+});
+
+test('option picks: bad stops get the ATR default, exact 2:1 passes, stocks are still strict', () => {
+  const s = { price: 100, atr14: 2 };
+  const wrongSide = validatePick({ instrument: 'put', setup: 'breakdown', stop: 98, target: 90 }, s, ['breakdown']);
+  assert.ok(wrongSide.ok, wrongSide.problems.join());
+  assert.equal(wrongSide.plan.stop, 103);
+  const tight = validatePick({ instrument: 'call', setup: 'breakout', stop: 99.8, target: 110 }, s, ['breakout']);
+  assert.equal(tight.plan.stop, 97);
+  assert.ok(validatePick({ instrument: 'call', setup: 'breakout', stop: 97.1, target: 102.8 }, s, ['breakout']).ok);
+  const FIXED = { ...R, trail_atr: 0 };
+  assert.match(validatePick({ instrument: 'stock', setup: 'breakout', stop: 102, target: 110 }, s, ['breakout'], FIXED).problems.join(), /wrong side/);
+});
+
+test('contract choice with a budget: nearest affordable strike within 10%', () => {
+  const chain = [
+    { expiry: '2026-10-30', strike: 100, type: 'call', bid: 6, ask: 6.2, oi: 900 },
+    { expiry: '2026-10-30', strike: 105, type: 'call', bid: 3.8, ask: 4, oi: 900 },
+    { expiry: '2026-10-30', strike: 115, type: 'call', bid: 1, ask: 1.05, oi: 900 },
+  ];
+  assert.equal(chooseContract(chain, { type: 'call', price: 100, today: '2026-10-01', budget: 450 }).strike, 105);
+  assert.equal(chooseContract(chain, { type: 'call', price: 100, today: '2026-10-01', budget: 300 }), null);
 });
 
 test('trailing stop rises with the high, never falls, and exits on the trailed level', () => {

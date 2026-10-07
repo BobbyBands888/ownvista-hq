@@ -10,7 +10,7 @@ import { db, kvGet, kvSet } from '../lib/db.js';
 import { chat } from '../lib/llm.js';
 import { systemPrompt } from '../lib/guard.js';
 import { similarTitle, truncate } from '../lib/text.js';
-import { et, etDate, addDays } from '../lib/time.js';
+import { et, etDate, addDays, sleep } from '../lib/time.js';
 import * as M from './market.js';
 import {
   DEFAULT_RULES, SETUPS, stats, setupsFor, shortlist, riskMode, scoreboard, setupMultiplier, newBenches,
@@ -204,6 +204,10 @@ async function maybeTrade(ctx, rules, state, equity, mode, today) {
   const system = systemPrompt('the Paper Trader', `You manage a PAPER (simulated) trading account. No real money; nothing you choose is ever sent to a broker.
 Style: aggressive but not reckless. Take real swings when a setup is clean; pass when it is not. Passing is a valid answer.
 Instruments: stock (long only), call, put. Puts only on 'breakdown' or fading a 'momentum_gap'.
+Trade options too, not only stock: on a clean breakout, momentum_gap or pullback in a liquid name, a call is often the better
+instrument (defined risk, more upside per dollar); breakdowns are put-only. Aim for roughly a third of picks as options.
+The code buys a 14–45 day contract near the money that fits the budget, and exits an option at -50% or +100% of premium,
+at your underlying stop/target, or a week before expiry.
 Hard rules the code enforces anyway: stop between 0.5 and 3 ATR from price, max hold ${rules.max_hold_days} trading days.
 STOCKS have no fixed target: after entry the stop trails ${rules.trail_atr} ATR under the highest price, so winners can run (your target is ignored for stocks). Options: reward:risk at least ${rules.min_reward_risk}.
 Set stop and target as UNDERLYING stock prices. Confidence 1–5 (only use 4–5 when the chart and the lessons both agree).
@@ -242,9 +246,11 @@ Return at most ${slots} pick(s).`);
       made.push(row);
     } else {
       const to = addDays(today, rules.option_max_dte + 3);
-      const chain = await M.optionChain(c.symbol, { from: addDays(today, rules.option_min_dte), to }).catch(() => []);
-      const k = chooseContract(chain, { type: base.kind, price: c.s.price, today }, rules);
-      if (!k) { rejected.push({ ...base, signals: c.s, reject_reason: chain.length ? 'no liquid contract 14–45 days out' : 'option chain unavailable' }); continue; }
+      const from = addDays(today, rules.option_min_dte);
+      const chain = await M.optionChain(c.symbol, { from, to }).catch(() => sleep(4000).then(() => M.optionChain(c.symbol, { from, to }))).catch(() => []);
+      const budget = Math.min(equity * rules.max_option_premium_pct * mult, equity * rules.max_option_exposure - optExp, Number(state.cash) * 0.98);
+      const k = chooseContract(chain, { type: base.kind, price: c.s.price, today, budget }, rules);
+      if (!k) { rejected.push({ ...base, signals: c.s, reject_reason: chain.length ? `no liquid contract 14–45 days out within $${Math.round(budget)}` : 'option chain unavailable' }); continue; }
       const sz = sizeOption({ equity, cash: state.cash, ask: k.ask, mult, optionExposure: optExp }, rules);
       if (!sz.contracts) { rejected.push({ ...base, signals: c.s, reject_reason: sz.why }); continue; }
       const row = await db.insertOne('pt_trades', { ...common, contract: { expiry: k.expiry, strike: k.strike, type: k.type, bid: k.bid, ask: k.ask, oi: k.oi }, qty: sz.contracts, entry_price: k.ask, mark_price: k.bid, cost_usd: sz.cost, risk_usd: sz.risk_usd });

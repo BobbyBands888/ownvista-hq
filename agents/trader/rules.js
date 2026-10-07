@@ -219,18 +219,30 @@ export function validatePick(pick, s, setups, rules = DEFAULT_RULES) {
   let stop = Number(pick.stop), target = Number(pick.target);
   if (!Number.isFinite(stop) || stop <= 0) stop = bearish ? entry + 1.5 * a : entry - 1.5 * a;
   if (!Number.isFinite(target) || target <= 0) target = bearish ? entry - 3 * a : entry + 3 * a;
+  // Options (Oct 7): the setup and direction are the AI's call; the levels are mechanical. A stop on the wrong side,
+  // too tight or too loose is replaced with the 1.5 ATR default, and a target short of 2:1 is moved out to 2:1.
+  // Before this, every option pick (11 of 11) was rejected over levels alone.
+  const adjusted = [];
+  if (inst === 'call' || inst === 'put') {
+    const r0 = bearish ? stop - entry : entry - stop;
+    if (!(r0 >= 0.5 * a && r0 <= 3 * a)) { stop = bearish ? entry + 1.5 * a : entry - 1.5 * a; adjusted.push('stop set to 1.5 ATR'); }
+    const r1 = bearish ? stop - entry : entry - stop;
+    const rw = bearish ? entry - target : target - entry;
+    if (!(rw >= rules.min_reward_risk * r1)) { target = bearish ? entry - rules.min_reward_risk * r1 : entry + rules.min_reward_risk * r1; adjusted.push(`target moved to ${rules.min_reward_risk}:1`); }
+  }
   const risk = bearish ? stop - entry : entry - stop;
   const reward = bearish ? entry - target : target - entry;
   if (risk <= 0) problems.push('stop is on the wrong side of the price');
   else {
     if (risk < 0.5 * a) problems.push('stop is tighter than half a normal day’s move (gets shaken out)');
     if (risk > 3 * a) problems.push('stop is wider than 3 normal days’ moves (too loose)');
-    if (!trailing && reward / risk < rules.min_reward_risk) problems.push(`reward:risk ${(reward / risk).toFixed(1)} is under ${rules.min_reward_risk}`);
+    // Small tolerance: an exact 2:1 pick used to fail as "reward:risk 2.0 is under 2" on rounding.
+    if (!trailing && reward / risk < rules.min_reward_risk - 1e-6) problems.push(`reward:risk ${(reward / risk).toFixed(2)} is under ${rules.min_reward_risk}`);
   }
   const hold = trailing ? rules.max_hold_days : Math.max(1, Math.min(rules.max_hold_days, Math.round(Number(pick.max_hold_days) || 10)));
   return {
     ok: problems.length === 0, problems,
-    plan: { entry, stop: round(stop), target: trailing ? null : round(target), hold, bearish, trail: trailing ? round(rules.trail_atr * a) : null },
+    plan: { entry, stop: round(stop), target: trailing ? null : round(target), hold, bearish, trail: trailing ? round(rules.trail_atr * a) : null, adjusted },
   };
 }
 
@@ -265,12 +277,16 @@ export function sizeOption({ equity, cash, ask, mult, optionExposure }, rules = 
 
 // Choose a contract: 14–45 days out, nearest the money (slightly in the money preferred), tight spread.
 // chain rows: { expiry:'YYYY-MM-DD', strike, type:'call'|'put', bid, ask, oi }
-export function chooseContract(chain, { type, price, today }, rules = DEFAULT_RULES) {
+// budget (dollars): when the at-the-money contract costs more than one trade may spend, take the nearest strike
+// that fits, up to 10% out of the money (Oct 7: expensive stocks were skipped outright).
+export function chooseContract(chain, { type, price, today, budget = Infinity }, rules = DEFAULT_RULES) {
   const dte = (d) => Math.round((Date.parse(d) - Date.parse(today)) / 86400000);
   const ok = chain.filter((c) => c.type === type && c.bid > 0 && c.ask > 0
     && dte(c.expiry) >= rules.option_min_dte && dte(c.expiry) <= rules.option_max_dte
     && (c.ask - c.bid) / ((c.ask + c.bid) / 2) <= rules.option_max_spread
-    && (c.oi == null || c.oi >= 50));
+    && (c.oi == null || c.oi >= 50)
+    && c.ask * 100 <= budget
+    && (budget === Infinity || Math.abs(c.strike - price) / price <= 0.10));
   if (!ok.length) return null;
   const itm = (c) => (type === 'call' ? c.strike <= price : c.strike >= price);
   ok.sort((a, b) => {
