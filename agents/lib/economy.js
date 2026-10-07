@@ -17,6 +17,7 @@ import { etDate, addDays, daysAgoIso } from './time.js';
 export const LANES = {
   offers: { name: 'Launcher offers', agents: ['launcher', 'builder', 'autopilot', 'product_scout'], earns: true },
   assets: { name: 'itch.io asset packs', agents: ['asset_studio'], earns: true },
+  books: { name: 'Amazon KDP books', agents: ['book_studio'], earns: true },
   villa: { name: 'Villa Cinema', agents: ['villa_outreach', 'villa_studio'], earns: true },
   email: { name: 'Inbox + Bobby\'s businesses', agents: ['operator'], earns: true },
   growth: { name: 'Research & ideas (overhead)', agents: ['researcher', 'strategist', 'scout', 'analyst', 'judge', 'learner', 'economist', 'architect', 'dropship_scout', 'ceo_review', 'smart_score'], earns: false },
@@ -34,8 +35,9 @@ export const BASE_TOKENS = {
   // Researcher was 150K (the whole fast model's daily cap); 100K leaves room for the scouts on the same model.
   operator: 60000, villa_outreach: 40000, villa_studio: 150000, researcher: 100000, strategist: 15000, scout: 15000,
   product_scout: 20000, dropship_scout: 15000, autopilot: 1000,
-  analyst: 20000, builder: 20000, judge: 10000, learner: 20000, launcher: 30000, asset_studio: 20000,
-  economist: 6000, architect: 15000, paper_trader: 30000, book_studio: 8000, ceo_review: 6000, smart_score: 1000,
+  // Oct 7 focus: the makers get the allowance the paused research agents used to burn.
+  analyst: 20000, builder: 20000, judge: 10000, learner: 20000, launcher: 30000, asset_studio: 60000,
+  economist: 6000, architect: 15000, paper_trader: 30000, book_studio: 30000, ceo_review: 6000, smart_score: 1000,
 };
 export const BASE_IMAGES = 100;
 
@@ -104,7 +106,8 @@ export function computePnl({ usage, laneRevenue, crew = [], rules = DEFAULT_RULE
 export function pickFocus(signals) {
   const score = (s = {}) => (s.live_offers || 0) * 3 + (s.published_packs || 0) * 2 + (s.can_send ? 3 : 0) + Math.min(3, s.replies_14d || 0);
   let best = null, bestScore = 0;
-  for (const lane of ['offers', 'assets', 'villa']) {
+  // Oct 7: offers left the running (no traffic source); marketplaces with their own buyers come first.
+  for (const lane of ['assets', 'books', 'villa']) {
     const sc = score(signals[lane]);
     if (sc > bestScore) { best = lane; bestScore = sc; }
   }

@@ -76,7 +76,8 @@ test('P&L, focus and runway math', () => {
   assert.equal(pnl.builder.revenue, 12.25);
   assert.equal(pnl.researcher.revenue, 0);
   assert.equal(pnl.researcher.shadow_cost, 10.4); // $0.40 tokens + 3 approvals × 5 min × $40/h
-  assert.equal(pickFocus({ offers: { live_offers: 1 }, assets: { published_packs: 1 }, villa: { can_send: false } }), 'offers');
+  // Oct 7 focus: offers have no traffic source, so a live offer no longer wins focus over a published pack.
+  assert.equal(pickFocus({ offers: { live_offers: 1 }, assets: { published_packs: 1 }, villa: { can_send: false } }), 'assets');
   assert.equal(pickFocus({}), null);
   assert.deepEqual(runway({ revenue30: { offers: 49 }, burn: [{ usd_month: 20 }, { usd_month: 5 }] }), { revenue_30d: 49, burn_month: 25, net_month: 24, covers: 1.96 });
   assert.equal(ledgerLane({ source: 'itchio', line: 'experiment' }), 'assets');

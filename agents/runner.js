@@ -1,6 +1,6 @@
 // Runs one agent with bookkeeping (agent_runs row, caps, errors). Shared by the hourly GitHub job
 // (agents/run.js) and the continuous Vercel tick (api/tick.js).
-import { db, kvGet } from './lib/db.js';
+import { db, kvGet, kvSet } from './lib/db.js';
 import { CapError } from './lib/llm.js';
 import { SpendRefused } from './lib/spend.js';
 import { startRun, finishRun, activity } from './lib/log.js';
@@ -69,6 +69,24 @@ export function moduleFor(agentId) {
   return null;
 }
 
+// Oct 7, 2026 focus (Bobby approved): HQ had $0 revenue after a week because ~20 agents researched, planned
+// and graded while nothing reached a buyer. These are switched off ONCE, so the AI allowance goes to the agents
+// that make and list products (Book Studio, Asset Studio) plus the inbox, sales sync, books and the trader.
+// They stay off through the normal agents.enabled flag; Bobby can turn any back on from the dashboard.
+export const FOCUS_PAUSED = ['researcher', 'strategist', 'scout', 'analyst', 'judge', 'architect', 'builder',
+  'autopilot', 'product_scout', 'dropship_scout', 'marketer'];
+let focusChecked = false;
+async function applyFocusOnce() {
+  if (focusChecked) return;
+  focusChecked = true;
+  if (await kvGet('focus_2026_10_07', null)) return;
+  const crew = await db.select('crew_specs', { status: 'in.(probation,active)', select: 'id' }).catch(() => []);
+  const ids = [...FOCUS_PAUSED, ...crew.map((c) => c.id)];
+  for (const id of ids) await db.update('agents', { id: `eq.${id}` }, { enabled: false }).catch(() => {});
+  await kvSet('focus_2026_10_07', { at: new Date().toISOString(), paused: ids });
+  await activity('economist', 'economy', `Focus mode: paused ${ids.length} research/planning agents so the AI allowance goes to making and listing products. Turn any back on from its card.`).catch(() => {});
+}
+
 // jobDeadline: absolute ms the whole job must end by. budgetMin overrides the schedule's minutes.
 export async function runAgent(id, { jobId, trigger, jobDeadline, budgetMin }) {
   const cmd = COMMANDS[id];
@@ -76,6 +94,7 @@ export async function runAgent(id, { jobId, trigger, jobDeadline, budgetMin }) {
   const m = moduleFor(agentId);
   if (!m) throw new Error(`Unknown agent ${id}`);
   await ensureAgentRow(agentId);
+  await applyFocusOnce().catch((e) => console.error('focus mode', e.message));
   const row = await db.one('agents', { id: `eq.${agentId}` });
   if (row && row.enabled === false && trigger !== 'manual') return 'skipped';
   // Minutes per run follow the economy (0.5x–1.5x of the base budget, never under 2 minutes).
