@@ -1,11 +1,3 @@
-node_modules/
 .env
-.env.*
-dashboard/config.js
-.tmp/
-*.mp4
-.DS_Store
-.vercel
-.claude/
 __pycache__/
 *.pyc

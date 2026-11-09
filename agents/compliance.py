@@ -1,0 +1,71 @@
+"""COMPLIANCE agent — the gate. Nothing posts until it passes here.
+Hard checks (code): footage provenance, credit line, minors confirmed absent.
+Soft checks (LLM): YouTube/Facebook violent-content policy, misleading titles, death-on-camera, blur needs."""
+import json
+from datetime import date
+from .lib import llm
+from .lib.runner import RULES
+
+def provenance_ok(db, item, lead):
+    st = item.get("source_type")
+    if st == "dvids_public_domain":
+        return True, "public domain (DVIDS)"
+    if lead and "direct:" in (lead.get("notes") or ""):
+        return True, "agency/prosecutor direct release confirmed by Bobby"
+    if lead:
+        reqs = db.select("records_requests", {"lead_id": f"eq.{lead['id']}", "status": "eq.fulfilled", "select": "id"})
+        if reqs:
+            return True, "obtained by public records request"
+    return False, "no proof footage came from the agency (need a fulfilled records request or a confirmed direct release)"
+
+def review(item):
+    return llm.ask(
+        "You are a strict YouTube and Facebook policy reviewer for a police bodycam channel. One strike costs a week "
+        "of uploads; three end the channel. Fail anything risky.\n" + RULES,
+        json.dumps({k: item.get(k) for k in ("kind", "case_name", "title", "description", "tags", "script")}) +
+        '\n\nCheck: graphic or shocking words in title/thumbnail text; misleading or clickbait claims not supported by '
+        'the script; any sign a minor appears; any plan to show a death, gore or a lingering body; missing educational/'
+        'documentary context in the description; personal info (addresses, phone numbers) of private people.\n'
+        'Return JSON {"verdict":"pass|fail","issues":["..."],"required_edits":["blur/cut/rename instructions for the render"],'
+        '"minor_present":true|false|null}', max_tokens=700, temperature=0.1)
+
+def main(db):
+    items = db.select("content", {"compliance_status": "eq.pending", "order": "created_at.asc", "limit": 25})
+    until = db.setting("approval_required_until", "2026-11-23")
+    need_approval = date.today().isoformat() < str(until)
+    passed = failed = 0
+    leads_cache = {}
+    for it in items:
+        lid = it.get("lead_id")
+        if lid and lid not in leads_cache:
+            r = db.select("leads", {"id": f"eq.{lid}"})
+            leads_cache[lid] = r[0] if r else None
+        lead = leads_cache.get(lid)
+        issues = []
+        ok, why = provenance_ok(db, it, lead)
+        if not ok:
+            issues.append(why)
+        if not it.get("source_credit"):
+            issues.append("missing credit line")
+        r = review(it)
+        issues += r.get("issues", []) if r.get("verdict") == "fail" else []
+        minor = r.get("minor_present")
+        lead_minor = lead.get("involves_minor") if lead else None
+        if minor is True or lead_minor is True:
+            issues.append("minor may be present — not allowed")
+        elif lead_minor is None and minor is not False:
+            issues.append("minors not confirmed absent — confirm on dashboard")
+        edits = r.get("required_edits", [])
+        notes = (f"Provenance: {why}. " + ("Issues: " + "; ".join(issues) + ". " if issues else "") +
+                 ("Render edits: " + "; ".join(edits) if edits else "")).strip()
+        if issues:
+            db.update("content", {"id": f"eq.{it['id']}"}, {"compliance_status": "fail", "compliance_notes": notes})
+            failed += 1
+        else:
+            db.update("content", {"id": f"eq.{it['id']}"}, {
+                "compliance_status": "pass", "compliance_notes": notes,
+                "approval_status": "pending" if need_approval else "not_required"})
+            passed += 1
+    if failed:
+        db.alert("compliance", f"{failed} item(s) blocked — see Content queue for reasons", "info")
+    return f"reviewed {len(items)}: {passed} passed, {failed} blocked; approval {'required until ' + str(until) if need_approval else 'off (full auto)'}"

@@ -1,86 +1,18 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "framework": null,
-  "buildCommand": "node scripts/build-config.js",
+  "buildCommand": null,
   "outputDirectory": "dashboard",
   "cleanUrls": true,
   "rewrites": [
-    {
-      "source": "/",
-      "has": [
-        {
-          "type": "host",
-          "value": "films.villacinema.com"
-        }
-      ],
-      "destination": "/films"
-    },
-    {
-      "source": "/index",
-      "has": [
-        {
-          "type": "host",
-          "value": "films.villacinema.com"
-        }
-      ],
-      "destination": "/films"
-    },
-    {
-      "source": "/unsubscribe",
-      "has": [
-        {
-          "type": "host",
-          "value": "films.villacinema.com"
-        }
-      ],
-      "destination": "/api/unsubscribe"
-    },
-    {
-      "source": "/p/:slug",
-      "destination": "/api/p?slug=:slug"
-    }
+    { "source": "/", "has": [{ "type": "host", "value": "films.villacinema.com" }], "destination": "/films" }
   ],
   "headers": [
-    {
-      "source": "/(.*)",
-      "headers": [
-        {
-          "key": "X-Content-Type-Options",
-          "value": "nosniff"
-        },
-        {
-          "key": "X-Frame-Options",
-          "value": "DENY"
-        },
-        {
-          "key": "Referrer-Policy",
-          "value": "no-referrer"
-        },
-        {
-          "key": "Permissions-Policy",
-          "value": "camera=(), microphone=(), geolocation=()"
-        }
-      ]
-    },
-    {
-      "source": "/config.js",
-      "headers": [
-        {
-          "key": "Cache-Control",
-          "value": "no-store"
-        }
-      ]
-    }
-  ],
-  "crons": [
-    {
-      "path": "/api/tick",
-      "schedule": "*/5 * * * *"
-    }
-  ],
-  "functions": {
-    "api/tick.js": {
-      "maxDuration": 300
-    }
-  }
+    { "source": "/(.*)", "headers": [
+      { "key": "X-Content-Type-Options", "value": "nosniff" },
+      { "key": "X-Frame-Options", "value": "DENY" },
+      { "key": "Referrer-Policy", "value": "no-referrer" }
+    ]},
+    { "source": "/config.js", "headers": [{ "key": "Cache-Control", "value": "no-store" }] }
+  ]
 }
