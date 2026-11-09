@@ -12,8 +12,12 @@ def ask(label, check):
             print("  That doesn't look right - copy it from your note and paste again: ", end="", flush=True)
 cid = ask("Paste Client ID (ends in .apps.googleusercontent.com) + Return: ", lambda v: v.endswith(".apps.googleusercontent.com"))
 sec = ask("Paste Client secret (starts with GOCSPX-) + Return: ", lambda v: v.startswith("GOCSPX-") and len(v) >= 30)
-S = " ".join("https://www.googleapis.com/auth/" + s for s in
-             ["gmail.send", "gmail.readonly", "youtube.upload", "youtube.readonly", "yt-analytics.readonly"])
+import sys
+MODE = (sys.argv[1] if len(sys.argv) > 1 else "gmail").lower()
+SCOPES = {"gmail": ["gmail.send", "gmail.readonly"],
+          "youtube": ["youtube.upload", "youtube.readonly", "yt-analytics.readonly"]}[MODE]
+S = " ".join("https://www.googleapis.com/auth/" + s for s in SCOPES)
+print("Signing in for: " + MODE.upper() + (" - pick bobbybands888@gmail.com" if MODE == "gmail" else " - pick the Ten-Four Tapes channel"))
 R = "http://127.0.0.1:8765/"
 box = {}
 class H(http.server.BaseHTTPRequestHandler):
@@ -23,11 +27,11 @@ class H(http.server.BaseHTTPRequestHandler):
     def log_message(s, *a): pass
 threading.Thread(target=http.server.HTTPServer(("127.0.0.1", 8765), H).handle_request, daemon=True).start()
 webbrowser.open("https://accounts.google.com/o/oauth2/v2/auth?" + U.urlencode(dict(
-    client_id=cid, redirect_uri=R, response_type="code", scope=S, access_type="offline", prompt="select_account consent", login_hint="bobbybands888@gmail.com")))
+    client_id=cid, redirect_uri=R, response_type="code", scope=S, access_type="offline", prompt="select_account consent")))
 print("Finish signing in in your browser...")
 while "c" not in box:
     time.sleep(0.5)
 d = U.urlencode(dict(code=box["c"], client_id=cid, client_secret=sec, redirect_uri=R,
                      grant_type="authorization_code")).encode()
 r = json.load(urllib.request.urlopen("https://oauth2.googleapis.com/token", d))
-print("\nREFRESH TOKEN (copy into your note):\n" + r.get("refresh_token", "FAILED " + str(r)))
+print("\n" + MODE.upper() + " REFRESH TOKEN (copy into your note):\n" + r.get("refresh_token", "FAILED " + str(r)))

@@ -22,7 +22,7 @@ def youtube(db):
     watch = {}
     try:
         end = date.today()
-        r = requests.get("https://youtubeanalytics.googleapis.com/v2/reports", headers={"Authorization": f"Bearer {access_token()}"},
+        r = requests.get("https://youtubeanalytics.googleapis.com/v2/reports", headers={"Authorization": f"Bearer {access_token('youtube')}"},
                          params={"ids": "channel==MINE", "startDate": (end - timedelta(days=90)).isoformat(), "endDate": end.isoformat(),
                                  "metrics": "views,estimatedMinutesWatched,averageViewPercentage,subscribersGained",
                                  "dimensions": "video", "sort": "-views", "maxResults": 200}, timeout=30)

@@ -7,17 +7,20 @@ from email.mime.text import MIMEText
 import requests
 from . import config
 
-_token = {"value": None, "exp": 0}
+_tokens = {}
 
-def access_token():
+def access_token(kind="gmail"):
+    """kind: gmail (bobbybands888) or youtube (Ten-Four Tapes channel)."""
+    refresh = config.YOUTUBE_REFRESH_TOKEN if kind == "youtube" else config.GOOGLE_REFRESH_TOKEN
+    _token = _tokens.setdefault(kind, {"value": None, "exp": 0})
     if _token["value"] and time.time() < _token["exp"] - 60:
         return _token["value"]
-    if not (config.GOOGLE_CLIENT_ID and config.GOOGLE_CLIENT_SECRET and config.GOOGLE_REFRESH_TOKEN):
+    if not (config.GOOGLE_CLIENT_ID and config.GOOGLE_CLIENT_SECRET and refresh):
         raise RuntimeError("Google OAuth not configured (GOOGLE_CLIENT_ID/SECRET/REFRESH_TOKEN)")
     r = requests.post("https://oauth2.googleapis.com/token", data={
         "client_id": config.GOOGLE_CLIENT_ID,
         "client_secret": config.GOOGLE_CLIENT_SECRET,
-        "refresh_token": config.GOOGLE_REFRESH_TOKEN,
+        "refresh_token": refresh,
         "grant_type": "refresh_token",
     }, timeout=30)
     if r.status_code >= 300:
@@ -94,7 +97,7 @@ def yt_get(path, params, oauth=False):
     p = dict(params)
     headers = {}
     if oauth:
-        headers = _auth()
+        headers = {"Authorization": f"Bearer {access_token('youtube')}"}
     else:
         if not config.YOUTUBE_API_KEY:
             raise RuntimeError("YOUTUBE_API_KEY not set")

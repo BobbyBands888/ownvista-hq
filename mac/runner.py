@@ -88,7 +88,7 @@ def youtube_upload(path, title, description, tags, short=False):
             "status": {"privacyStatus": "public", "selfDeclaredMadeForKids": False}}
     if short and "#shorts" not in meta["snippet"]["description"].lower():
         meta["snippet"]["description"] += "\n#shorts"
-    h = {"Authorization": f"Bearer {access_token()}", "Content-Type": "application/json",
+    h = {"Authorization": f"Bearer {access_token('youtube')}", "Content-Type": "application/json",
          "X-Upload-Content-Type": "video/mp4", "X-Upload-Content-Length": str(os.path.getsize(path))}
     r = requests.post("https://www.googleapis.com/upload/youtube/v3/videos?uploadType=resumable&part=snippet,status",
                       headers=h, json=meta, timeout=60)
