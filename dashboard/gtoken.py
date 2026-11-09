@@ -13,7 +13,7 @@ class H(http.server.BaseHTTPRequestHandler):
     def log_message(s, *a): pass
 threading.Thread(target=http.server.HTTPServer(("127.0.0.1", 8765), H).handle_request, daemon=True).start()
 webbrowser.open("https://accounts.google.com/o/oauth2/v2/auth?" + U.urlencode(dict(
-    client_id=cid, redirect_uri=R, response_type="code", scope=S, access_type="offline", prompt="consent")))
+    client_id=cid, redirect_uri=R, response_type="code", scope=S, access_type="offline", prompt="select_account consent", login_hint="bobbybands888@gmail.com")))
 print("Finish signing in in your browser...")
 while "c" not in box:
     time.sleep(0.5)
