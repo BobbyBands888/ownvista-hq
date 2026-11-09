@@ -1,7 +1,13 @@
 # One-time Google sign-in for Ten-Four HQ. Prints a refresh token. Contains no secrets.
 import http.server, threading, urllib.parse as U, urllib.request, webbrowser, json, time
-cid = input("Paste Client ID + Return: ").strip()
-sec = input("Paste Client secret + Return: ").strip()
+def ask(label, check):
+    while True:
+        v = input(label).strip().strip('"').strip("'")
+        if check(v):
+            return v
+        print("  That doesn't look right - copy it from your note and paste again.")
+cid = ask("Paste Client ID (ends in .apps.googleusercontent.com) + Return: ", lambda v: v.endswith(".apps.googleusercontent.com"))
+sec = ask("Paste Client secret (starts with GOCSPX-) + Return: ", lambda v: v.startswith("GOCSPX-"))
 S = " ".join("https://www.googleapis.com/auth/" + s for s in
              ["gmail.send", "gmail.readonly", "youtube.upload", "youtube.readonly", "yt-analytics.readonly"])
 R = "http://127.0.0.1:8765/"
