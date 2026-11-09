@@ -18,6 +18,8 @@ def ask(system, user, json_mode=True, max_tokens=2000, temperature=0.4):
                 "max_tokens": max_tokens,
                 "temperature": temperature,
             }
+            if model.startswith("openai/gpt-oss"):
+                body["reasoning_effort"] = "low"   # keep reasoning from eating the token budget
             if json_mode:
                 body["response_format"] = {"type": "json_object"}
             r = requests.post(URL, headers={"Authorization": f"Bearer {config.GROQ_API_KEY}"}, json=body, timeout=90)
