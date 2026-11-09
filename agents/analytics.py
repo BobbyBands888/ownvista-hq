@@ -94,6 +94,9 @@ def main(db):
     today = date.today().isoformat()
     for r in rows:
         r["captured_on"] = today
+    # PostgREST bulk inserts need every row to have the same keys
+    keys = {k for r in rows for k in r}
+    rows = [{k: r.get(k) for k in keys} for r in rows]
     db.insert("metrics", rows, upsert=True, on_conflict="captured_on,platform,external_id")
     n = insights(db, rows)
     return f"saved {len(rows)} metric rows, {n} new insights" + (f"; errors: {errs}" if errs else "")
