@@ -18,7 +18,11 @@ FORMAT = """Ten-Four Tapes format:
 - SHORTS: 3 vertical Shorts per episode labeled "<Case Name> Part 1/2/3", each ends "Follow for Part 2/3".
 - FACEBOOK REELS: standalone 25-30s action Reels, real audio, action in the first 2 seconds, caption first line =
   case name, caption tags the full YouTube episode.
-- Titles: specific and dramatic but accurate. Never show the death itself, gore or a lingering body; blur bystanders as needed."""
+- Titles: specific and dramatic but accurate. Never show the death itself, gore or a lingering body; blur bystanders as needed.
+- FACTS: every narration line, check-in and "what happened next" must be stated in the lead text. Never invent an
+  outcome (arrest, custody, charges, injuries, deaths). If the lead doesn't say how it ended, leave
+  what_happened_next as "" — a wrong outcome is worse than none. If the lead says someone died, say so plainly
+  and respectfully, and plan cuts so the person is never shown dying, dead, or badly wounded."""
 
 def plan(lead, playbook, rejects=()):
     return llm.ask(

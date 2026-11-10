@@ -18,12 +18,16 @@ def provenance_ok(db, item, lead):
             return True, "obtained by public records request"
     return False, "no proof footage came from the agency (need a fulfilled records request or a confirmed direct release)"
 
-def review(item):
+def review(item, lead=None):
     return llm.ask(
         "You are a strict YouTube and Facebook policy reviewer for a police bodycam channel. One strike costs a week "
         "of uploads; three end the channel. Fail anything risky.\n" + RULES,
         json.dumps({k: item.get(k) for k in ("kind", "case_name", "title", "description", "tags", "script")}) +
-        '\n\nCheck: graphic or shocking words in title/thumbnail text; misleading or clickbait claims not supported by '
+        "\n\nSOURCE FACTS (the only facts we have):\n" + json.dumps({k: (lead or {}).get(k) for k in
+                                                                    ("title", "summary", "incident_date", "agency_name")}) +
+        '\n\nCheck: ANY claim in the title, narration, check-ins or what_happened_next that the source facts do not '
+        'state (invented arrests, outcomes, charges, motives) — fail it; a case where someone was shot or died and the '
+        'plan could show the person dying, dead or badly wounded — fail it; graphic or shocking words in title/thumbnail text; misleading or clickbait claims not supported by '
         'the script; any sign a minor appears; any plan to show a death, gore or a lingering body; missing educational/'
         'documentary context in the description; personal info (addresses, phone numbers) of private people.\n'
         'Return JSON {"verdict":"pass|fail","issues":["..."],"required_edits":["blur/cut/rename instructions for the render"],'
@@ -56,7 +60,7 @@ def main(db):
             issues.append(why)
         if not it.get("source_credit"):
             issues.append("missing credit line")
-        r = review(it)
+        r = review(it, lead)
         issues += r.get("issues", []) if r.get("verdict") == "fail" else []
         minor = r.get("minor_present")
         lead_minor = lead.get("involves_minor") if lead else None
