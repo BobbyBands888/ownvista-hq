@@ -1,12 +1,16 @@
 """SCOUT agent — finds new footage leads. Sources (all free):
-  1. Official agency/prosecutor YouTube channels (lead only — we request the original files, never download from YouTube)
-  2. DVIDS public-domain federal video (direct-use)
-  3. Google News RSS (tips that point to an agency to request from)
-Then the LLM scores every new lead for on-screen action and screens out minors."""
+  1. Agency watchlist (daily): the uploads of sheriff/police/prosecutor YouTube channels that publish their own
+     bodycam. When the post links a copy the AGENCY hosts itself (its own site, Dropbox, Drive, Box, Axon share),
+     that file is usable with no records request -> lead goes straight to "obtained". Otherwise it's a request
+     that cites the video they already released. We never download from YouTube or Facebook (channel rule).
+  2. YouTube search (finds new agency channels; they join the watchlist automatically)
+  3. DVIDS public-domain federal video (direct-use)
+  4. Google News RSS (tips that point to an agency to request from)
+Then the LLM scores every new lead: one clear enforcement moment + place + stakes ranks highest; minors screened out."""
 import json
 import re
 from datetime import datetime, timedelta, timezone
-from urllib.parse import quote_plus
+from urllib.parse import quote_plus, urljoin, urlparse
 import feedparser
 import requests
 from .lib import config, llm
@@ -14,9 +18,30 @@ from .lib.google import yt_get
 from .lib.runner import RULES
 
 AGENCY_RX = re.compile(r"sheriff|police|\bpd\b|state attorney|district attorney|prosecutor|highway patrol|"
-                       r"state police|public safety|marshal|department of corrections", re.I)
+                       r"state police|public safety|marshal|department of corrections|constable|trooper", re.I)
 YT_QUERIES = ["bodycam", "body worn camera video", "critical incident video", "officer involved shooting video",
               "pursuit dash cam video", "deputy body camera arrest"]
+# Agencies known to post their own bodycam/dashcam releases on YouTube. Resolved to channel IDs once and kept in
+# settings["scout_channels"]; channels found by the search pass are added there automatically.
+SEED_HANDLES = ["LAPDHQ", "LVMPD", "PhoenixPolice", "SanDiegoPolice", "SeattlePD", "DenverPolice", "FortWorthPD",
+                "TucsonPolice", "AlbuquerquePolice", "PolkCountySheriff", "VolusiaSheriff", "MarionSO",
+                "OrangeCountySheriffFL", "HCSOSheriff", "PCSOFlorida", "LASDHQ", "SanBernardinoSheriff",
+                "RiversideSheriff", "SacSheriff", "HoustonPolice", "DallasPolice", "SanAntonioPolice",
+                "AustinPolice", "MiamiDadePD", "MetroNashvillePD", "MemphisPolice", "AtlantaPolice",
+                "ColumbusPolice", "IndyPolice", "LouisvilleMetroPD", "MinneapolisPolice", "MesaPD",
+                "ScottsdalePD", "ChandlerPolice", "GilbertPolice", "AuroraPD", "ColoradoStatePatrol",
+                "OklahomaCityPolice", "TulsaPolice", "FloridaHighwayPatrol", "ChicagoCOPA", "BaltimorePolice"]
+# Hosts where an agency keeps its own copy of a release (a link to one of these from the agency's own post
+# counts as an agency release). Third-party video sites are deliberately absent.
+SELF_HOST_RX = re.compile(r"\.(gov|us)$|(^|\.)(dropbox\.com|drive\.google\.com|box\.com|evidence\.com|"
+                          r"sharepoint\.com|onedrive\.live\.com|1drv\.ms|nextrequest\.com|govqa\.us|justfoia\.com)$", re.I)
+AGENCY_DOMAIN_RX = re.compile(r"sheriff|police|pd|patrol|copa", re.I)   # lapdonline.org, polksheriff.org, lvmpd.com
+NEVER_HOST_RX = re.compile(r"(^|\.)(youtube\.com|youtu\.be|facebook\.com|fb\.watch|instagram\.com|tiktok\.com|"
+                           r"x\.com|twitter\.com|vimeo\.com)$", re.I)
+MEDIA_RX = re.compile(r"\.(mp4|mov|m4v|avi|zip|wmv|mkv|mts|mpg)(\?|$)", re.I)
+UA = {"User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 14_0) AppleWebKit/537.36 Chrome/130 Safari/537.36"}
+WATCH_EVERY_H = 20          # agency watchlist runs about once a day
+WATCH_LOOKBACK_DAYS = 3
 NEWS_QUERIES = ["bodycam video released", "body camera footage released sheriff",
                 "police release body camera video arrest", "911 call and bodycam released",
                 "sheriff releases body camera video", "dash cam video released chase",
@@ -25,6 +50,8 @@ LOOKBACK_DAYS = 7
 
 def _now():
     return datetime.now(timezone.utc)
+
+FOUND_CHANNELS = {}          # channelId -> title, collected by the search pass for the watchlist
 
 def from_youtube():
     if _now().hour % 6 >= 3:                 # about every 6h: 6 searches x 100 units stays well inside free quota
@@ -38,25 +65,139 @@ def from_youtube():
             sn = it["snippet"]
             if not AGENCY_RX.search(sn["channelTitle"]):
                 continue
+            FOUND_CHANNELS[sn["channelId"]] = sn["channelTitle"]
             leads.append({"title": sn["title"], "agency_name": sn["channelTitle"],
                           "summary": sn.get("description", "")[:600],
                           "source_url": f"https://www.youtube.com/watch?v={it['id']['videoId']}",
                           "source_type": "agency_release"})
     return leads
 
+# ---------------- agency watchlist ----------------
+def _self_hosted(url):
+    host = (urlparse(url).hostname or "").lower()
+    if not host or NEVER_HOST_RX.search(host):
+        return False
+    return bool(SELF_HOST_RX.search(host) or AGENCY_DOMAIN_RX.search(host.split(".")[-2] if "." in host else host))
+
+def _direct_url(url):
+    """Share links that hand over the file itself when asked the right way."""
+    if "dropbox.com" in url:
+        return re.sub(r"([?&])dl=0", r"\1dl=1", url) if "dl=" in url else url + ("&" if "?" in url else "?") + "dl=1"
+    m = re.search(r"drive\.google\.com/file/d/([\w-]+)", url)
+    if m:
+        return f"https://drive.google.com/uc?export=download&id={m[1]}"
+    return url
+
+def agency_files(text):
+    """Find video files the agency hosts itself, from the links in its own post. Returns direct file URLs
+    (checked live) or share links the publisher already knows how to open (Axon)."""
+    links = re.findall(r"https?://[^\s\"'<>)\]]+", text or "")
+    found = []
+    for raw in dict.fromkeys(l.rstrip(".,;") for l in links):
+        if not _self_hosted(raw):
+            continue
+        url = _direct_url(raw)
+        if "/axon/" in url or "evidence.com" in url:
+            found.append(url)                        # publisher's _axon() opens these
+            continue
+        try:
+            with requests.get(url, stream=True, timeout=25, allow_redirects=True, headers=UA) as r:
+                ctype = r.headers.get("content-type", "")
+                if r.status_code >= 300:
+                    continue
+                if ctype.startswith("video/") or "zip" in ctype or "octet-stream" in ctype or MEDIA_RX.search(r.url):
+                    if _self_hosted(r.url):
+                        found.append(r.url)
+                    continue
+                if "text/html" not in ctype:
+                    continue
+                page = r.raw.read(600_000, decode_content=True).decode("utf-8", "ignore")
+                base = r.url
+            for c in re.findall(r'(?:href|src|data-url|"url"|"downloadUrl")\s*[=:]\s*"([^"]+)"', page):
+                c = urljoin(base, c.replace("&amp;", "&"))
+                if MEDIA_RX.search(c) and _self_hosted(c):
+                    found.append(c)
+        except Exception:
+            continue
+        if len(found) >= 6:
+            break
+    return list(dict.fromkeys(found))[:6]
+
+def _watchlist(db):
+    """Channel IDs to pull daily: seed handles resolved once, plus every agency channel the search pass finds."""
+    chans = db.setting("scout_channels", {}) or {}
+    resolved = set(chans.get("_handles_tried", []))
+    changed = False
+    for h in SEED_HANDLES:
+        if h in resolved:
+            continue
+        try:
+            items = yt_get("channels", {"part": "snippet", "forHandle": "@" + h}).get("items", [])
+        except Exception:
+            items = []
+        if items and AGENCY_RX.search(items[0]["snippet"]["title"] + " " + h):
+            chans[items[0]["id"]] = items[0]["snippet"]["title"]
+        resolved.add(h)
+        changed = True
+    for cid, title in FOUND_CHANNELS.items():
+        if cid not in chans:
+            chans[cid] = title
+            changed = True
+    chans["_handles_tried"] = sorted(resolved)
+    if changed:
+        db.insert("settings", {"key": "scout_channels", "value": chans, "updated_at": _now().isoformat()},
+                  upsert=True, on_conflict="key")
+    return {k: v for k, v in chans.items() if not k.startswith("_")}
+
+def from_watchlist(db):
+    last = db.setting("scout_watch_last")
+    if last and (_now() - datetime.fromisoformat(last)).total_seconds() < WATCH_EVERY_H * 3600:
+        return []
+    chans = _watchlist(db)
+    after = _now() - timedelta(days=WATCH_LOOKBACK_DAYS)
+    leads = []
+    ids = list(chans)
+    for i in range(0, len(ids), 50):                         # 1 unit per 50 channels
+        for c in yt_get("channels", {"part": "contentDetails", "id": ",".join(ids[i:i + 50])}).get("items", []):
+            uploads = c["contentDetails"]["relatedPlaylists"]["uploads"]
+            try:
+                items = yt_get("playlistItems", {"part": "snippet", "playlistId": uploads, "maxResults": 15}).get("items", [])
+            except Exception:
+                continue
+            for it in items:
+                sn = it["snippet"]
+                if datetime.fromisoformat(sn["publishedAt"].replace("Z", "+00:00")) < after:
+                    continue
+                vid = sn.get("resourceId", {}).get("videoId")
+                if not vid:
+                    continue
+                leads.append({"title": sn["title"][:300], "agency_name": chans.get(c["id"]) or sn.get("channelTitle"),
+                              "summary": sn.get("description", "")[:600], "_desc": sn.get("description", ""),
+                              "source_url": f"https://www.youtube.com/watch?v={vid}",
+                              "source_type": "agency_release"})
+    db.insert("settings", {"key": "scout_watch_last", "value": _now().isoformat(), "updated_at": _now().isoformat()},
+              upsert=True, on_conflict="key")
+    return leads
+
+DVIDS_QUERIES = ["body worn camera", "bodycam", "body camera", "dash cam", "military police response",
+                 "security forces response", "border patrol apprehension"]
+
 def from_dvids():
     if not config.DVIDS_API_KEY:
         return []
-    r = requests.get("https://api.dvidshub.net/search", params={
-        "api_key": config.DVIDS_API_KEY, "q": "body worn camera", "type": "video",
-        "sort": "date", "max_results": 25}, timeout=30)
-    if r.status_code >= 300:
-        raise RuntimeError(f"DVIDS {r.status_code}: {r.text[:200]}")
-    leads = []
-    for it in r.json().get("results", []):
-        leads.append({"title": it.get("title", "")[:300], "agency_name": it.get("unit_name") or "DVIDS",
-                      "summary": (it.get("description") or "")[:600], "source_url": it.get("url"),
-                      "source_type": "dvids_public_domain"})
+    leads, seen = [], set()
+    for q in DVIDS_QUERIES:
+        r = requests.get("https://api.dvidshub.net/search", params={
+            "api_key": config.DVIDS_API_KEY, "q": q, "type": "video", "sort": "date", "max_results": 25}, timeout=30)
+        if r.status_code >= 300:
+            raise RuntimeError(f"DVIDS {r.status_code}: {r.text[:200]}")
+        for it in r.json().get("results", []):
+            if it.get("url") in seen:
+                continue
+            seen.add(it.get("url"))
+            leads.append({"title": it.get("title", "")[:300], "agency_name": it.get("unit_name") or "DVIDS",
+                          "summary": (it.get("description") or "")[:600], "source_url": it.get("url"),
+                          "source_type": "dvids_public_domain"})
     return leads
 
 def from_news():
@@ -68,8 +209,20 @@ def from_news():
                           "source_url": e.link, "source_type": "news_tip"})
     return leads
 
+def _final_score(s, category):
+    """Rank by the Quemado/Laredo/Narco Sub pattern: ONE clear enforcement moment + a real place + real stakes."""
+    sc = int(s.get("action_score") or 0)
+    full = all((s.get(k) or "").strip() for k in ("moment", "place", "stakes"))
+    if category == "enforcement" and full:
+        sc = min(10, sc + 1)
+    elif not full:
+        sc = min(sc, 7)
+    if category == "rescue":
+        sc = min(sc, 6)                       # rescues capped at 6 (and Maker gives them no Reels)
+    return sc
+
 def score(db, leads):
-    """LLM fills agency, state, date, action score, category, minors flag."""
+    """LLM fills agency, state, date, moment/place/stakes, category, minors flag; code sets the final rank."""
     out_rows = []
     for i in range(0, len(leads), 15):
         batch = leads[i:i + 15]
@@ -78,16 +231,20 @@ def score(db, leads):
             "(arrests, fights, chases, shootouts, dramatic rescues, strong case stories with 911 + interrogation). "
             "Our audience wants ENFORCEMENT action (chases, fights, arrests, shots fired, use of force): "
             "rescues and routine calls score 6 at most unless officers face real danger on camera. "
-            "'Ok' isn't enough. Score honestly. A lead is only a records REQUEST (free) — the footage itself gets "
-            "judged again before anything is made — so keep any real incident with likely on-camera action and an "
-            "identifiable U.S. agency. Skip opinion pieces, policy stories, lawsuits with no incident video, "
-            "and non-U.S. incidents.\n" + RULES,
+            "Our winners all had ONE clear enforcement moment (e.g. a smuggling stop that turns into a foot chase, "
+            "a narco sub boarding), a named place, and obvious stakes (drugs, guns, a fleeing felon, lives at risk). "
+            "Fill moment/place/stakes only from the lead text; leave a field empty if the text doesn't say it. "
+            "'Ok' isn't enough. Score honestly. Keep any real incident with likely on-camera action and an "
+            "identifiable U.S. agency — the footage itself is judged again before anything is made. "
+            "Skip opinion pieces, policy stories, press conferences with no incident video, lawsuits with no incident "
+            "video, recruiting/community videos, and non-U.S. incidents.\n" + RULES,
             "Leads:\n" + json.dumps([{"i": n, "title": l["title"], "summary": l.get("summary", "")[:400],
                                        "agency": l.get("agency_name")} for n, l in enumerate(batch)]) +
             '\n\nReturn JSON {"leads":[{"i":0,"agency_name":"official agency that holds the footage or null",'
             '"state":"2-letter or null","incident_date":"YYYY-MM-DD or null","action_score":1-10,'
             '"category":"enforcement|case_story|rescue|other","involves_minor":true|false|null,'
-            '"keep":true|false,"why":"short"}]}')
+            '"moment":"the one on-camera enforcement moment, or empty","place":"city/county, state, or empty",'
+            '"stakes":"what is at risk, or empty","keep":true|false,"why":"short"}]}')
         by_i = {x.get("i"): x for x in res.get("leads", [])}
         for n, l in enumerate(batch):
             s = by_i.get(n, {})
@@ -95,8 +252,8 @@ def score(db, leads):
             row["agency_name"] = s.get("agency_name") or l.get("agency_name")
             row["state"] = s.get("state")
             row["incident_date"] = s.get("incident_date")
-            row["action_score"] = int(s.get("action_score") or 0)
             row["category"] = s.get("category") or "other"
+            row["action_score"] = _final_score(s, row["category"])
             row["involves_minor"] = s.get("involves_minor")
             # 5+ is enough to REQUEST footage; Maker only builds from footage that actually delivers
             keep = row["involves_minor"] is not True and (row["action_score"] >= 6 or
@@ -109,18 +266,45 @@ def score(db, leads):
                 row["status"] = "obtained"      # public domain: no request needed
             else:
                 row["status"] = "new"
-            row["notes"] = s.get("why")
+            mps = " | ".join(f"{k}: {s.get(k)}" for k in ("moment", "place", "stakes") if (s.get(k) or "").strip())
+            row["notes"] = " — ".join(x for x in (mps, s.get("why")) if x)
             out_rows.append(row)
     return out_rows
 
+def take_direct(rows):
+    """Kept agency posts that link a file the agency hosts itself: no records request needed."""
+    direct = {}
+    for r in rows:
+        desc = r.pop("_desc", None)
+        if r["status"] != "new" or r["source_type"] != "agency_release" or not desc:
+            continue
+        files = agency_files(desc)
+        if files:
+            r["status"] = "obtained"
+            r["notes"] = f"direct: agency-hosted file {files[0]} (posted by {r['agency_name']} at {r['source_url']})" + \
+                         (f" — {r['notes']}" if r.get("notes") else "")
+            direct[r["source_url"]] = files
+        else:
+            r["summary"] = (f"The agency already published this video ({r['source_url']}); requesting the original "
+                            f"file. " + (r.get("summary") or ""))[:900]
+    for r in rows:
+        r.pop("_desc", None)
+    return direct
+
 def main(db):
     raw, errors = [], []
-    for name, fn in (("youtube", from_youtube), ("dvids", from_dvids), ("news", from_news)):
+    for name, fn in (("watchlist", lambda: from_watchlist(db)), ("youtube", from_youtube),
+                     ("dvids", from_dvids), ("news", from_news)):
         try:
             raw += fn()
         except Exception as e:
             errors.append(f"{name}: {e}")
             db.alert("scout", f"source {name} failed: {e}", "warn")
+    if FOUND_CHANNELS:                  # search-pass channels join the watchlist for tomorrow
+        try:
+            _watchlist(db)
+        except Exception as e:
+            errors.append(f"watchlist save: {e}")
     # de-dupe against what we already have
     urls = [l["source_url"] for l in raw if l.get("source_url")]
     seen = set()
@@ -141,15 +325,31 @@ def main(db):
             dedupe.add(u)
             recent_titles.add(k)
             fresh.append(l)
-    rows = score(db, fresh[:60]) if fresh else []
+    rows = score(db, fresh[:90]) if fresh else []
+    direct = take_direct(rows)
     if rows:
         db.insert("leads", rows, upsert=True, on_conflict="source_url")
+    # agency-hosted files: record them the way a fulfilled request is recorded so the publisher fetches them
+    for url, files in direct.items():
+        lead = (db.select("leads", {"source_url": f"eq.{url}", "select": "id,title,agency_name"}) or [None])[0]
+        if not lead:
+            continue
+        db.insert("records_requests", {
+            "lead_id": lead["id"], "subject": f"Agency release: {lead['title'][:120]}", "status": "fulfilled",
+            "last_activity_at": _now().isoformat(), "download_links": files,
+            "notes": f"[{_now():%Y-%m-%d}] no request needed — {lead['agency_name']} hosts the file itself ({url})"})
+        db.alert("scout", f"Footage in (agency release, no request): {lead['title'][:90]} — {lead['agency_name']}", "info")
     # make sure each kept agency exists in the directory (email filled only once verified)
     known = {a["name"].lower() for a in db.select("agencies", {"select": "name"})}
     for r in rows:
         a = (r.get("agency_name") or "").strip()
-        if r["status"] == "new" and r["source_type"] != "dvids_public_domain" and a and a.lower() not in known:
-            db.insert("agencies", {"name": a, "state": r.get("state")}, upsert=True, on_conflict="name")
+        if r["status"] in ("new", "obtained") and r["source_type"] != "dvids_public_domain" and a and a.lower() not in known:
+            db.insert("agencies", {"name": a, "state": r.get("state"),
+                                   "releases_bodycam": True if r["source_type"] == "agency_release" else None},
+                      upsert=True, on_conflict="name")
             known.add(a.lower())
     kept = sum(1 for r in rows if r["status"] in ("new", "obtained"))
-    return f"{len(raw)} found, {len(fresh)} new, {kept} kept (score>=6, no minors)" + (f"; errors: {errors}" if errors else "")
+    top = sorted((r for r in rows if r["status"] in ("new", "obtained")), key=lambda r: -r["action_score"])[:3]
+    return (f"{len(raw)} found, {len(fresh)} new, {kept} kept, {len(direct)} agency-hosted (no request)"
+            + (f"; top: " + "; ".join(f"{r['action_score']} {r['title'][:50]}" for r in top) if top else "")
+            + (f"; errors: {errors}" if errors else ""))
