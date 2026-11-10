@@ -56,7 +56,13 @@ def send_email(to, subject, body, thread_id=None, in_reply_to=None):
     return r.json()
 
 def get_thread(thread_id):
-    r = requests.get(GM + f"threads/{thread_id}", headers=_auth(), params={"format": "full"}, timeout=30)
+    import time
+    for attempt in range(4):   # Gmail's per-minute quota: back off and retry
+        r = requests.get(GM + f"threads/{thread_id}", headers=_auth(), params={"format": "full"}, timeout=30)
+        if r.status_code in (403, 429) and "uota" in r.text or r.status_code == 429:
+            time.sleep(20 * (attempt + 1))
+            continue
+        break
     if r.status_code >= 300:
         raise RuntimeError(f"Gmail thread failed: {r.text[:200]}")
     return r.json()

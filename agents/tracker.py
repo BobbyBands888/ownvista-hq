@@ -3,6 +3,7 @@ flags fee quotes / clarification asks to Bobby (never pays, never negotiates fee
 follow-ups on silent requests."""
 import json
 import re
+import time
 from datetime import datetime, timedelta, timezone
 from .lib import config, llm
 from .lib.google import get_thread, message_text, header, send_email, search
@@ -95,7 +96,15 @@ def shared_footage(db):
     hits = search(f"newer_than:30d {SHARE_SENDERS} (download OR shared OR evidence)", 20)
     known = {r["gmail_thread_id"] for r in db.select("records_requests", {"select": "gmail_thread_id"})}
     sent = []
+    new_shares = {h["threadId"] for h in hits} - known
+    if not new_shares:
+        return 0
+    seen_threads = set()
     for h in search("in:sent newer_than:45d (\"records request\" OR CPRA OR \"public records\")", 40):
+        if h["threadId"] in seen_threads or len(seen_threads) >= 30:
+            continue
+        seen_threads.add(h["threadId"])
+        time.sleep(0.4)
         try:
             m = get_thread(h["threadId"])["messages"][0]
             sent.append({"thread": h["threadId"], "to": header(m, "To"), "subject": header(m, "Subject"),
@@ -103,7 +112,7 @@ def shared_footage(db):
         except Exception:
             continue
     made = 0
-    for t in {h["threadId"] for h in hits} - known:
+    for t in new_shares:
         msg = get_thread(t)["messages"][-1]
         text = message_text(msg)
         links = [l for l in LINK_RX.findall(text) if re.search(r"download|evidence|share|/axon/", l, re.I)]
