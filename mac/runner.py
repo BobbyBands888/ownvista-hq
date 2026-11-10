@@ -89,7 +89,9 @@ def _axon(url, dest_dir):
     for seg in j.get("data", []):
         a = seg.get("attributes", {})
         if a.get("url") and not a.get("infected"):
-            with requests.get(a["url"], stream=True, timeout=600, headers=UA) as resp:
+            from urllib.parse import urljoin
+            seg_url = urljoin(f"{u.scheme}://{u.netloc}/", a["url"])     # Axon gives a site-relative path
+            with requests.get(seg_url, stream=True, timeout=600, headers=UA, params=None) as resp:
                 if resp.status_code < 300:
                     _save(resp, dest_dir, a.get("fileName"))
                     got = True
