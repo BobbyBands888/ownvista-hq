@@ -3,6 +3,7 @@ Rules: daily cap (default 10), max 2 per agency per day, only verified records a
 always asks for a fee estimate before any work (we never pay), never offers or asks for calls."""
 import os
 import re
+import time
 from datetime import datetime, timedelta, timezone
 import requests
 from .lib import llm
@@ -60,6 +61,10 @@ def _groq_web_lookup(agency):
                 body.update(tools=tools, tool_choice="required")
             r = requests.post("https://api.groq.com/openai/v1/chat/completions",
                               headers={"Authorization": f"Bearer {config.GROQ_API_KEY}"}, json=body, timeout=180)
+            if r.status_code == 429:
+                time.sleep(min(60, float(r.headers.get("retry-after", 30) or 30)))
+                r = requests.post("https://api.groq.com/openai/v1/chat/completions",
+                                  headers={"Authorization": f"Bearer {config.GROQ_API_KEY}"}, json=body, timeout=180)
             if r.status_code >= 300:
                 last_note += f" [{model}: HTTP {r.status_code} {r.text[:100]}]"
                 continue
@@ -168,18 +173,21 @@ def main(db):
 
     # fill in missing agency emails (a few per run, slow and polite)
     missing = db.select("agencies", {"records_email": "is.null", "portal_url": "is.null",
-                                     "or": "(notes.is.null,notes.not.like.*email lookup failed*)", "limit": 8})
+                                     "or": "(notes.is.null,notes.not.like.*email lookup failed*)", "limit": 4})
     found = 0
-    for a in missing:
+    for n, a in enumerate(missing):
+        if n:
+            time.sleep(25)                      # free-tier rate limits: space the web searches out
         email, src = find_records_email(a)
+        if not email and "HTTP 429" in LAST_LOOKUP_NOTE:
+            break                               # rate-limited: leave the rest for the next run, don't mark failed
         if email:
             db.update("agencies", {"id": f"eq.{a['id']}"}, {"records_email": email, "notes": f"auto-found on {src}"})
             found += 1
         else:
             db.update("agencies", {"id": f"eq.{a['id']}"},
                       {"notes": ((a.get("notes") or "").split(" | ")[0] + " | email lookup failed – add email/portal on dashboard").strip(" |")})
-            if LAST_LOOKUP_NOTE:
-                db.alert("outreach", f"Email lookup failed for {a['name']}: {LAST_LOOKUP_NOTE}", "info")
+
 
     if budget <= 0:
         return f"daily cap reached ({cap}); found {found} agency emails"
