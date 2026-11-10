@@ -14,8 +14,8 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - run: pip install requests
-      - run: ffmpeg -loglevel error -f lavfi -i testsrc=size=1080x1920:rate=30 -t 5 -pix_fmt yuv420p /tmp/t.mp4
+      - run: pip install requests imageio-ffmpeg
+      - run: $(python -c 'import imageio_ffmpeg;print(imageio_ffmpeg.get_ffmpeg_exe())') -loglevel error -f lavfi -i testsrc=size=1080x1920:rate=30 -t 5 -pix_fmt yuv420p /tmp/t.mp4
       - run: python mac/ytcheck.py /tmp/t.mp4
         env:
           GOOGLE_CLIENT_ID: ${{ secrets.GOOGLE_CLIENT_ID }}
