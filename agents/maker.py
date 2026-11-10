@@ -4,6 +4,7 @@ Research + Analytics. Rendering happens on Bobby's Mac (mac/runner.py) with the 
 import json
 from .lib import llm
 from .lib.runner import RULES
+from . import casefacts
 
 FORMAT = """Ten-Four Tapes format:
 - Every case gets a short, unique CASE NAME (e.g. "Backyard Shootout", "Bee Swarm") used on the Reel badge,
@@ -22,9 +23,12 @@ FORMAT = """Ten-Four Tapes format:
 - FACTS: every narration line, check-in and "what happened next" must be stated in the lead text. Never invent an
   outcome (arrest, custody, charges, injuries, deaths). If the lead doesn't say how it ended, leave
   what_happened_next as "" — a wrong outcome is worse than none. If the lead says someone died, say so plainly
-  and respectfully, and plan cuts so the person is never shown dying, dead, or badly wounded."""
+  and respectfully, and plan cuts so the person is never shown dying, dead, or badly wounded.
+- WHO / WHY / HOW IT ENDED (every case): the setup says who the suspect is (named only if the case file allows it)
+  and why police were there; what_happened_next says how it ended, using the case file's wording rules. Charges are
+  never called convictions. List the case file's sources at the end of the description under "Sources:"."""
 
-def plan(lead, playbook, rejects=()):
+def plan(lead, playbook, rejects=(), facts=None):
     return llm.ask(
         "You are the head of production for Ten-Four Tapes. Write production plans that follow the format exactly "
         "and apply the playbook. Accuracy matters: only state facts present in the lead.\n" + RULES + "\n" + FORMAT,
@@ -33,6 +37,7 @@ def plan(lead, playbook, rejects=()):
          if rejects else "") +
         "\n\nLead:\n" + json.dumps({k: lead.get(k) for k in ("title", "agency_name", "state", "incident_date",
                                                               "summary", "category", "source_type")}) +
+        "\n\n" + casefacts.narration_rules(facts) +
         """
 
 Return JSON:
@@ -47,6 +52,11 @@ Return JSON:
  "reels":[{"moment":"the 25-30s action moment","hook_text":"first 2s text","caption":"first line = case name"}]}
 3 shorts and 1-2 reels.""", max_tokens=2500, temperature=0.6)
 
+def _sources(ep, facts):
+    if not facts or not facts.get("sources") or "Sources:" in (ep.get("description") or ""):
+        return ""
+    return "\n\nSources:\n" + "\n".join(s["url"] for s in facts["sources"][:5])
+
 def main(db):
     # Mix of sources: local police/sheriff/prosecutor footage first; federal DVIDS (mostly U.S. Customs and
     # Border Protection) capped at 1 case per run so the channel isn't just Border Patrol videos.
@@ -57,6 +67,10 @@ def main(db):
     pool = [l for l in pool if not any(m in (l.get("title") or "").lower() for m in made)]
     local = [l for l in pool if l.get("source_type") != "dvids_public_domain"]
     federal = [l for l in pool if l.get("source_type") == "dvids_public_domain"]
+    # Case Desk must have researched who/why/outcome first; cases without a case file wait for its next run
+    files = {l["id"]: casefacts.get(db, l["id"]) for l in pool[:12]}
+    local = [l for l in local if files.get(l["id"])]
+    federal = [l for l in federal if files.get(l["id"])]
     leads = local[:3]
     if len(leads) < 3 and federal:
         leads.append(federal[0])
@@ -68,14 +82,15 @@ def main(db):
     for lead in leads:
         # clear any half-made plan from a failed earlier run of this lead (never touches rendered/posted items)
         db.delete("content", {"lead_id": f"eq.{lead['id']}", "status": "eq.scripted"})
-        p = plan(lead, playbook, rejects)
+        facts = files.get(lead["id"])
+        p = plan(lead, playbook, rejects, facts)
         ep = p.get("episode", {})
         case = p.get("case_name") or lead["title"][:30]
         credit = p.get("credit") or f"Footage: {lead.get('agency_name')}"
         src_type = lead["source_type"]
         epi = db.insert("content", {
             "lead_id": lead["id"], "kind": "episode", "case_name": case, "title": ep.get("title"),
-            "description": (ep.get("description") or "") + f"\n\n{credit}", "tags": ep.get("tags") or [],
+            "description": (ep.get("description") or "") + f"\n\n{credit}" + _sources(ep, facts), "tags": ep.get("tags") or [],
             "script": ep, "source_type": src_type, "source_credit": credit, "source_urls": [lead.get("source_url")],
         })[0]
         rows = []

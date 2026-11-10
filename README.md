@@ -1,6 +1,6 @@
 # Ten-Four Tapes HQ (levelingclips.com)
 
-Nine agents that run the Ten-Four Tapes YouTube channel and Facebook page. $0 stack: Groq free tier,
+Ten agents that run the Ten-Four Tapes YouTube channel and Facebook page. $0 stack: Groq free tier,
 Supabase free org, GitHub Actions (one hourly job), Vercel Hobby, free Google + Meta APIs.
 
 ## The agents
@@ -11,6 +11,7 @@ Supabase free org, GitHub Actions (one hourly job), Vercel Hobby, free Google + 
 | Scout | cloud | every 3h | Finds footage leads: agency YouTube channels, DVIDS, news. Scores action 1–10, screens minors, de-dupes incidents |
 | Outreach | cloud | weekdays 9am/1pm ET | Sends public records requests from bobbybands888 (cap 10/day, 2/agency/day). Finds agency records emails on official sites |
 | Records Tracker | cloud | every 2h | Reads agency replies, catches download links + expiry, flags fee quotes/questions to you, follows up after 10 days |
+| Case Desk | cloud | every 6h | Researches who / why / how it ended for every case (agency release + news, every fact sourced). Maker won't script a case without it. Re-checks open cases on posted episodes every 14 days and alerts you with a description update when an outcome lands |
 | Maker | cloud | 2×/day | Turns obtained footage into plans: episode + 3 Shorts (Part 1/2/3) + standalone FB Reels, using the playbook |
 | Compliance | cloud | hourly | The gate: provenance proof, credit line, no minors, no death on camera, platform policy review |
 | Publisher | Mac | every 30 min | Renders with `mac/render.py`, uploads to YouTube + FB Reels (1 Short/day, 3 Reels/day, 2 episodes/week) |

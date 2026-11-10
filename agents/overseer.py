@@ -6,7 +6,7 @@ from .lib.google import send_email
 from .lib import config
 
 # agent -> max hours between successful runs before it's considered down
-EXPECTED = {"research": 26, "scout": 4, "outreach": 74, "tracker": 3, "maker": 13,
+EXPECTED = {"research": 26, "scout": 4, "outreach": 74, "tracker": 3, "casefacts": 7, "maker": 13,
             "compliance": 2, "analytics": 26, "mac_runner": 6}
 ET = ZoneInfo("America/New_York")
 DASH = "https://levelingclips.com"

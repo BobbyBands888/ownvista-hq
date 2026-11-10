@@ -5,6 +5,7 @@ import json
 from datetime import date
 from .lib import llm
 from .lib.runner import RULES
+from . import casefacts
 
 def provenance_ok(db, item, lead):
     st = item.get("source_type")
@@ -18,16 +19,19 @@ def provenance_ok(db, item, lead):
             return True, "obtained by public records request"
     return False, "no proof footage came from the agency (need a fulfilled records request or a confirmed direct release)"
 
-def review(item, lead=None):
+def review(item, lead=None, facts=None):
     return llm.ask(
         "You are a strict YouTube and Facebook policy reviewer for a police bodycam channel. One strike costs a week "
         "of uploads; three end the channel. Fail anything risky.\n" + RULES,
         json.dumps({k: item.get(k) for k in ("kind", "case_name", "title", "description", "tags", "script")}) +
         "\n\nSOURCE FACTS (the only facts we have):\n" + json.dumps({k: (lead or {}).get(k) for k in
                                                                     ("title", "summary", "incident_date", "agency_name")}) +
+        "\n\nCASE FILE (researched who/why/outcome with sources; also counts as source facts):\n" + json.dumps(facts) +
         '\n\nCheck: ANY claim in the title, narration, check-ins or what_happened_next that the source facts do not '
         'state (invented arrests, outcomes, charges, motives) — fail it; a case where someone was shot or died and the '
-        'plan could show the person dying, dead or badly wounded — fail it; graphic or shocking words in title/thumbnail text; misleading or clickbait claims not supported by '
+        'plan could show the person dying, dead or badly wounded — fail it; an outcome worded more strongly than the case file '
+        '(charges called a conviction, "is a thief" before a verdict) — fail it; a named person when the case file says '
+        'say_name is false — fail it; graphic or shocking words in title/thumbnail text; misleading or clickbait claims not supported by '
         'the script; any sign a minor appears; any plan to show a death, gore or a lingering body; missing educational/'
         'documentary context in the description; personal info (addresses, phone numbers) of private people.\n'
         'Return JSON {"verdict":"pass|fail","issues":["..."],"required_edits":["blur/cut/rename instructions for the render"],'
@@ -60,7 +64,19 @@ def main(db):
             issues.append(why)
         if not it.get("source_credit"):
             issues.append("missing credit line")
-        r = review(it, lead)
+        facts = casefacts.get(db, lid) if lid else None
+        if it["kind"] == "episode":
+            sc = it.get("script") or {}
+            if not facts:
+                issues.append("no case file yet (who / why / how it ended) — Case Desk must research it first")
+            elif not (sc.get("what_happened_next") or "").strip():
+                issues.append("episode doesn't say how the case ended (what_happened_next is empty)")
+            if facts and facts.get("suspect_name") and not facts.get("say_name"):
+                blob = json.dumps(sc) + (it.get("title") or "") + (it.get("description") or "")
+                last = facts["suspect_name"].split()[-1]
+                if last and last.lower() in blob.lower():
+                    issues.append(f"names {facts['suspect_name']} but the case file says not to (minor / dropped / acquitted)")
+        r = review(it, lead, facts)
         issues += r.get("issues", []) if r.get("verdict") == "fail" else []
         minor = r.get("minor_present")
         lead_minor = lead.get("involves_minor") if lead else None
