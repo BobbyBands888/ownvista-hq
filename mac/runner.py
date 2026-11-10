@@ -70,9 +70,36 @@ def _save(resp, dest_dir, name):
             f.write(chunk)
     return name
 
+def _axon(url, dest_dir):
+    """Axon Evidence.com share links open a web app; the files come from its links API using the link's token."""
+    from urllib.parse import urlparse, parse_qs
+    u = urlparse(url)
+    m = re.search(r"/axon/download/([0-9a-f]+)/([0-9a-f]+)", u.path)
+    tok = (parse_qs(u.query).get("token") or [None])[0]
+    if not (m and tok):
+        return False
+    api = f"{u.scheme}://{u.netloc}/api/v1/agencies/{m[1]}/evidence/download/{m[2]}/links"
+    import time
+    for _ in range(20):                        # big packages take a while to be zipped
+        j = requests.get(api, params={"token": tok}, headers=UA, timeout=60).json()
+        if j.get("meta", {}).get("ready"):
+            break
+        time.sleep(30)
+    got = False
+    for seg in j.get("data", []):
+        a = seg.get("attributes", {})
+        if a.get("url") and not a.get("infected"):
+            with requests.get(a["url"], stream=True, timeout=600, headers=UA) as resp:
+                if resp.status_code < 300:
+                    _save(resp, dest_dir, a.get("fileName"))
+                    got = True
+    return got
+
 def _fetch(url, dest_dir, name=None, depth=0):
     """Download a file. Share pages (Axon Evidence.com, portals) often return an HTML page first; look inside
     it for the real file / zip link and follow that (two levels deep at most)."""
+    if "/axon/download/" in url:
+        return _axon(url, dest_dir)
     s = requests.Session()
     with s.get(url, stream=True, timeout=120, allow_redirects=True, headers=UA) as resp:
         ctype = resp.headers.get("content-type", "")
