@@ -80,10 +80,11 @@ def _axon(url, dest_dir):
         return False
     api = f"{u.scheme}://{u.netloc}/api/v1/agencies/{m[1]}/evidence/download/{m[2]}/links"
     import time
-    for _ in range(20):                        # big packages take a while to be zipped
+    for n in range(40):                        # big packages take a while to be zipped (up to ~20 min)
         j = requests.get(api, params={"token": tok}, headers=UA, timeout=60).json()
         if j.get("meta", {}).get("ready"):
             break
+        print(f"Axon package not ready yet ({n})", flush=True)
         time.sleep(30)
     got = False
     for seg in j.get("data", []):
@@ -93,8 +94,11 @@ def _axon(url, dest_dir):
             seg_url = urljoin(f"{u.scheme}://{u.netloc}/", a["url"])     # Axon gives a site-relative path
             with requests.get(seg_url, stream=True, timeout=600, headers=UA, params=None) as resp:
                 if resp.status_code < 300:
-                    _save(resp, dest_dir, a.get("fileName"))
+                    nm = _save(resp, dest_dir, a.get("fileName"))
+                    print(f"downloaded {nm} ({(Path(dest_dir) / re.sub(r'[^\w.-]', '_', nm)).stat().st_size // 1_000_000} MB)", flush=True)
                     got = True
+                else:
+                    print(f"Axon segment {resp.status_code}", flush=True)
     return got
 
 def _fetch(url, dest_dir, name=None, depth=0):
@@ -251,6 +255,8 @@ def render(db):
             have = False
             db.alert("publisher", f"Footage download failed for {it['case_name']}: {e}", "warn")
         if not have:
+            print(f"no footage yet for {it['case_name']} {it['kind']}{it.get('part') or ''}", flush=True)
+            db.alert("publisher", f"No footage on disk for {it['case_name']} yet (download not ready or failed)", "warn")
             continue
         QUEUE.mkdir(parents=True, exist_ok=True)
         OUT.mkdir(parents=True, exist_ok=True)
@@ -259,6 +265,8 @@ def render(db):
         out = OUT / _file_name(it)
         cmd = RENDER_CMD.format(plan=shlex.quote(str(plan_path)), footage=shlex.quote(str(src)), out=shlex.quote(str(out)))
         res = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=3600)
+        print(f"--- {it['case_name']} {it['kind']}{it.get('part') or ''}: exit {res.returncode}\n"
+              + "\n".join((res.stdout + res.stderr).strip().splitlines()[-8:]), flush=True)
         (HOME / "logs").mkdir(exist_ok=True)
         (HOME / "logs" / f"render_{str(it['id'])[:8]}.log").write_text(res.stdout[-20000:] + "\n" + res.stderr[-20000:])
         if res.returncode == 0 and out.exists():
