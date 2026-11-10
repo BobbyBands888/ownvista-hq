@@ -11,7 +11,7 @@ def ask(system, user, json_mode=True, max_tokens=2000, temperature=0.4):
         raise RuntimeError("GROQ_API_KEY not set")
     last_err, errs = None, []
     # Free tier limits are per model, so spread across several before giving up. Unavailable ones are skipped.
-    models = [config.GROQ_MODEL, config.GROQ_FALLBACK_MODEL, "qwen/qwen3-32b", "moonshotai/kimi-k2-instruct-0905"]
+    models = [config.GROQ_MODEL, config.GROQ_FALLBACK_MODEL, "qwen/qwen3-32b"]
     for model in dict.fromkeys(models):
         for attempt in range(3):
             body = {
@@ -27,7 +27,7 @@ def ask(system, user, json_mode=True, max_tokens=2000, temperature=0.4):
             r = requests.post(URL, headers={"Authorization": f"Bearer {config.GROQ_API_KEY}"}, json=body, timeout=90)
             if r.status_code == 429:
                 last_err = "rate limited"
-                errs.append(f"{model}: 429 {r.text[:90]}")
+                errs.append(f"{model}: 429 {r.json().get('error',{}).get('message','')[90:330] if r.headers.get('content-type','').startswith('application/json') else r.text[:200]}")
                 if "per day" in r.text or "TPD" in r.text or "RPD" in r.text:
                     break                       # daily cap on this model: move to the next one now
                 time.sleep(min(30, 5 * (attempt + 1)))
