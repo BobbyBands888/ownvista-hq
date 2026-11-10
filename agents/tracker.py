@@ -87,7 +87,56 @@ def portal_mail(db):
         db.alert("tracker", f"Records-portal email outside a tracked thread — check Gmail thread {t}", "info")
     return len(new_threads)
 
+SHARE_SENDERS = "from:(noreply@evidence.com OR evidence.com OR nextrequest.com OR govqa.us OR justfoia.com OR sharefile.com)"
+
+def shared_footage(db):
+    """Footage shares (Axon Evidence.com etc.) usually arrive in a NEW thread, often for requests Bobby sent by
+    hand. Match each share to the request it answers and turn it into an obtained lead the agents can use."""
+    hits = search(f"newer_than:30d {SHARE_SENDERS} (download OR shared OR evidence)", 20)
+    known = {r["gmail_thread_id"] for r in db.select("records_requests", {"select": "gmail_thread_id"})}
+    sent = []
+    for h in search("in:sent newer_than:45d (\"records request\" OR CPRA OR \"public records\")", 40):
+        try:
+            m = get_thread(h["threadId"])["messages"][0]
+            sent.append({"thread": h["threadId"], "to": header(m, "To"), "subject": header(m, "Subject"),
+                         "body": message_text(m)[:700]})
+        except Exception:
+            continue
+    made = 0
+    for t in {h["threadId"] for h in hits} - known:
+        msg = get_thread(t)["messages"][-1]
+        text = message_text(msg)
+        links = [l for l in LINK_RX.findall(text) if re.search(r"download|evidence|share|/axon/", l, re.I)]
+        if not links:
+            continue
+        pick = llm.ask(
+            "Match a footage-share email from a police agency to the public records request it answers.",
+            "Share email:\n" + text[:2500] + "\n\nRequests we sent:\n" +
+            json.dumps([{"i": i, "to": s["to"], "subject": s["subject"], "body": s["body"][:400]} for i, s in enumerate(sent)]) +
+            '\n\nReturn JSON {"i": index or null, "agency_name": "", "state": "2-letter", "incident_date": "YYYY-MM-DD or null",'
+            '"title": "short case title", "summary": "2 sentences on the incident from our request", '
+            '"links_expire": "date or null", "category": "enforcement|case_story|rescue|other"}', max_tokens=500, temperature=0.1)
+        i = pick.get("i")
+        req = sent[i] if isinstance(i, int) and 0 <= i < len(sent) else {}
+        agency = pick.get("agency_name") or (re.search(r"Axon - ([^\n]+)", text) or [None, "Unknown agency"])[1]
+        lead = db.insert("leads", {
+            "title": pick.get("title") or req.get("subject") or agency, "agency_name": agency, "state": pick.get("state"),
+            "incident_date": pick.get("incident_date"), "summary": pick.get("summary") or (req.get("body") or "")[:600],
+            "source_url": f"gmail:{t}", "source_type": "records_request", "action_score": 7,
+            "category": pick.get("category") or "enforcement", "involves_minor": None, "status": "obtained",
+            "notes": "Footage delivered by the agency" + (f"; links expire {pick['links_expire']}" if pick.get("links_expire") else "")},
+            upsert=True, on_conflict="source_url")[0]
+        db.insert("records_requests", {
+            "lead_id": lead["id"], "to_email": req.get("to"), "subject": req.get("subject") or f"Footage share from {agency}",
+            "gmail_thread_id": t, "status": "fulfilled", "last_activity_at": _ts(msg["internalDate"]),
+            "download_links": links[:10], "notes": f"[{_now():%Y-%m-%d}] footage share picked up automatically"})
+        db.alert("tracker", f"Footage in: {lead['title']} ({agency})"
+                 + (f" — link expires {pick['links_expire']}" if pick.get("links_expire") else ""), "info")
+        made += 1
+    return made
+
 def main(db):
+    s = shared_footage(db)
     reqs = db.select("records_requests", {"status": f"in.({','.join(OPEN)})", "gmail_thread_id": "not.is.null",
                                           "order": "last_activity_at.asc", "limit": 40})
     changed = {}
@@ -100,4 +149,5 @@ def main(db):
             db.alert("tracker", f"could not read thread for '{r['subject'][:60]}': {e}", "warn")
     f = followups(db)
     p = portal_mail(db)
-    return f"checked {len(reqs)} open requests, updates {json.dumps(changed)}, follow-ups sent {f}, untracked portal emails {p}"
+    return (f"footage shares picked up {s}; checked {len(reqs)} open requests, updates {json.dumps(changed)}, "
+            f"follow-ups sent {f}, untracked portal emails {p}")

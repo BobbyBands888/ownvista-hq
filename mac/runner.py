@@ -57,16 +57,48 @@ def download_footage(db):
                      f"manual download into {dest}", "warn")
     return got
 
-def _fetch(url, dest_dir, name=None):
-    with requests.get(url, stream=True, timeout=60, allow_redirects=True) as resp:
+UA = {"User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 14_0) AppleWebKit/537.36 Chrome/130 Safari/537.36"}
+MEDIA_RX = re.compile(r"\.(mp4|mov|m4v|avi|zip|wmv|mkv|ts|mts|asf|mpg)(\?|$)", re.I)
+
+def _save(resp, dest_dir, name):
+    cd = resp.headers.get("content-disposition", "")
+    m = re.search(r'filename\*?=(?:UTF-8\'\')?"?([^";]+)', cd)
+    name = name or (m and m[1]) or re.sub(r"[^\w.-]", "_", resp.url.split("?")[0].rsplit("/", 1)[-1]) or "file.mp4"
+    name = re.sub(r"[^\w.-]", "_", name)
+    with open(Path(dest_dir) / name, "wb") as f:
+        for chunk in resp.iter_content(1 << 20):
+            f.write(chunk)
+    return name
+
+def _fetch(url, dest_dir, name=None, depth=0):
+    """Download a file. Share pages (Axon Evidence.com, portals) often return an HTML page first; look inside
+    it for the real file / zip link and follow that (two levels deep at most)."""
+    s = requests.Session()
+    with s.get(url, stream=True, timeout=120, allow_redirects=True, headers=UA) as resp:
         ctype = resp.headers.get("content-type", "")
-        if resp.status_code >= 300 or "text/html" in ctype:
+        if resp.status_code >= 300:
             return False
-        name = name or re.sub(r"[^\w.-]", "_", url.split("?")[0].rsplit("/", 1)[-1]) or "file.mp4"
-        with open(Path(dest_dir) / name, "wb") as f:
-            for chunk in resp.iter_content(1 << 20):
-                f.write(chunk)
-    return True
+        if "text/html" not in ctype and "json" not in ctype:
+            _save(resp, dest_dir, name)
+            return True
+        page = resp.text
+        base = resp.url
+    if depth >= 2:
+        return False
+    from urllib.parse import urljoin
+    cands = re.findall(r'(?:href|src|data-url|"url"|"downloadUrl"|"download_url")\s*[=:]\s*"([^"]+)"', page)
+    cands = [urljoin(base, c.replace("\\u0026", "&").replace("&amp;", "&")) for c in cands]
+    cands = [c for c in cands if MEDIA_RX.search(c) or re.search(r"download|export|zip|file", c, re.I)]
+    for c in dict.fromkeys(cands):
+        if c == base or re.search(r"\.(css|js|png|jpg|svg|ico)(\?|$)", c, re.I):
+            continue
+        try:
+            if _fetch(c, dest_dir, name, depth + 1):
+                return True
+        except Exception:
+            continue
+    title = (re.search(r"<title>([^<]*)", page) or [None, ""])[1].strip()
+    raise RuntimeError(f"share page didn't give a file (page title: '{title[:80]}', {len(cands)} candidate links)")
 
 def ensure_footage(db, it):
     """Make sure the footage for this item's lead is on disk (cloud runs start empty unless cached)."""
@@ -86,11 +118,11 @@ def ensure_footage(db, it):
                 _fetch(files[-1]["src"], dest, f"dvids_{m[1]}.mp4")
     else:
         for r in db.select("records_requests", {"lead_id": f"eq.{it['lead_id']}", "status": "eq.fulfilled"}):
-            for i, url in enumerate(r.get("download_links") or []):
+            for url in r.get("download_links") or []:
                 try:
                     _fetch(url, dest)
-                except Exception:
-                    continue
+                except Exception as e:
+                    db.alert("publisher", f"Footage download for {it.get('case_name')}: {e}", "warn")
     return any(p for p in dest.iterdir() if not p.name.startswith("."))
 
 # ---------------- release storage (cloud) ----------------
