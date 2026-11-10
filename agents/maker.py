@@ -69,7 +69,7 @@ Return JSON:
    "tags":[""],"cold_open_hook":"on-screen text, under 12 words","title_card":"",
    "narration_setup":"max 3 short sentences","check_ins":["max 4 brief lines"],
    "angle_labels":["Body Cam Officer 1"],"what_happened_next":"","comment_question":"",
-   "thumbnail_text":"max 4 words","blur_notes":"anything that must be blurred or cut (bodies, bystanders, IDs)"},
+   "thumbnail_text":"2-4 words in big letters over the peak action frame: the stakes or the twist, true to the lead, not the case name or the title repeated, no gore words","blur_notes":"anything that must be blurred or cut (bodies, bystanders, IDs)"},
  "shorts":[{"part":1,"title":"<Case Name> Part 1","moment":"which moment to cut","on_screen_text":""}],
  "reels":[{"moment":"one single 25-30s action moment, different from the other reels","hook_text":"first 2s text","caption":"PLACE. STAKES of THIS moment (under 15 words) + one short question","hashtags":["#bodycam"]}]}
 3 shorts and """ + (f"exactly {n_reels} reels, each a different single moment in story order, each standalone."

@@ -188,8 +188,8 @@ def _release():
     r.raise_for_status()
     return r.json()
 
-def store_render(path):
-    """Upload the finished video to the repo's 'renders' release; returns the link Bobby watches."""
+def store_render(path, ctype="video/mp4"):
+    """Upload the finished video (or its thumbnail) to the repo's 'renders' release; returns the link Bobby watches."""
     rel = _release()
     name = Path(path).name
     for a in rel.get("assets", []):
@@ -198,13 +198,13 @@ def store_render(path):
     up = rel["upload_url"].split("{")[0]
     with open(path, "rb") as f:
         r = _gh("POST", up, params={"name": name}, data=f, timeout=1800,
-                headers={"Content-Type": "video/mp4", "Accept": "application/vnd.github+json"})
+                headers={"Content-Type": ctype, "Accept": "application/vnd.github+json"})
     r.raise_for_status()
     return r.json()["browser_download_url"]
 
-def local_media(it):
-    """Path to the video on disk; in the cloud, pull the stored render back down."""
-    mp = it.get("media_path") or ""
+def local_media(it, mp=None):
+    """Path to the video (or a thumbnail link) on disk; in the cloud, pull the stored render back down."""
+    mp = mp if mp is not None else (it.get("media_path") or "")
     if not mp.startswith("http"):
         return mp if mp and os.path.exists(mp) else None
     name = mp.rsplit("/", 1)[-1]
@@ -284,11 +284,16 @@ def render(db):
             if side.exists():                       # the Writer's final on-screen text, so the queue shows what's in the video
                 try:
                     w = json.loads(side.read_text())
+                    if w.get("thumb") and Path(w["thumb"]).exists():
+                        tl = store_render(w["thumb"], "image/jpeg") if CLOUD else w["thumb"]
+                        base = upd.get("script") or (it.get("script") if isinstance(it.get("script"), dict) else {})
+                        upd["script"] = {**base, "thumbnail": tl}
                     if w.get("cut"):
                         base = upd.get("script") or (it.get("script") if isinstance(it.get("script"), dict) else {})
                         upd["script"] = {**base, "cut": w["cut"]}
                     if w.get("written"):
-                        upd["script"] = {**w["script"], **({"cut": w["cut"]} if w.get("cut") else {})}
+                        keep = {k: upd["script"][k] for k in ("thumbnail",) if k in (upd.get("script") or {})}
+                        upd["script"] = {**w["script"], **keep, **({"cut": w["cut"]} if w.get("cut") else {})}
                         ws = w["script"]
                         if it["kind"] == "reel" and ws.get("caption"):
                             # Facebook caption from the locked cut: place + stakes, one question, credit, tags
@@ -345,6 +350,26 @@ def youtube_upload(path, title, description, tags, short=False):
     v = up.json()
     locked = v.get("status", {}).get("privacyStatus") != "public"
     return v["id"], locked
+
+def set_thumbnail(db, it, vid):
+    """Custom thumbnail on an episode. Never fails the post: a refusal (e.g. the channel isn't phone-verified for
+    custom thumbnails) becomes one alert with the fix, and the episode keeps YouTube's auto thumbnail."""
+    sc = it.get("script") if isinstance(it.get("script"), dict) else {}
+    link = sc.get("thumbnail")
+    path = local_media(it, link) if link else None
+    if not path:
+        return
+    try:
+        with open(path, "rb") as f:
+            r = requests.post(f"https://www.googleapis.com/upload/youtube/v3/thumbnails/set?videoId={vid}",
+                              headers={"Authorization": f"Bearer {access_token('youtube')}", "Content-Type": "image/jpeg"},
+                              data=f, timeout=120)
+        if r.status_code >= 300:
+            fix = (" — verify the channel for custom thumbnails: https://www.youtube.com/verify"
+                   if r.status_code == 403 else "")
+            db.alert("publisher", f"Thumbnail not set on '{it['title']}' ({r.status_code}: {r.text[:160]}){fix}", "warn")
+    except Exception as e:
+        db.alert("publisher", f"Thumbnail not set on '{it['title']}': {str(e)[:200]}", "warn")
 
 def facebook_reel(path, caption):
     tok = config.FB_PAGE_TOKEN
@@ -422,6 +447,8 @@ def publish(db):
                         desc = "\n".join(l for l in desc.splitlines() if "full episode" not in l.lower())
                 vid, locked = youtube_upload(it["media_path"], it["title"], desc, it.get("tags"), short=(k == "short"))
                 upd["youtube_id"] = vid
+                if k == "episode":
+                    set_thumbnail(db, it, vid)
                 if locked:
                     upd["publish_note"] = "Uploaded but locked private until Google audits the API app — publish in YouTube Studio"
                     db.alert("publisher", f"'{it['title']}' uploaded as PRIVATE (API audit pending) — set Public in Studio", "warn")

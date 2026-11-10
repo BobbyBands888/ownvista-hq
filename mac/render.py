@@ -287,6 +287,103 @@ def build_vertical(job, out):
     concat(segs, out, job.work)
 
 
+# ---------------- YouTube thumbnail ----------------
+THUMB_W, THUMB_H = 1280, 720
+SAFE_VIEWS = ("outside", "road_ahead", "indoor")
+
+
+def thumb_moment(job):
+    """(file index, seconds) of the strongest SAFE frame inside the episode's cut: highest vision action, never a
+    frame tagged child or gore. Without vision data: the loudest stretch of the cold open (already a checked pick)."""
+    pk = job.pick
+    wins = [pk["cold_open"]] + list(pk.get("clips") or [])
+    best = None
+    for w in wins:
+        f = job.files[w["file"]]
+        for v in f.get("vision") or []:
+            if not (w["start"] + 1 <= v["t"] <= w["end"] - 1) or v.get("child") or v.get("gore"):
+                continue
+            score = (v.get("action") or 0) * 10 + (3 if v.get("view") in SAFE_VIEWS else -20) + (1 if w is wins[0] else 0)
+            if best is None or score > best[0]:
+                best = (score, w["file"], v["t"])
+    if best and best[0] >= 20:          # action 2+ in a usable view
+        return best[1], best[2]
+    co = pk["cold_open"]
+    f = job.files[co["file"]]
+    peaks = [s for s, _ in picker.loud_peaks(f, 10) if co["start"] <= s + 2 <= co["end"]]
+    t = (peaks[0] + 2) if peaks else (co["start"] + co["end"]) / 2
+    if picker.looks_bad(f, max(0, t - 1), t + 1):
+        t = (co["start"] + co["end"]) / 2
+    return co["file"], t
+
+
+def build_thumbnail(job, out_jpg):
+    """1280x720 JPEG under 2MB: punched-up action frame, dark fade behind big stroked thumbnail_text (last word gold),
+    red BODY CAM tag, channel mark. Text is the Maker's thumbnail_text (max 4 words, checked by Compliance)."""
+    from PIL import ImageEnhance, ImageFilter
+    i, t = thumb_moment(job)
+    path, _ = job.src(i)
+    raw = job.p("png")
+    media.ff("-ss", round(max(0, t), 2), "-i", path, "-frames:v", "1", "-vf",
+             f"scale={THUMB_W}:{THUMB_H}:force_original_aspect_ratio=increase,crop={THUMB_W}:{THUMB_H}", raw)
+    im = Image.open(raw).convert("RGB")
+    im = ImageEnhance.Contrast(im).enhance(1.25)
+    im = ImageEnhance.Color(im).enhance(1.3)
+    im = ImageEnhance.Sharpness(im).enhance(1.5)
+    # dark fade from the left (text side) + light vignette
+    fade = Image.new("L", (THUMB_W, THUMB_H), 0)
+    fd = ImageDraw.Draw(fade)
+    for x in range(THUMB_W):
+        fd.line([(x, 0), (x, THUMB_H)], fill=int(205 * max(0.0, 1 - x / (THUMB_W * 0.62)) ** 1.4))
+    im = Image.composite(Image.new("RGB", im.size, (0, 0, 0)), im, fade)
+    vig = Image.new("L", im.size, 0)
+    ImageDraw.Draw(vig).ellipse([-200, -160, THUMB_W + 200, THUMB_H + 160], fill=255)
+    vig = vig.filter(ImageFilter.GaussianBlur(120))
+    im = Image.composite(im, Image.new("RGB", im.size, (0, 0, 0)), vig)
+    d = ImageDraw.Draw(im)
+
+    words = (job.sc.get("thumbnail_text") or job.plan.get("case_name") or "").upper().split()[:4]
+    text = " ".join(words)
+    if text:
+        maxw = int(THUMB_W * 0.56)
+        f = media.fit_font(d, text, "black", 150, maxw, 2)
+        lines = media.wrap(d, text, f, maxw)
+        lh = int(f.size * 1.02)
+        y = (THUMB_H - lh * len(lines)) // 2 + 20
+        last = words[-1]
+        for n, line in enumerate(lines):
+            x = 56
+            if n == len(lines) - 1 and len(words) > 1 and line.endswith(last):
+                head = line[: -len(last)]
+                d.text((x, y), head, font=f, fill=WHITE, stroke_width=9, stroke_fill=(0, 0, 0))
+                d.text((x + d.textlength(head, font=f), y), last, font=f, fill=GOLD, stroke_width=9, stroke_fill=(0, 0, 0))
+            else:
+                d.text((x, y), line, font=f, fill=WHITE, stroke_width=9, stroke_fill=(0, 0, 0))
+            y += lh
+    # red BODY CAM tag, top-left
+    tf = media.font("black", 38)
+    tag = "BODY CAM"
+    tw = d.textlength(tag, font=tf)
+    d.rectangle([40, 36, 40 + tw + 84, 36 + 66], fill=RED)
+    d.ellipse([62, 58, 84, 80], fill=WHITE)
+    d.text((100, 47), tag, font=tf, fill=WHITE)
+    # channel mark, bottom-right
+    mf = media.font("black", 26)
+    mark = "TEN-FOUR TAPES"
+    mw = d.textlength(mark, font=mf)
+    d.rectangle([THUMB_W - mw - 70, THUMB_H - 74, THUMB_W - 30, THUMB_H - 28], fill=(0, 0, 0))
+    d.rectangle([THUMB_W - mw - 70, THUMB_H - 74, THUMB_W - mw - 62, THUMB_H - 28], fill=GOLD)
+    d.text((THUMB_W - mw - 50, THUMB_H - 68), mark, font=mf, fill=WHITE)
+    q = 90
+    while True:
+        im.save(out_jpg, "JPEG", quality=q, optimize=True)
+        if Path(out_jpg).stat().st_size < 1_900_000 or q <= 60:
+            break
+        q -= 10
+    LOG(f"thumbnail {Path(out_jpg).name}: file {i} at {t:.0f}s, text '{text}'")
+    return out_jpg
+
+
 def render(plan_path, footage, out):
     plan = json.loads(Path(plan_path).read_text())
     if isinstance(plan.get("script"), str):
@@ -311,15 +408,20 @@ def render(plan_path, footage, out):
         written = writer.write(job, log=LOG)            # words are written from the locked cut, not the plan
         LOG(f"{plan['kind']} '{plan.get('title')}' picks: {json.dumps(job.pick)[:400]}")
         Path(out).parent.mkdir(parents=True, exist_ok=True)
+        thumb = None
         if plan["kind"] == "episode":
             build_episode(job, out)
+            try:                                    # a thumbnail problem never blocks the episode
+                thumb = build_thumbnail(job, str(Path(out).with_suffix(".thumb.jpg")))
+            except Exception as e:
+                LOG(f"thumbnail error: {str(e)[:200]}")
         else:
             build_vertical(job, out)
         # what the Writer put on screen, for the runner to save back to the plan (dashboard + captions)
         cut = None
         if plan["kind"] == "reel":                  # saved on the plan so the case's other Reels avoid these seconds
             cut = {"path": job.files[job.pick["file"]]["path"], "start": job.pick["start"], "end": job.pick["end"]}
-        Path(str(out) + ".script.json").write_text(json.dumps({"script": job.sc, "written": bool(written), "cut": cut,
+        Path(str(out) + ".script.json").write_text(json.dumps({"script": job.sc, "written": bool(written), "cut": cut, "thumb": thumb,
                                                                 "fixed": written.get("problems") or []}, default=str))
     finally:
         shutil.rmtree(work, ignore_errors=True)
