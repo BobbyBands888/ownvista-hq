@@ -52,8 +52,7 @@ def _groq_web_lookup(agency):
     global LAST_LOOKUP_NOTE
     last_note = ""
     # gpt-oss on Groq has a built-in web search tool on the free tier (compound models aren't on this account)
-    attempts = [("openai/gpt-oss-120b", [{"type": "browser_search"}]), ("openai/gpt-oss-20b", [{"type": "browser_search"}]),
-                ("groq/compound", None)]
+    attempts = [("openai/gpt-oss-120b", [{"type": "browser_search"}]), ("openai/gpt-oss-20b", [{"type": "browser_search"}])]
     for model, tools in attempts:
         try:
             body = {"model": model, "messages": [{"role": "user", "content": ask}], "max_tokens": 2000}
@@ -62,12 +61,12 @@ def _groq_web_lookup(agency):
             r = requests.post("https://api.groq.com/openai/v1/chat/completions",
                               headers={"Authorization": f"Bearer {config.GROQ_API_KEY}"}, json=body, timeout=180)
             if r.status_code >= 300:
-                last_note = f"{model}: HTTP {r.status_code} {r.text[:120]}"
+                last_note += f" [{model}: HTTP {r.status_code} {r.text[:100]}]"
                 continue
             text = r.json()["choices"][0]["message"]["content"]
-            url = re.search(r'"source_url"\s*:\s*"([^"]+)"', text)
-            em = re.search(r'"email"\s*:\s*"([^"@\s]+@[^"\s]+)"', text)
-            src = url.group(1) if url else None
+            url = re.search(r'"source_url"\s*:\s*"([^"]+)"', text) or re.search(r'https?://[^\s"\')\]>]+', text)
+            em = re.search(r'"email"\s*:\s*"([^"@\s]+@[^"\s]+)"', text) or EMAIL_RX.search(text)
+            src = ((url.group(1) if url.re.groups else url.group(0)).rstrip(".,;:") if url else None)
             if src:
                 email = _official_email_on(src)
                 if email:
@@ -75,15 +74,15 @@ def _groq_web_lookup(agency):
             # Many sheriff sites block scripts, so the page can't always be re-read. Accept the found address
             # only if it's on an official domain AND matches the official page it came from.
             if em and src:
-                e = em.group(1).lower().rstrip(".")
+                e = (em.group(1) if em.re.groups else em.group(0)).lower().rstrip(".")
                 dom = e.split("@")[1]
                 host = re.sub(r"^www\.", "", re.sub(r"^https?://", "", src).split("/")[0].lower())
                 official = dom.endswith((".gov", ".us")) or "sheriff" in dom or "police" in dom
                 if official and (dom == host or dom.endswith("." + host) or host.endswith("." + dom) or host.endswith(dom)):
                     return e, src
-            last_note = f"{model}: {text[:120]}"
+            last_note += f" [{model}: {text[:150]}]"
         except Exception as e:
-            last_note = f"{model}: {type(e).__name__} {str(e)[:100]}"
+            last_note += f" [{model}: {type(e).__name__} {str(e)[:100]}]"
             continue
     LAST_LOOKUP_NOTE = last_note
     return None, None
