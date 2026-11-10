@@ -49,6 +49,8 @@ def _groq_web_lookup(agency):
     ask = (f'Find the official email address for submitting public records requests (records custodian, records '
            f'unit, or public information officer) for: {agency["name"]}, {agency.get("state") or ""}. Search the '
            f'agency\'s own website. Answer ONLY as JSON: {{"email":"...","source_url":"page where it is printed"}}')
+    global LAST_LOOKUP_NOTE
+    last_note = ""
     for model in ("groq/compound", "groq/compound-mini"):
         try:
             r = requests.post("https://api.groq.com/openai/v1/chat/completions",
@@ -56,16 +58,33 @@ def _groq_web_lookup(agency):
                               json={"model": model, "messages": [{"role": "user", "content": ask}], "max_tokens": 600},
                               timeout=120)
             if r.status_code >= 300:
+                last_note = f"{model}: HTTP {r.status_code} {r.text[:120]}"
                 continue
             text = r.json()["choices"][0]["message"]["content"]
             url = re.search(r'"source_url"\s*:\s*"([^"]+)"', text)
-            if url:
-                email = _official_email_on(url.group(1))
+            em = re.search(r'"email"\s*:\s*"([^"@\s]+@[^"\s]+)"', text)
+            src = url.group(1) if url else None
+            if src:
+                email = _official_email_on(src)
                 if email:
-                    return email, url.group(1)
-        except Exception:
+                    return email, src
+            # Many sheriff sites block scripts, so the page can't always be re-read. Accept the found address
+            # only if it's on an official domain AND matches the official page it came from.
+            if em and src:
+                e = em.group(1).lower().rstrip(".")
+                dom = e.split("@")[1]
+                host = re.sub(r"^www\.", "", re.sub(r"^https?://", "", src).split("/")[0].lower())
+                official = dom.endswith((".gov", ".us")) or "sheriff" in dom or "police" in dom
+                if official and (dom == host or dom.endswith("." + host) or host.endswith("." + dom) or host.endswith(dom)):
+                    return e, src
+            last_note = f"{model}: {text[:120]}"
+        except Exception as e:
+            last_note = f"{model}: {type(e).__name__} {str(e)[:100]}"
             continue
+    LAST_LOOKUP_NOTE = last_note
     return None, None
+
+LAST_LOOKUP_NOTE = ""
 
 def find_records_email(agency):
     """Best effort: search the web for the agency's records-request address and only accept an address
@@ -146,7 +165,7 @@ def main(db):
 
     # fill in missing agency emails (a few per run, slow and polite)
     missing = db.select("agencies", {"records_email": "is.null", "portal_url": "is.null",
-                                     "or": "(notes.is.null,notes.not.like.*lookup failed*)", "limit": 3})
+                                     "or": "(notes.is.null,notes.not.like.*email lookup failed*)", "limit": 8})
     found = 0
     for a in missing:
         email, src = find_records_email(a)
@@ -155,7 +174,9 @@ def main(db):
             found += 1
         else:
             db.update("agencies", {"id": f"eq.{a['id']}"},
-                      {"notes": ((a.get("notes") or "") + " | lookup failed – add email/portal on dashboard").strip(" |")})
+                      {"notes": ((a.get("notes") or "").split(" | ")[0] + " | email lookup failed – add email/portal on dashboard").strip(" |")})
+            if LAST_LOOKUP_NOTE:
+                db.alert("outreach", f"Email lookup failed for {a['name']}: {LAST_LOOKUP_NOTE}", "info")
 
     if budget <= 0:
         return f"daily cap reached ({cap}); found {found} agency emails"
