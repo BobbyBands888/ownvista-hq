@@ -86,9 +86,18 @@ def write_vertical(job, log=print):
              "\n\nDRAFT hook (rewrite if the footage doesn't show it): " + json.dumps(sc.get("hook_text") or sc.get("on_screen_text")) +
              "\n\nFIRST 4 SECONDS:\n" + json.dumps(first) + "\n\nWHOLE CLIP:\n" + json.dumps(whole) +
              '\n\nReturn JSON {"hook_text":"under 9 words, about what is visible right away (or what is about to happen '
-             'in this clip)"}')
+             'in this clip)"' + (',"caption":"PLACE. STAKES in under 15 words, about what this clip shows (e.g. '
+             '\'Quemado, Texas. A man swinging tree branches has already hit a Border Patrol agent in the head.\')",'
+             '"question":"one short question for the comments about what the viewer just saw",'
+             '"hashtags":["3-4 tags like #bodycam #police"]' if plan["kind"] == "reel" else "") + "}")
     h = (j.get("hook_text") or "").strip()
-    return {"hook_text": h, "on_screen_text": h} if h else {}
+    out = {"hook_text": h, "on_screen_text": h} if h else {}
+    if plan["kind"] == "reel" and (j.get("caption") or "").strip():
+        out["caption"] = j["caption"].strip()
+        out["question"] = (j.get("question") or "").strip()
+        tags = [t if str(t).startswith("#") else "#" + str(t) for t in (j.get("hashtags") or [])][:4]
+        out["hashtags"] = [t.replace(" ", "") for t in tags]
+    return out
 
 
 def check(job, written):

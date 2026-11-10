@@ -17,8 +17,11 @@ FORMAT = """Ten-Four Tapes format:
   question, subscribe end card. Multiple angles are labeled "Body Cam Officer 1", "Body Cam Officer 2", etc.
   Credit line on screen and in description.
 - SHORTS: 3 vertical Shorts per episode labeled "<Case Name> Part 1/2/3", each ends "Follow for Part 2/3".
-- FACEBOOK REELS: standalone 25-30s action Reels, real audio, action in the first 2 seconds, caption first line =
-  case name, caption tags the full YouTube episode.
+- FACEBOOK REELS: standalone 25-30s enforcement-action Reels (never "Part 1/2/3" — Facebook doesn't show Part 2 to
+  Part 1's viewers), real audio, action in the first 2 seconds. Caption line 1 = PLACE + STAKES in under 15 words
+  (e.g. "Quemado, Texas. A man swinging tree branches has already hit a Border Patrol agent in the head."), then one
+  short question, then 3-4 hashtags. Our page data: these get 37K-106K views; "Case Name — generic summary" captions
+  and rescue Reels get under 1K.
 - Titles: specific and dramatic but accurate. Never show the death itself, gore or a lingering body; blur bystanders as needed.
 - FACTS: every narration line, check-in and "what happened next" must be stated in the lead text. Never invent an
   outcome (arrest, custody, charges, injuries, deaths). If the lead doesn't say how it ended, leave
@@ -49,7 +52,7 @@ Return JSON:
    "angle_labels":["Body Cam Officer 1"],"what_happened_next":"","comment_question":"",
    "thumbnail_text":"max 4 words","blur_notes":"anything that must be blurred or cut (bodies, bystanders, IDs)"},
  "shorts":[{"part":1,"title":"<Case Name> Part 1","moment":"which moment to cut","on_screen_text":""}],
- "reels":[{"moment":"the 25-30s action moment","hook_text":"first 2s text","caption":"first line = case name"}]}
+ "reels":[{"moment":"the 25-30s action moment","hook_text":"first 2s text","caption":"PLACE. STAKES (under 15 words) + one short question","hashtags":["#bodycam"]}]}
 3 shorts and 1-2 reels.""", max_tokens=2500, temperature=0.6)
 
 def _sources(ep, facts):
@@ -65,6 +68,9 @@ def main(db):
     made = ("yuma, az january 22, 2025", "brownsville, tx february 12, 2025", "brownsville, texas may 13, 2025",
             "bisbee, arizona june 19, 2024", "quemado, texas may 16, 2024", "laredo, texas sept 23, 2024")
     pool = [l for l in pool if not any(m in (l.get("title") or "").lower() for m in made)]
+    # enforcement action first (it's what the page's hits are), then case stories, then rescues
+    rank = {"enforcement": 0, "case_story": 1, "other": 2, "rescue": 3}
+    pool.sort(key=lambda l: (rank.get(l.get("category") or "other", 2), -(l.get("action_score") or 0)))
     local = [l for l in pool if l.get("source_type") != "dvids_public_domain"]
     federal = [l for l in pool if l.get("source_type") == "dvids_public_domain"]
     # Case Desk must have researched who/why/outcome first; cases without a case file wait for its next run
@@ -99,9 +105,11 @@ def main(db):
                          "case_name": case, "title": s.get("title") or f"{case} Part {s.get('part')}",
                          "description": f"Full episode on the channel. {credit}", "script": s,
                          "source_type": src_type, "source_credit": credit, "source_urls": [lead.get("source_url")]})
-        for r in p.get("reels", [])[:2]:
+        # rescue Reels flop on our page (160-700 views) — rescues get the episode + Shorts only
+        for r in ([] if lead.get("category") == "rescue" else p.get("reels", [])[:2]):
             rows.append({"lead_id": lead["id"], "kind": "reel", "parent_id": epi["id"], "part": None, "case_name": case,
-                         "title": case, "description": (r.get("caption") or case) + f"\nFull episode on YouTube: Ten-Four Tapes\n{credit}",
+                         "title": case, "description": (r.get("caption") or case) + f"\nFull episode on YouTube: Ten-Four Tapes\n{credit}"
+                         + ("\n" + " ".join(r["hashtags"][:4]) if r.get("hashtags") else ""),
                          "script": r, "source_type": src_type, "source_credit": credit,
                          "source_urls": [lead.get("source_url")]})
         db.insert("content", rows)

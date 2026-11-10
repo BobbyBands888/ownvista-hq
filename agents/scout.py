@@ -76,6 +76,8 @@ def score(db, leads):
         res = llm.ask(
             "You screen footage leads for Ten-Four Tapes. Bobby only wants real action on screen "
             "(arrests, fights, chases, shootouts, dramatic rescues, strong case stories with 911 + interrogation). "
+            "Our audience wants ENFORCEMENT action (chases, fights, arrests, shots fired, use of force): "
+            "rescues and routine calls score 6 at most unless officers face real danger on camera. "
             "'Ok' isn't enough. Score honestly. A lead is only a records REQUEST (free) — the footage itself gets "
             "judged again before anything is made — so keep any real incident with likely on-camera action and an "
             "identifiable U.S. agency. Skip opinion pieces, policy stories, lawsuits with no incident video, "

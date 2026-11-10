@@ -278,6 +278,13 @@ def render(db):
                     w = json.loads(side.read_text())
                     if w.get("written"):
                         upd["script"] = w["script"]
+                        ws = w["script"]
+                        if it["kind"] == "reel" and ws.get("caption"):
+                            # Facebook caption from the locked cut: place + stakes, one question, credit, tags
+                            upd["description"] = "\n".join(x for x in [
+                                (ws["caption"] + " " + (ws.get("question") or "")).strip(),
+                                "Full episode on YouTube: Ten-Four Tapes", it.get("source_credit") or "",
+                                " ".join(ws.get("hashtags") or [])] if x)
                 except Exception:
                     pass
                 side.unlink(missing_ok=True)
@@ -348,6 +355,8 @@ def facebook_reel(path, caption):
         raise RuntimeError(f"FB finish failed: {fin}")
     return vid
 
+REEL_GAP_H = 3
+
 def posted_since(db, kind, hours):
     since = (_now() - timedelta(hours=hours)).isoformat()
     return len(db.select("content", {"kind": f"eq.{kind}", "posted_at": f"gte.{since}", "select": "id"}))
@@ -360,6 +369,13 @@ def publish(db):
         "short": 1 - posted_since(db, "short", 24),
         "reel": int(db.setting("reels_per_day", 3)) - posted_since(db, "reel", 24),
     }
+    # Reels go out one at a time, 3h+ apart, 11am-10pm ET: two in the same minute split each other's reach
+    from zoneinfo import ZoneInfo
+    et_hour = _now().astimezone(ZoneInfo("America/New_York")).hour
+    if posted_since(db, "reel", REEL_GAP_H) or not (11 <= et_hour < 22):
+        room["reel"] = 0
+    else:
+        room["reel"] = min(room["reel"], 1)
     ready = db.select("content", {"status": "eq.rendered", "compliance_status": "eq.pass",
                                   "approval_status": "in.(approved,not_required)", "order": "kind.asc,part.asc,created_at.asc"})
     out = []
