@@ -47,7 +47,7 @@ def _standalone(r):
     txt = " ".join(str(r.get(k) or "") for k in ("moment", "hook_text", "caption")).lower()
     return bool((r.get("moment") or "").strip()) and not PART_RE.search(txt)
 
-def plan(lead, playbook, rejects=(), facts=None):
+def plan(lead, playbook, rejects=(), facts=None, graded=None):
     n_reels = reel_count(lead)
     return llm.ask(
         "You are the head of production for Ten-Four Tapes. Write production plans that follow the format exactly "
@@ -55,6 +55,8 @@ def plan(lead, playbook, rejects=(), facts=None):
         "Playbook (what works right now):\n" + json.dumps(playbook) +
         ("\n\nBobby REJECTED these recently — don't repeat what he didn't like:\n" + json.dumps(list(rejects))
          if rejects else "") +
+        ("\n\nSCORECARD — our own posts graded at 48h against the same format. Write like the A's, not like the D's "
+         "(captions, hooks, which moment, case type):\n" + json.dumps(graded) if graded else "") +
         "\n\nLead:\n" + json.dumps({k: lead.get(k) for k in ("title", "agency_name", "state", "incident_date",
                                                               "summary", "category", "source_type")}) +
         "\n\n" + casefacts.narration_rules(facts) +
@@ -72,6 +74,16 @@ Return JSON:
  "reels":[{"moment":"one single 25-30s action moment, different from the other reels","hook_text":"first 2s text","caption":"PLACE. STAKES of THIS moment (under 15 words) + one short question","hashtags":["#bodycam"]}]}
 3 shorts and """ + (f"exactly {n_reels} reels, each a different single moment in story order, each standalone."
                     if n_reels else "no reels (\"reels\":[])."), max_tokens=2800, temperature=0.6)
+
+def scorecard_examples(db):
+    """Up to 6 A's and 6 D's from the Scorecard; empty until posts are graded (or before the SQL is run)."""
+    try:
+        from .analytics import recent_graded, _post_brief
+        posts = [_post_brief(c) for c in recent_graded(db)]
+    except Exception:
+        return {}
+    ex = {"A": [p for p in posts if p["grade"] == "A"][:6], "D": [p for p in posts if p["grade"] == "D"][:6]}
+    return ex if ex["A"] or ex["D"] else {}
 
 def _sources(ep, facts):
     if not facts or not facts.get("sources") or "Sources:" in (ep.get("description") or ""):
@@ -98,7 +110,11 @@ def main(db):
     leads = local[:3]
     if len(leads) < 3 and federal:
         leads.append(federal[0])
-    playbook = [p["insight"] for p in db.select("playbook", {"active": "is.true", "order": "created_at.desc", "limit": 20})]
+    pb = db.select("playbook", {"active": "is.true", "order": "created_at.desc", "limit": 40})
+    # scorecard lessons always make the cut (they're about OUR posts); then the newest of the rest
+    playbook = [p["insight"] for p in pb if p.get("source") == "scorecard"][:5] + \
+               [p["insight"] for p in pb if p.get("source") != "scorecard"][:15]
+    graded = scorecard_examples(db)
     rejects = [f"{r['kind']}: {r.get('title')} — {(r.get('publish_note') or '').replace('Rejected: ', '')}"
                for r in db.select("content", {"select": "kind,title,publish_note", "approval_status": "eq.rejected",
                                               "order": "created_at.desc", "limit": 15})]
@@ -107,7 +123,7 @@ def main(db):
         # clear any half-made plan from a failed earlier run of this lead (never touches rendered/posted items)
         db.delete("content", {"lead_id": f"eq.{lead['id']}", "status": "eq.scripted"})
         facts = files.get(lead["id"])
-        p = plan(lead, playbook, rejects, facts)
+        p = plan(lead, playbook, rejects, facts, graded)
         ep = p.get("episode", {})
         case = p.get("case_name") or lead["title"][:30]
         credit = p.get("credit") or f"Footage: {lead.get('agency_name')}"

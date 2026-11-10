@@ -168,6 +168,9 @@ header button{white-space:nowrap}
     <div><h1>Videos</h1><p class="sub">Every case in production: the episode, its Shorts and Reels, and where each one stands.</p></div>
     <div class="filters" id="filters"></div>
     <div id="queue"></div>
+    <div class="card"><div class="kicker">Scorecard: every post graded at 48h</div>
+      <p class="sub" style="margin:4px 0 8px">A = top 20% of that format, D = bottom 20%. The Maker copies the A's and avoids the D's.</p>
+      <div id="scorecard"></div></div>
   </div>
 
   <!-- FOOTAGE -->
@@ -266,6 +269,16 @@ async function load(){
     sb.from("metrics").select("*").in("external_id",["channel","page"]).order("captured_on",{ascending:false}).limit(4),
     sb.from("settings").select("key,value"),
   ]);
+  // separate call: before the Scorecard SQL is run this errors and the card just says so
+  sb.from("content").select("kind,case_name,title,description,part,posted_at,score_grade,score_views,score_note")
+    .not("scored_at","is",null).order("scored_at",{ascending:false}).limit(20).then(({data,error})=>{
+      const G={A:"#2e9e5b",B:"#5b8def",C:"#9a9a9a",D:"#d64545","?":"#666"};
+      $("scorecard").innerHTML = error ? `<div class="empty">Waiting on the Scorecard SQL in Supabase.</div>` :
+        (data||[]).map(c=>`<div class="row"><span class="chip" style="background:${G[c.score_grade]||"#666"};color:#fff;font-weight:800">${esc(c.score_grade)}</span>
+          <div class="main"><div class="t" style="font-weight:500">${esc(c.kind==="reel" ? (c.description||"").split("\n")[0] : c.title)}</div>
+          <div class="m">${esc(KIND(c))} · ${esc(c.case_name)} · ${esc(c.score_note||"")}</div></div></div>`).join("")
+        || `<div class="empty">Posts get graded 48h after they go up. Nothing graded yet.</div>`;
+    });
   const S = Object.fromEntries((settings.data||[]).filter(s=>!s.key.startsWith("case_facts:")).map(s=>[s.key,s.value]));
   const C = content.data||[];
   window._content = C;

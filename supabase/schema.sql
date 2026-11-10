@@ -144,6 +144,11 @@ create table if not exists content (
   scheduled_for timestamptz
 );
 create index if not exists content_queue_idx on content (status, compliance_status, approval_status);
+-- Scorecard: every post graded once at 48h (A-D vs the same format's history)
+alter table content add column if not exists score_grade text;      -- A | B | C | D | ? (no metrics)
+alter table content add column if not exists score_views bigint;    -- views at ~48h
+alter table content add column if not exists scored_at timestamptz;
+alter table content add column if not exists score_note text;
 
 create table if not exists metrics (
   id uuid primary key default gen_random_uuid(),
