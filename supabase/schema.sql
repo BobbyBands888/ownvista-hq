@@ -178,6 +178,7 @@ insert into settings (key, value) values
   ('facebook_page', '"tenfourtapes"'),
   ('posting_paused', 'false'),
   ('reels_per_day', '3'),
+  ('shorts_per_day', '3'),
   ('episodes_per_week', '2')
 on conflict (key) do nothing;
 

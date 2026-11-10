@@ -392,6 +392,7 @@ def facebook_reel(path, caption):
     return vid
 
 REEL_GAP_H = 3
+SHORT_GAP_H = 4
 CASE_REEL_GAP_H = 12   # a case's 2-3 Reels are spread out; another case's Reel goes in between when one is ready
 
 def posted_since(db, kind, hours):
@@ -408,7 +409,7 @@ def publish(db):
         return "posting paused"
     room = {
         "episode": int(db.setting("episodes_per_week", 2)) - posted_since(db, "episode", 24 * 7),
-        "short": 1 - posted_since(db, "short", 24),
+        "short": int(db.setting("shorts_per_day", 3)) - posted_since(db, "short", 24),
         "reel": int(db.setting("reels_per_day", 3)) - posted_since(db, "reel", 24),
     }
     # Reels go out one at a time, 3h+ apart, 11am-10pm ET: two in the same minute split each other's reach
@@ -418,6 +419,11 @@ def publish(db):
         room["reel"] = 0
     else:
         room["reel"] = min(room["reel"], 1)
+    # Shorts: up to shorts_per_day (default 3), one per run, 4h+ apart, 9am-11pm ET
+    if posted_since(db, "short", SHORT_GAP_H) or not (9 <= et_hour < 23):
+        room["short"] = 0
+    else:
+        room["short"] = min(room["short"], 1)
     ready = db.select("content", {"status": "eq.rendered", "compliance_status": "eq.pass",
                                   "approval_status": "in.(approved,not_required)", "order": "kind.asc,part.asc,created_at.asc"})
     out = []
