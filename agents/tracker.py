@@ -38,19 +38,23 @@ def process_request(db, req):
         return None
     m = new_msgs[-1]
     text = message_text(m)
-    c = classify(req, text)
+    return apply_reply(db, req, classify(req, text), text, _ts(m["internalDate"]))
+
+def apply_reply(db, req, c, text, when, via=""):
+    """Update one request from a classified agency reply (its own thread or a portal email) and alert Bobby."""
     links = [l for l in LINK_RX.findall(text) if not re.search(r"unsubscribe|privacy|facebook|twitter|instagram", l, re.I)]
     status = c.get("status") if c.get("status") in ("acknowledged", "fee_quoted", "clarify", "denied", "fulfilled") else req["status"]
-    upd = {"status": status, "last_activity_at": _ts(m["internalDate"]),
-           "notes": ((req.get("notes") or "") + f"\n[{_now():%Y-%m-%d}] {c.get('summary')}").strip()}
+    upd = {"status": status, "last_activity_at": when,
+           "notes": ((req.get("notes") or "") + f"\n[{_now():%Y-%m-%d}] {via}{c.get('summary')}").strip()}
     if c.get("fee"):
         upd["fee_quote"] = c["fee"]
     if status == "fulfilled" and links:
         upd["download_links"] = links[:10]
     db.update("records_requests", {"id": f"eq.{req['id']}"}, upd)
-    subj = req["subject"][:80]
+    subj = (req.get("subject") or "")[:80]
     if status == "fulfilled":
-        db.update("leads", {"id": f"eq.{req['lead_id']}"}, {"status": "obtained"})
+        if req.get("lead_id"):
+            db.update("leads", {"id": f"eq.{req['lead_id']}"}, {"status": "obtained"})
         lvl = "urgent" if c.get("links_expire") else "info"
         db.alert("tracker", f"Footage ready: {subj}. Links: {', '.join(links[:3]) or 'see email'}"
                  + (f" — EXPIRES: {c['links_expire']}" if c.get("links_expire") else ""), lvl)
@@ -58,7 +62,7 @@ def process_request(db, req):
         db.alert("tracker", f"Fee quote (not paid — your call): {subj}: {c.get('fee')}", "warn")
     elif status == "clarify":
         db.alert("tracker", f"Agency needs clarification: {subj}: {c.get('summary')}", "warn")
-    elif status == "denied":
+    elif status == "denied" and req.get("lead_id"):
         db.update("leads", {"id": f"eq.{req['lead_id']}"}, {"status": "rejected"})
     return status
 
@@ -79,14 +83,65 @@ def followups(db):
         n += 1
     return n
 
+PORTAL_Q = ("newer_than:3d (govqa OR nextrequest OR justfoia OR \"public records\" OR \"records request\" "
+            "OR \"open records\" OR foia) -from:me")
+
+def _gmail_link(thread_id):
+    return f"https://mail.google.com/mail/u/0/#all/{thread_id}"
+
+def match_portal(open_reqs, sender, subject, text):
+    """Which of our open requests a portal email is about (agency, case, incident, reference number) + what it says."""
+    return llm.ask(
+        "You match a public-records portal email (GovQA, NextRequest, JustFOIA, etc.) to one of our open requests "
+        "and classify it. Match only on clear evidence: agency name, sender domain, incident, date, or a reference "
+        "number that also appears in the request's notes. If unsure, request_id is null.\n" + RULES,
+        "OUR OPEN REQUESTS:\n" + json.dumps([{"request_id": r["id"], "subject": r.get("subject"), "to": r.get("to_email"),
+                                              "notes": (r.get("notes") or "")[-300:]} for r in open_reqs]) +
+        f"\n\nPORTAL EMAIL\nFrom: {sender}\nSubject: {subject}\n\n{text[:4000]}\n\n"
+        'Return JSON {"request_id":"uuid or null","reference":"portal request number or null",'
+        '"status":"acknowledged|fee_quoted|clarify|denied|fulfilled|other","fee":"amount and terms or null",'
+        '"links_expire":"expiry info or null","summary":"one sentence"}',
+        max_tokens=500, temperature=0.1)
+
 def portal_mail(db):
-    """Agencies using GovQA/NextRequest portals often reply from a new thread. Flag those so nothing is missed."""
-    hits = search("newer_than:1d (govqa OR nextrequest OR justfoia OR \"public records\" OR \"records request\") -from:me", 20)
-    known = {r["gmail_thread_id"] for r in db.select("records_requests", {"select": "gmail_thread_id"})}
-    new_threads = {h["threadId"] for h in hits if h["threadId"] not in known}
-    for t in list(new_threads)[:5]:
-        db.alert("tracker", f"Records-portal email outside a tracked thread — check Gmail thread {t}", "info")
-    return len(new_threads)
+    """Agencies using GovQA/NextRequest/JustFOIA portals reply from a new thread. Read each one, match it to the
+    open request it's about and update that request like a normal reply; flag only what can't be matched — once."""
+    seen = db.setting("portal_seen", {}) or {}
+    known = {r["gmail_thread_id"] for r in db.select("records_requests", {"select": "gmail_thread_id",
+                                                                          "gmail_thread_id": "not.is.null"})}
+    threads = []
+    for h in search(PORTAL_Q, 30):
+        if h["threadId"] not in known and h["threadId"] not in threads:
+            threads.append(h["threadId"])
+    open_reqs = db.select("records_requests", {"status": f"in.({','.join(OPEN)})",
+                                               "select": "id,subject,to_email,notes,status,lead_id", "limit": 80})
+    by_id = {r["id"]: r for r in open_reqs}
+    matched = flagged = 0
+    for t in threads[:12]:
+        th = get_thread(t)
+        msgs = [m for m in th.get("messages", []) if config.SENDER_EMAIL.lower() not in (header(m, "From") or "").lower()]
+        if not msgs:
+            continue
+        m = msgs[-1]
+        if seen.get(t) == m["id"]:
+            continue                             # already handled this message
+        sender, subject, text = header(m, "From") or "", header(m, "Subject") or "", message_text(m)
+        c = match_portal(open_reqs, sender, subject, text) if open_reqs else {}
+        req = by_id.get(c.get("request_id") or "")
+        if req:
+            ref = f"portal {c['reference']}: " if c.get("reference") else "portal: "
+            apply_reply(db, req, c, text, _ts(m["internalDate"]), via=ref)
+            matched += 1
+        else:
+            db.alert("tracker", f"Records email we couldn't match to a request — from {sender[:60]}: \"{subject[:80]}\". "
+                     f"{c.get('summary') or ''} Open it: {_gmail_link(t)}", "warn" if c.get("status") in
+                     ("fee_quoted", "clarify", "fulfilled") else "info")
+            flagged += 1
+        seen[t] = m["id"]
+    if matched or flagged:
+        recent = dict(list(seen.items())[-200:])  # keep the memory small
+        db.insert("settings", {"key": "portal_seen", "value": recent}, upsert=True, on_conflict="key")
+    return matched, flagged
 
 SHARE_SENDERS = "from:(noreply@evidence.com OR evidence.com OR nextrequest.com OR govqa.us OR justfoia.com OR sharefile.com)"
 
@@ -172,6 +227,6 @@ def main(db):
         except Exception as e:
             db.alert("tracker", f"could not read thread for '{r['subject'][:60]}': {e}", "warn")
     f = followups(db)
-    p = portal_mail(db)
+    pm, pf = portal_mail(db)
     return (f"footage shares picked up {shares}; checked {len(reqs)} open requests, updates {json.dumps(changed)}, "
-            f"follow-ups sent {f}, untracked portal emails {p}")
+            f"follow-ups sent {f}, portal emails matched {pm}, unmatched flagged {pf}")

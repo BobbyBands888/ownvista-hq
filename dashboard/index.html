@@ -279,7 +279,7 @@ async function load(){
           <div class="m">${esc(KIND(c))} · ${esc(c.case_name)} · ${esc(c.score_note||"")}</div></div></div>`).join("")
         || `<div class="empty">Posts get graded 48h after they go up. Nothing graded yet.</div>`;
     });
-  const S = Object.fromEntries((settings.data||[]).filter(s=>!s.key.startsWith("case_facts:")).map(s=>[s.key,s.value]));
+  const S = Object.fromEntries((settings.data||[]).filter(s=>!s.key.startsWith("case_facts:")&&s.key!=="portal_seen").map(s=>[s.key,s.value]));
   const C = content.data||[];
   window._content = C;
 
