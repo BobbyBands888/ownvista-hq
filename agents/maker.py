@@ -57,6 +57,8 @@ def main(db):
     playbook = [p["insight"] for p in db.select("playbook", {"active": "is.true", "order": "created_at.desc", "limit": 20})]
     made = 0
     for lead in leads:
+        # clear any half-made plan from a failed earlier run of this lead (never touches rendered/posted items)
+        db.delete("content", {"lead_id": f"eq.{lead['id']}", "status": "eq.scripted"})
         p = plan(lead, playbook)
         ep = p.get("episode", {})
         case = p.get("case_name") or lead["title"][:30]
@@ -74,7 +76,7 @@ def main(db):
                          "description": f"Full episode on the channel. {credit}", "script": s,
                          "source_type": src_type, "source_credit": credit, "source_urls": [lead.get("source_url")]})
         for r in p.get("reels", [])[:2]:
-            rows.append({"lead_id": lead["id"], "kind": "reel", "parent_id": epi["id"], "case_name": case,
+            rows.append({"lead_id": lead["id"], "kind": "reel", "parent_id": epi["id"], "part": None, "case_name": case,
                          "title": case, "description": (r.get("caption") or case) + f"\nFull episode on YouTube: Ten-Four Tapes\n{credit}",
                          "script": r, "source_type": src_type, "source_credit": credit,
                          "source_urls": [lead.get("source_url")]})
