@@ -1,0 +1,24 @@
+name: YouTube check
+# Manual end-to-end test of YouTube posting. Uploads a 5s UNLISTED test clip, reports whether
+# YouTube locked it to private, then deletes it. Nothing goes public.
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install requests
+      - run: ffmpeg -loglevel error -f lavfi -i testsrc=size=1080x1920:rate=30 -t 5 -pix_fmt yuv420p /tmp/t.mp4
+      - run: python mac/ytcheck.py /tmp/t.mp4
+        env:
+          GOOGLE_CLIENT_ID: ${{ secrets.GOOGLE_CLIENT_ID }}
+          GOOGLE_CLIENT_SECRET: ${{ secrets.GOOGLE_CLIENT_SECRET }}
+          GOOGLE_REFRESH_TOKEN: ${{ secrets.GOOGLE_REFRESH_TOKEN }}
+          YOUTUBE_REFRESH_TOKEN: ${{ secrets.YOUTUBE_REFRESH_TOKEN }}
