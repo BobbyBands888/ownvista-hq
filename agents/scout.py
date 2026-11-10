@@ -169,6 +169,29 @@ def _watchlist(db):
                     break
         chans["_bootstrapped"] = _now().isoformat()
         changed = True
+    if not chans.get("_bootstrapped_agencies"):
+        # one time: agency channels by name (search ranks re-uploaders above agencies for "bodycam" queries)
+        for q in ["sheriff's office", "police department", "highway patrol", "state police", "state attorney's office",
+                  "district attorney", "county sheriff body camera", "police department critical incident"]:
+            token = None
+            for _ in range(2):
+                p = {"part": "snippet", "type": "channel", "q": q, "maxResults": 50, "regionCode": "US"}
+                if token:
+                    p["pageToken"] = token
+                try:
+                    res = yt_get("search", p)
+                except Exception:
+                    break
+                for it in res.get("items", []):
+                    sn = it["snippet"]
+                    cid = sn.get("channelId") or it["id"].get("channelId")
+                    if cid and AGENCY_RX.search(sn["channelTitle"]):
+                        FOUND_CHANNELS[cid] = sn["channelTitle"]
+                token = res.get("nextPageToken")
+                if not token:
+                    break
+        chans["_bootstrapped_agencies"] = _now().isoformat()
+        changed = True
     for cid, title in FOUND_CHANNELS.items():
         if cid not in chans:
             chans[cid] = title
