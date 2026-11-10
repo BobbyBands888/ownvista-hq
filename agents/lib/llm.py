@@ -10,7 +10,10 @@ def ask(system, user, json_mode=True, max_tokens=2000, temperature=0.4):
     if not config.GROQ_API_KEY:
         raise RuntimeError("GROQ_API_KEY not set")
     last_err = None
-    for model in (config.GROQ_MODEL, config.GROQ_FALLBACK_MODEL):
+    # Free tier limits are per model, so spread across several before giving up. Unavailable ones are skipped.
+    models = [config.GROQ_MODEL, config.GROQ_FALLBACK_MODEL, "qwen/qwen3-32b", "moonshotai/kimi-k2-instruct-0905",
+              "meta-llama/llama-4-scout-17b-16e-instruct"]
+    for model in dict.fromkeys(models):
         for attempt in range(3):
             body = {
                 "model": model,
@@ -25,12 +28,17 @@ def ask(system, user, json_mode=True, max_tokens=2000, temperature=0.4):
             r = requests.post(URL, headers={"Authorization": f"Bearer {config.GROQ_API_KEY}"}, json=body, timeout=90)
             if r.status_code == 429:
                 last_err = "rate limited"
+                if "per day" in r.text or "TPD" in r.text or "RPD" in r.text:
+                    break                       # daily cap on this model: move to the next one now
                 time.sleep(min(30, 5 * (attempt + 1)))
                 continue
             if r.status_code >= 300:
                 last_err = f"{r.status_code} {r.text[:200]}"
                 break
-            text = r.json()["choices"][0]["message"]["content"]
+            text = r.json()["choices"][0]["message"]["content"] or ""
+            if model.startswith("qwen/"):
+                import re
+                text = re.sub(r"<think>.*?</think>", "", text, flags=re.S).strip()
             if not json_mode:
                 return text
             try:

@@ -53,7 +53,7 @@ def _groq_web_lookup(agency):
     global LAST_LOOKUP_NOTE
     last_note = ""
     # gpt-oss on Groq has a built-in web search tool on the free tier (compound models aren't on this account)
-    attempts = [("openai/gpt-oss-120b", [{"type": "browser_search"}]), ("openai/gpt-oss-20b", [{"type": "browser_search"}])]
+    attempts = [("openai/gpt-oss-20b", [{"type": "browser_search"}])]   # 20b only: keeps 120b's daily budget for writing
     for model, tools in attempts:
         try:
             body = {"model": model, "messages": [{"role": "user", "content": ask}], "max_tokens": 2000}
