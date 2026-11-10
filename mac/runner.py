@@ -1,6 +1,7 @@
 """MAC RUNNER — the hands on Bobby's Mac (runs every 30 min via launchd).
   1. downloads fulfilled records-request footage
-  2. renders approved plans with the existing Ten-Four Tapes build tools (RENDER_CMD)
+  2. renders approved plans with mac/render.py (episode, Shorts, Reels) — during the approval window a
+     fresh render goes back to "pending" so Bobby approves the exact video, not just the plan
   3. PUBLISHER: uploads finished videos to YouTube and Facebook Reels — only items that passed
      Compliance and (during the approval window) that Bobby approved. Never replies to comments.
 """
@@ -21,7 +22,9 @@ from agents.lib.runner import run_agent  # noqa: E402
 
 HOME = Path(os.environ.get("TENFOUR_HOME", Path.home() / "TenFourTapes"))
 FOOTAGE, QUEUE, OUT = HOME / "footage", HOME / "queue", HOME / "rendered"
-RENDER_CMD = os.environ.get("RENDER_CMD")  # e.g. python3 ~/ten-four-tapes-tools/build.py --plan {plan} --footage {footage} --out {out}
+REPO = Path(__file__).resolve().parent.parent
+# Built-in renderer (mac/render.py) unless .env overrides it. {plan} {footage} {out} are filled in.
+RENDER_CMD = os.environ.get("RENDER_CMD") or f"{shlex.quote(sys.executable)} {shlex.quote(str(REPO / 'mac' / 'render.py'))} {{plan}} {{footage}} {{out}}"
 FB = "https://graph.facebook.com/v21.0/"
 
 def _now():
@@ -55,30 +58,61 @@ def download_footage(db):
     return got
 
 # ---------------- 2. render ----------------
+FAILS = HOME / ".render_failures.json"
+MAX_TRIES = 3
+
+def _file_name(it):
+    case = re.sub(r"[^\w -]", "", it.get("case_name") or "case").strip()[:40] or "case"
+    part = f" Part {it['part']}" if it.get("part") else ""
+    return f"{case} - {it['kind']}{part} - {str(it['id'])[:8]}.mp4"
+
+def _notify(title, text):
+    """Mac notification so a fresh render gets watched; harmless anywhere else."""
+    if sys.platform == "darwin":
+        t = text.replace('"', "'")[:200]
+        subprocess.run(["osascript", "-e", f'display notification "{t}" with title "{title}"'], capture_output=True)
+
 def render(db):
     items = db.select("content", {"status": "eq.scripted", "compliance_status": "eq.pass",
-                                  "approval_status": "in.(approved,not_required)", "limit": 6})
+                                  "approval_status": "in.(approved,not_required)",
+                                  "order": "kind.desc,created_at.asc", "limit": 6})   # shorts, reels, then episodes
+    fails = json.loads(FAILS.read_text()) if FAILS.exists() else {}
     done = 0
     for it in items:
         src = FOOTAGE / str(it["lead_id"])
-        if not src.exists() or not any(src.iterdir()):
+        if not src.exists() or not any(p for p in src.iterdir() if not p.name.startswith(".")):
             continue
         QUEUE.mkdir(parents=True, exist_ok=True)
         OUT.mkdir(parents=True, exist_ok=True)
         plan_path = QUEUE / f"{it['id']}.json"
         plan_path.write_text(json.dumps(it, indent=2, default=str))
-        if not RENDER_CMD:
-            continue
-        out = OUT / f"{it['kind']}_{it['id']}.mp4"
+        out = OUT / _file_name(it)
         cmd = RENDER_CMD.format(plan=shlex.quote(str(plan_path)), footage=shlex.quote(str(src)), out=shlex.quote(str(out)))
         res = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=3600)
+        (HOME / "logs").mkdir(exist_ok=True)
+        (HOME / "logs" / f"render_{str(it['id'])[:8]}.log").write_text(res.stdout[-20000:] + "\n" + res.stderr[-20000:])
         if res.returncode == 0 and out.exists():
-            db.update("content", {"id": f"eq.{it['id']}"}, {"status": "rendered", "media_path": str(out)})
+            upd = {"status": "rendered", "media_path": str(out)}
+            if it["approval_status"] == "approved":
+                # Approval window: the plan was OK'd, now Bobby OKs the exact video before it goes public.
+                check = (it.get("script") or {}).get("blur_notes") if isinstance(it.get("script"), dict) else None
+                upd["approval_status"] = "pending"
+                upd["publish_note"] = (f"Rendered — watch TenFourTapes/rendered/{out.name}, then Approve to post it"
+                                       + (f". Check: {check}" if check else ""))
+                _notify("Ten-Four Tapes", f"Ready to review: {out.name}")
+            db.update("content", {"id": f"eq.{it['id']}"}, upd)
+            fails.pop(str(it["id"]), None)
             done += 1
         else:
-            db.alert("mac_runner", f"Render failed for {it['case_name']} {it['kind']}: {res.stderr[-300:]}", "warn")
-    if items and not RENDER_CMD:
-        db.alert("mac_runner", f"{len(items)} plan(s) queued in {QUEUE} — RENDER_CMD not set yet", "info")
+            n = fails.get(str(it["id"]), 0) + 1
+            fails[str(it["id"])] = n
+            err = (res.stderr or res.stdout)[-300:]
+            if n >= MAX_TRIES:
+                db.update("content", {"id": f"eq.{it['id']}"}, {"status": "failed",
+                          "publish_note": f"Render failed {n}x: {err}"})
+            db.alert("mac_runner", f"Render failed ({n}/{MAX_TRIES}) for {it['case_name']} {it['kind']}: {err}", "warn")
+    FAILS.parent.mkdir(parents=True, exist_ok=True)
+    FAILS.write_text(json.dumps(fails))
     return done
 
 # ---------------- 3. publish ----------------

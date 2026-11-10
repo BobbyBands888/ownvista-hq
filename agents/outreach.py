@@ -27,9 +27,52 @@ RECORDS_HINT = re.compile(r"record|foia|pra|custodian|publicinfo|openrecords|pio
 def _now():
     return datetime.now(timezone.utc)
 
+def _official_email_on(link):
+    """Return a records-type address only if it is literally printed on an official-looking page."""
+    if not re.search(r"\.gov|\.us/|\.us$|sheriff|police|county|city|state\.", link, re.I):
+        return None
+    try:
+        page = requests.get(link, headers={"User-Agent": "Mozilla/5.0"}, timeout=20).text
+    except Exception:
+        return None
+    for e in EMAIL_RX.findall(page):
+        dom = e.split("@")[1].lower()
+        if (dom.endswith(".gov") or dom.endswith(".us") or "sheriff" in dom or "police" in dom) and RECORDS_HINT.search(e):
+            return e.lower()
+    return None
+
+def _groq_web_lookup(agency):
+    """Free: Groq's web-search model finds candidate pages; the address is still verified on the page itself."""
+    from .lib import config
+    if not config.GROQ_API_KEY:
+        return None, None
+    ask = (f'Find the official email address for submitting public records requests (records custodian, records '
+           f'unit, or public information officer) for: {agency["name"]}, {agency.get("state") or ""}. Search the '
+           f'agency\'s own website. Answer ONLY as JSON: {{"email":"...","source_url":"page where it is printed"}}')
+    for model in ("groq/compound", "groq/compound-mini"):
+        try:
+            r = requests.post("https://api.groq.com/openai/v1/chat/completions",
+                              headers={"Authorization": f"Bearer {config.GROQ_API_KEY}"},
+                              json={"model": model, "messages": [{"role": "user", "content": ask}], "max_tokens": 600},
+                              timeout=120)
+            if r.status_code >= 300:
+                continue
+            text = r.json()["choices"][0]["message"]["content"]
+            url = re.search(r'"source_url"\s*:\s*"([^"]+)"', text)
+            if url:
+                email = _official_email_on(url.group(1))
+                if email:
+                    return email, url.group(1)
+        except Exception:
+            continue
+    return None, None
+
 def find_records_email(agency):
     """Best effort: search the web for the agency's records-request address and only accept an address
     that is literally printed on an official-looking page (.gov / .us / sheriff / police domain)."""
+    email, src = _groq_web_lookup(agency)
+    if email:
+        return email, src
     q = f'{agency["name"]} {agency.get("state") or ""} public records request email'
     links = []
     tavily = os.environ.get("TAVILY_API_KEY")

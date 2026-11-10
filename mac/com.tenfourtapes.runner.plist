@@ -5,13 +5,17 @@
   <key>Label</key><string>com.tenfourtapes.runner</string>
   <key>ProgramArguments</key>
   <array>
-    <string>/usr/bin/python3</string>
+    <string>__PY__</string>
     <string>__REPO__/mac/runner.py</string>
   </array>
   <key>WorkingDirectory</key><string>__REPO__</string>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key><string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+  </dict>
   <key>StartInterval</key><integer>1800</integer>
   <key>RunAtLoad</key><true/>
-  <key>StandardOutPath</key><string>/tmp/tenfour-runner.log</string>
-  <key>StandardErrorPath</key><string>/tmp/tenfour-runner.log</string>
+  <key>StandardOutPath</key><string>__HOME__/TenFourTapes/logs/runner.log</string>
+  <key>StandardErrorPath</key><string>__HOME__/TenFourTapes/logs/runner.log</string>
 </dict>
 </plist>

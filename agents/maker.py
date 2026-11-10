@@ -42,7 +42,18 @@ Return JSON:
 3 shorts and 1-2 reels.""", max_tokens=2500, temperature=0.6)
 
 def main(db):
-    leads = db.select("leads", {"status": "eq.obtained", "order": "action_score.desc", "limit": 3})
+    # Mix of sources: local police/sheriff/prosecutor footage first; federal DVIDS (mostly U.S. Customs and
+    # Border Protection) capped at 1 case per run so the channel isn't just Border Patrol videos.
+    pool = db.select("leads", {"status": "eq.obtained", "order": "action_score.desc", "limit": 20})
+    # cases already made as episodes before HQ existed — don't remake them
+    made = ("yuma, az january 22, 2025", "brownsville, tx february 12, 2025", "brownsville, texas may 13, 2025",
+            "bisbee, arizona june 19, 2024", "quemado, texas may 16, 2024", "laredo, texas sept 23, 2024")
+    pool = [l for l in pool if not any(m in (l.get("title") or "").lower() for m in made)]
+    local = [l for l in pool if l.get("source_type") != "dvids_public_domain"]
+    federal = [l for l in pool if l.get("source_type") == "dvids_public_domain"]
+    leads = local[:3]
+    if len(leads) < 3 and federal:
+        leads.append(federal[0])
     playbook = [p["insight"] for p in db.select("playbook", {"active": "is.true", "order": "created_at.desc", "limit": 20})]
     made = 0
     for lead in leads:
