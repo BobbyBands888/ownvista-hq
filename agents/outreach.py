@@ -51,12 +51,16 @@ def _groq_web_lookup(agency):
            f'agency\'s own website. Answer ONLY as JSON: {{"email":"...","source_url":"page where it is printed"}}')
     global LAST_LOOKUP_NOTE
     last_note = ""
-    for model in ("groq/compound", "groq/compound-mini"):
+    # gpt-oss on Groq has a built-in web search tool on the free tier (compound models aren't on this account)
+    attempts = [("openai/gpt-oss-120b", [{"type": "browser_search"}]), ("openai/gpt-oss-20b", [{"type": "browser_search"}]),
+                ("groq/compound", None)]
+    for model, tools in attempts:
         try:
+            body = {"model": model, "messages": [{"role": "user", "content": ask}], "max_tokens": 2000}
+            if tools:
+                body.update(tools=tools, tool_choice="required")
             r = requests.post("https://api.groq.com/openai/v1/chat/completions",
-                              headers={"Authorization": f"Bearer {config.GROQ_API_KEY}"},
-                              json={"model": model, "messages": [{"role": "user", "content": ask}], "max_tokens": 600},
-                              timeout=120)
+                              headers={"Authorization": f"Bearer {config.GROQ_API_KEY}"}, json=body, timeout=180)
             if r.status_code >= 300:
                 last_note = f"{model}: HTTP {r.status_code} {r.text[:120]}"
                 continue
