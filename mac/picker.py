@@ -88,6 +88,40 @@ For EACH numbered frame judge ONLY what is visible in the picture (there is no a
 Return {{"frames":[{{"n":1,"view":"outside","action":2,"child":false,"gore":false,"desc":"officer points gun at driver"}}]}}"""
 
 
+def frames_of(j, n):
+    """Per-frame dicts from a vision reply, whatever shape the model used: {"frames":[...]}, {"frames":{"1":...}},
+    {"1":{...}}, a bare list, "n" as int / "1" / "frame 1", or no "n" at all (then position order). -> {index: dict}"""
+    import re
+    if not isinstance(j, dict):
+        return {}
+    fr = j.get("frames", j.get("results", j.get("data", j)))
+    items = []
+    if isinstance(fr, dict):
+        for k, v in fr.items():
+            if isinstance(v, dict):
+                items.append({**v, "n": v.get("n", k)})
+    elif isinstance(fr, list):
+        items = [v for v in fr if isinstance(v, dict)]
+    out = {}
+    for pos, v in enumerate(items):
+        raw = v.get("n", v.get("frame", v.get("index", v.get("id"))))
+        m = re.search(r"\d+", str(raw)) if raw is not None else None
+        k = int(m[0]) - 1 if m else pos
+        if 0 <= k < n and k not in out and any(x in v for x in ("view", "action", "desc")):
+            out[k] = v
+    return out
+
+
+def _int03(x):
+    import re
+    m = re.search(r"\d", str(x or 0))
+    return max(0, min(3, int(m[0]))) if m else 0
+
+
+def _true(x):
+    return x is True or str(x).strip().lower() in ("true", "yes", "1")
+
+
 def look(folder, files, log=print):
     """Caption sampled frames of every file (cached in the analysis). Fails soft: no vision = old behaviour."""
     from agents.lib import llm
@@ -111,14 +145,13 @@ def look(folder, files, log=print):
                 import time
                 time.sleep(VISION_GAP)          # stay under the free tier's tokens-per-minute cap
                 img = media.contact_sheet(Path(folder) / f["path"], chunk)
-                j = llm.see(LOOK_PROMPT.format(n=len(chunk)), img)
-                for fr in j.get("frames", []):
-                    n = int(fr.get("n", 0)) - 1
-                    if 0 <= n < len(chunk):
-                        got[chunk[n]] = {"t": chunk[n], "view": str(fr.get("view", ""))[:12],
-                                         "action": max(0, min(3, int(fr.get("action") or 0))),
-                                         "child": bool(fr.get("child")), "gore": bool(fr.get("gore")),
-                                         "desc": str(fr.get("desc", ""))[:80]}
+                j = llm.see(LOOK_PROMPT.format(n=len(chunk)), img,
+                            check=lambda r, c=len(chunk): len(frames_of(r, c)) >= max(1, c // 2))
+                for n, fr in frames_of(j, len(chunk)).items():
+                    got[chunk[n]] = {"t": chunk[n], "view": str(fr.get("view", ""))[:12],
+                                     "action": _int03(fr.get("action")),
+                                     "child": _true(fr.get("child")), "gore": _true(fr.get("gore")),
+                                     "desc": str(fr.get("desc", ""))[:80]}
                 fails = 0
             except Exception as e:
                 fails += 1

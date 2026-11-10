@@ -83,8 +83,29 @@ VISION_MODELS = ["qwen/qwen3.8-27b", "meta-llama/llama-4-scout-17b-16e-instruct"
 _dead_vision = set()
 
 
-def see(prompt, jpeg, max_tokens=1500):
-    """Ask a vision model about one JPEG (bytes). Returns parsed JSON. Groq first, Cloudflare Workers AI fallback."""
+def _json_any(text):
+    """First JSON object in a reply; a bare top-level list comes back as {"frames": [...]}."""
+    import re
+    text = re.sub(r"<think>.*?</think>", "", text or "", flags=re.S)
+    text = re.sub(r"```(?:json)?", "", text).strip()
+    for cand in (text, (re.search(r"\{.*\}", text, re.S) or [None])[0], (re.search(r"\[.*\]", text, re.S) or [None])[0]):
+        if not cand:
+            continue
+        try:
+            v = json.loads(cand)
+        except (json.JSONDecodeError, TypeError):
+            continue
+        if isinstance(v, list):
+            return {"frames": v}
+        if isinstance(v, dict):
+            return v
+    return None
+
+
+def see(prompt, jpeg, max_tokens=1500, check=None):
+    """Ask a vision model about one JPEG (bytes). Returns parsed JSON. Groq first, Cloudflare Workers AI fallback.
+    `check(result)` -> bool: a reply that parses but holds nothing usable counts as a failure, so the next model
+    is tried instead of silently returning an empty answer."""
     import base64
     import os
     import re
@@ -124,14 +145,11 @@ def see(prompt, jpeg, max_tokens=1500):
                         _dead_vision.add(model)          # retired / not a vision model: skip it for the rest of the run
                     break
                 text = r.json()["choices"][0]["message"]["content"] or ""
-                text = re.sub(r"<think>.*?</think>", "", text, flags=re.S)
-                m = re.search(r"\{.*\}", text, re.S)
-                if m:
-                    try:
-                        return json.loads(m.group(0))
-                    except json.JSONDecodeError:
-                        pass
-                errs.append(f"{model}: bad JSON")
+                v = _json_any(text)
+                if v is not None and (check is None or check(v)):
+                    return v
+                errs.append(f"{model}: {'unusable' if v is not None else 'bad JSON'}: {text[:160]!r}")
+                break
     acct, tok = os.environ.get("CF_ACCOUNT_ID"), os.environ.get("CF_API_TOKEN")
     if acct and tok and "cf" not in _dead_vision:
         cf = f"https://api.cloudflare.com/client/v4/accounts/{acct}/ai/run/@cf/meta/llama-3.2-11b-vision-instruct"
@@ -148,12 +166,10 @@ def see(prompt, jpeg, max_tokens=1500):
                     errs.append(f"cf vision: {r.status_code} {r.text[:120]}")
                     break
                 out = r.json().get("result", {}).get("response")
-                if isinstance(out, dict):
-                    return out
-                m = re.search(r"\{.*\}", out or "", re.S)
-                if m:
-                    return json.loads(m.group(0))
-                errs.append("cf vision: no JSON")
+                v = out if isinstance(out, dict) else _json_any(out if isinstance(out, str) else json.dumps(out))
+                if v is not None and (check is None or check(v)):
+                    return v
+                errs.append(f"cf vision: {'unusable' if v is not None else 'no JSON'}: {str(out)[:160]!r}")
                 break
             except Exception as e:
                 errs.append(f"cf vision: {type(e).__name__} {str(e)[:80]}")
