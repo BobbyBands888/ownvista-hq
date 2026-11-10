@@ -6,7 +6,7 @@ import re
 import time
 from datetime import datetime, timedelta, timezone
 from .lib import config, llm
-from .lib.google import get_thread, message_text, header, send_email, search
+from .lib.google import get_thread, message_text, message_links, header, send_email, search
 from .lib.runner import RULES
 
 OPEN = ("sent", "acknowledged", "fee_quoted", "clarify")
@@ -90,11 +90,26 @@ def portal_mail(db):
 
 SHARE_SENDERS = "from:(noreply@evidence.com OR evidence.com OR nextrequest.com OR govqa.us OR justfoia.com OR sharefile.com)"
 
+def _share_links(msg):
+    links = [l for l in message_links(msg) if re.search(r"download|evidence|share|/axon/", l, re.I)
+             and not re.search(r"agencyname\.|unsubscribe|privacy|support|help\.|/legal", l, re.I)]
+    links.sort(key=lambda l: "/axon/download/" not in l)        # the real package link first
+    return links
+
 def shared_footage(db):
     """Footage shares (Axon Evidence.com etc.) usually arrive in a NEW thread, often for requests Bobby sent by
     hand. Match each share to the request it answers and turn it into an obtained lead the agents can use."""
     hits = search(f"newer_than:30d {SHARE_SENDERS} (download OR shared OR evidence)", 20)
     known = {r["gmail_thread_id"] for r in db.select("records_requests", {"select": "gmail_thread_id"})}
+    # repair shares stored with placeholder links (the real download button only lives in the HTML part)
+    for r in db.select("records_requests", {"status": "eq.fulfilled", "gmail_thread_id": "not.is.null",
+                                            "select": "id,gmail_thread_id,download_links"}):
+        if r["gmail_thread_id"] in {h["threadId"] for h in hits} and not any(
+                "/axon/download/" in l or "click" in l for l in (r.get("download_links") or [])):
+            m = get_thread(r["gmail_thread_id"])["messages"][-1]
+            good = _share_links(m)
+            if good:
+                db.update("records_requests", {"id": f"eq.{r['id']}"}, {"download_links": good[:10]})
     sent = []
     new_shares = {h["threadId"] for h in hits} - known
     if not new_shares:
@@ -115,7 +130,7 @@ def shared_footage(db):
     for t in new_shares:
         msg = get_thread(t)["messages"][-1]
         text = message_text(msg)
-        links = [l for l in LINK_RX.findall(text) if re.search(r"download|evidence|share|/axon/", l, re.I)]
+        links = _share_links(msg)
         if not links:
             continue
         pick = llm.ask(

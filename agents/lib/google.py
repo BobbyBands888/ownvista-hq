@@ -84,6 +84,21 @@ def message_text(msg):
         return ""
     return walk(msg.get("payload", {}))
 
+def message_links(msg):
+    """Every link in a message, including button links that only exist in the HTML part."""
+    import html as _h
+    out = []
+    def walk(part):
+        data = part.get("body", {}).get("data")
+        if data and part.get("mimeType", "").startswith("text/"):
+            t = base64.urlsafe_b64decode(data + "==").decode("utf-8", "ignore")
+            out.extend(_h.unescape(u) for u in re.findall(r'href=["\']([^"\']+)["\']', t))
+            out.extend(re.findall(r"https?://[^\s<>\"')]+", t))
+        for p in part.get("parts", []) or []:
+            walk(p)
+    walk(msg.get("payload", {}))
+    return [u for u in dict.fromkeys(out) if u.startswith("http")]
+
 def header(msg, name):
     for h in msg.get("payload", {}).get("headers", []):
         if h["name"].lower() == name.lower():
