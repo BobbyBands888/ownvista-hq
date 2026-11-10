@@ -103,8 +103,16 @@ def _fetch(url, dest_dir, name=None, depth=0):
     s = requests.Session()
     with s.get(url, stream=True, timeout=120, allow_redirects=True, headers=UA) as resp:
         ctype = resp.headers.get("content-type", "")
-        if resp.status_code >= 300:
+        if "/axon/download/" in resp.url:          # email links can redirect through a tracker first
+            final = resp.url
+        else:
+            final = None
+        if final:
+            pass
+        elif resp.status_code >= 300:
             return False
+        if final:
+            return _axon(final, dest_dir)
         if "text/html" not in ctype and "json" not in ctype:
             _save(resp, dest_dir, name)
             return True
