@@ -6,13 +6,35 @@ from . import config
 
 URL = "https://api.groq.com/openai/v1/chat/completions"
 
+# Preferred order for text work; whatever Groq actually serves today decides which are used.
+PREFERRED = ["openai/gpt-oss-120b", "openai/gpt-oss-20b", "qwen/qwen3.8-27b", "llama-3.3-70b-versatile",
+             "minimaxai/minimax-m2.7", "meta-models/muse-spark-open", "llama-3.1-8b-instant"]
+NOT_CHAT = ("whisper", "orpheus", "guard", "safeguard", "tts", "playai", "distil")
+_live = None
+
+def text_models():
+    """Chat models to try, in order: configured ones, then PREFERRED, then any other chat model Groq lists —
+    filtered to what /models says exists, so a retired model never ends the chain (Maker failed on 2 dead ones)."""
+    global _live
+    if _live is None:
+        try:
+            r = requests.get("https://api.groq.com/openai/v1/models",
+                             headers={"Authorization": f"Bearer {config.GROQ_API_KEY}"}, timeout=20)
+            _live = [m["id"] for m in r.json().get("data", []) if m.get("active", True)] if r.status_code < 300 else []
+        except Exception:
+            _live = []
+    want = list(dict.fromkeys([config.GROQ_MODEL, config.GROQ_FALLBACK_MODEL] + PREFERRED))
+    if not _live:
+        return want                           # couldn't list: try the known names
+    extra = sorted(m for m in _live if not any(x in m.lower() for x in NOT_CHAT) and m not in want)
+    return [m for m in want if m in _live] + extra
+
 def ask(system, user, json_mode=True, max_tokens=2000, temperature=0.4):
     if not config.GROQ_API_KEY:
         raise RuntimeError("GROQ_API_KEY not set")
     last_err, errs = None, []
     # Free tier limits are per model, so spread across several before giving up. Unavailable ones are skipped.
-    models = [config.GROQ_MODEL, config.GROQ_FALLBACK_MODEL, "qwen/qwen3-32b"]
-    for model in dict.fromkeys(models):
+    for model in text_models():
         for attempt in range(3):
             body = {
                 "model": model,
@@ -35,9 +57,23 @@ def ask(system, user, json_mode=True, max_tokens=2000, temperature=0.4):
             if r.status_code >= 300:
                 last_err = f"{r.status_code} {r.text[:200]}"
                 errs.append(f"{model}: {r.status_code}")
+                if r.status_code == 400 and "response_format" in r.text and json_mode:
+                    body.pop("response_format", None)
+                    r = requests.post(URL, headers={"Authorization": f"Bearer {config.GROQ_API_KEY}"},
+                                      json={**body, "messages": [{"role": "system", "content": system +
+                                            "\nRespond with ONLY a valid JSON object."}, body["messages"][1]]}, timeout=90)
+                    if r.status_code < 300:
+                        import re
+                        t = re.sub(r"<think>.*?</think>", "", r.json()["choices"][0]["message"]["content"] or "", flags=re.S)
+                        m = re.search(r"\{.*\}", t, re.S)
+                        if m:
+                            try:
+                                return json.loads(m.group(0))
+                            except json.JSONDecodeError:
+                                pass
                 break
             text = r.json()["choices"][0]["message"]["content"] or ""
-            if model.startswith("qwen/"):
+            if "<think>" in text:
                 import re
                 text = re.sub(r"<think>.*?</think>", "", text, flags=re.S).strip()
             if not json_mode:
@@ -74,6 +110,8 @@ def ask(system, user, json_mode=True, max_tokens=2000, temperature=0.4):
                 errs.append(f"{cf_model}: no JSON")
             except Exception as e:
                 errs.append(f"{cf_model}: {type(e).__name__} {str(e)[:80]}")
+    if not (os.environ.get("CF_ACCOUNT_ID") and os.environ.get("CF_API_TOKEN")):
+        errs.append("Cloudflare backup not configured (CF_ACCOUNT_ID / CF_API_TOKEN secrets)")
     raise RuntimeError(f"LLM failed: {last_err} | tried: {' ; '.join(dict.fromkeys(errs))}")
 
 
