@@ -115,7 +115,7 @@ async function load(){
       ?`<button data-nominors="${c.lead_id}">Confirm no minors</button>`:"";
     return `<div class="row"><span class="tag">${c.kind}${c.part?" "+c.part:""}</span><div class="main"><div class="t">${esc(c.title||c.case_name)}</div>
       <div class="m">${esc(c.case_name)} · ${c.status} · ${esc(c.source_credit||"")}</div>
-      ${c.compliance_notes?`<div class="m">${esc(c.compliance_notes)}</div>`:""}${c.publish_note?`<div class="m">${esc(c.publish_note)}</div>`:""}</div>
+      ${c.compliance_notes?`<div class="m">${esc(c.compliance_notes)}</div>`:""}${c.publish_note?`<div class="m">${esc(c.publish_note).replace(/(https:\/\/[^\s<]+)/g,'<a href="$1" target="_blank" rel="noopener"><b>▶ Watch video</b></a>')}</div>`:""}</div>
       <span class="tag ${c.compliance_status}">${c.compliance_status}</span><span class="tag ${c.approval_status==="pending"?"pending":""}">${c.approval_status.replace("_"," ")}</span><div class="btns">${btns}</div></div>`;
   }).join("")||`<div class="empty">No content in the queue yet.</div>`;
 

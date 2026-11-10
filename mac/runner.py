@@ -57,14 +57,105 @@ def download_footage(db):
                      f"manual download into {dest}", "warn")
     return got
 
+def _fetch(url, dest_dir, name=None):
+    with requests.get(url, stream=True, timeout=60, allow_redirects=True) as resp:
+        ctype = resp.headers.get("content-type", "")
+        if resp.status_code >= 300 or "text/html" in ctype:
+            return False
+        name = name or re.sub(r"[^\w.-]", "_", url.split("?")[0].rsplit("/", 1)[-1]) or "file.mp4"
+        with open(Path(dest_dir) / name, "wb") as f:
+            for chunk in resp.iter_content(1 << 20):
+                f.write(chunk)
+    return True
+
+def ensure_footage(db, it):
+    """Make sure the footage for this item's lead is on disk (cloud runs start empty unless cached)."""
+    dest = FOOTAGE / str(it["lead_id"])
+    if dest.exists() and any(p for p in dest.iterdir() if not p.name.startswith(".")):
+        return True
+    dest.mkdir(parents=True, exist_ok=True)
+    lead = (db.select("leads", {"id": f"eq.{it['lead_id']}"}) or [{}])[0]
+    if lead.get("source_type") == "dvids_public_domain" and config.DVIDS_API_KEY:
+        m = re.search(r"/video/(\d+)", lead.get("source_url") or "")
+        if m:
+            a = requests.get("https://api.dvidshub.net/asset", params={"id": f"video:{m[1]}",
+                             "api_key": config.DVIDS_API_KEY}, timeout=60).json().get("results", {})
+            files = [f for f in a.get("files", []) if f.get("src") and (f.get("height") or 0) <= 1080]
+            files.sort(key=lambda f: (f.get("height") or 0, f.get("bitrate") or 0))
+            if files:
+                _fetch(files[-1]["src"], dest, f"dvids_{m[1]}.mp4")
+    else:
+        for r in db.select("records_requests", {"lead_id": f"eq.{it['lead_id']}", "status": "eq.fulfilled"}):
+            for i, url in enumerate(r.get("download_links") or []):
+                try:
+                    _fetch(url, dest)
+                except Exception:
+                    continue
+    return any(p for p in dest.iterdir() if not p.name.startswith("."))
+
+# ---------------- release storage (cloud) ----------------
+GH_API = "https://api.github.com/repos/" + os.environ.get("GITHUB_REPOSITORY", "")
+RELEASE_TAG = "renders"
+
+def _gh(method, url, **kw):
+    h = kw.pop("headers", {})
+    h.update({"Authorization": f"Bearer {os.environ['GITHUB_TOKEN']}", "Accept": h.get("Accept", "application/vnd.github+json")})
+    return requests.request(method, url, headers=h, timeout=kw.pop("timeout", 120), **kw)
+
+def _release():
+    r = _gh("GET", f"{GH_API}/releases/tags/{RELEASE_TAG}")
+    if r.status_code == 404:
+        r = _gh("POST", f"{GH_API}/releases", json={"tag_name": RELEASE_TAG, "name": "Rendered videos (review copies)",
+                                                     "body": "Ten-Four Tapes renders for review. Managed by the publisher.",
+                                                     "prerelease": True})
+    r.raise_for_status()
+    return r.json()
+
+def store_render(path):
+    """Upload the finished video to the repo's 'renders' release; returns the link Bobby watches."""
+    rel = _release()
+    name = Path(path).name
+    for a in rel.get("assets", []):
+        if a["name"] == name:
+            _gh("DELETE", a["url"])
+    up = rel["upload_url"].split("{")[0]
+    with open(path, "rb") as f:
+        r = _gh("POST", up, params={"name": name}, data=f, timeout=1800,
+                headers={"Content-Type": "video/mp4", "Accept": "application/vnd.github+json"})
+    r.raise_for_status()
+    return r.json()["browser_download_url"]
+
+def local_media(it):
+    """Path to the video on disk; in the cloud, pull the stored render back down."""
+    mp = it.get("media_path") or ""
+    if not mp.startswith("http"):
+        return mp if mp and os.path.exists(mp) else None
+    name = mp.rsplit("/", 1)[-1]
+    dest = OUT / name
+    if dest.exists():
+        return str(dest)
+    rel = _release()
+    asset = next((a for a in rel.get("assets", []) if a["name"] == name), None)
+    if not asset:
+        return None
+    OUT.mkdir(parents=True, exist_ok=True)
+    with _gh("GET", asset["url"], headers={"Accept": "application/octet-stream"}, stream=True, timeout=1800) as r:
+        r.raise_for_status()
+        with open(dest, "wb") as f:
+            for chunk in r.iter_content(1 << 20):
+                f.write(chunk)
+    return str(dest)
+
+CLOUD = bool(os.environ.get("GITHUB_ACTIONS"))
+
 # ---------------- 2. render ----------------
 FAILS = HOME / ".render_failures.json"
 MAX_TRIES = 3
 
 def _file_name(it):
-    case = re.sub(r"[^\w -]", "", it.get("case_name") or "case").strip()[:40] or "case"
-    part = f" Part {it['part']}" if it.get("part") else ""
-    return f"{case} - {it['kind']}{part} - {str(it['id'])[:8]}.mp4"
+    case = re.sub(r"[^\w]+", "_", it.get("case_name") or "case").strip("_")[:40] or "case"
+    part = f"_Part{it['part']}" if it.get("part") else ""
+    return f"{case}_{it['kind']}{part}_{str(it['id'])[:8]}.mp4"
 
 def _notify(title, text):
     """Mac notification so a fresh render gets watched; harmless anywhere else."""
@@ -80,7 +171,12 @@ def render(db):
     done = 0
     for it in items:
         src = FOOTAGE / str(it["lead_id"])
-        if not src.exists() or not any(p for p in src.iterdir() if not p.name.startswith(".")):
+        try:
+            have = ensure_footage(db, it)
+        except Exception as e:
+            have = False
+            db.alert("publisher", f"Footage download failed for {it['case_name']}: {e}", "warn")
+        if not have:
             continue
         QUEUE.mkdir(parents=True, exist_ok=True)
         OUT.mkdir(parents=True, exist_ok=True)
@@ -92,12 +188,14 @@ def render(db):
         (HOME / "logs").mkdir(exist_ok=True)
         (HOME / "logs" / f"render_{str(it['id'])[:8]}.log").write_text(res.stdout[-20000:] + "\n" + res.stderr[-20000:])
         if res.returncode == 0 and out.exists():
-            upd = {"status": "rendered", "media_path": str(out)}
+            link = store_render(out) if CLOUD else str(out)
+            upd = {"status": "rendered", "media_path": link}
             if it["approval_status"] == "approved":
                 # Approval window: the plan was OK'd, now Bobby OKs the exact video before it goes public.
                 check = (it.get("script") or {}).get("blur_notes") if isinstance(it.get("script"), dict) else None
+                where = link if CLOUD else f"TenFourTapes/rendered/{out.name}"
                 upd["approval_status"] = "pending"
-                upd["publish_note"] = (f"Rendered — watch TenFourTapes/rendered/{out.name}, then Approve to post it"
+                upd["publish_note"] = (f"Video ready — watch it: {where} — then Approve to post it"
                                        + (f". Check: {check}" if check else ""))
                 _notify("Ten-Four Tapes", f"Ready to review: {out.name}")
             db.update("content", {"id": f"eq.{it['id']}"}, upd)
@@ -173,8 +271,12 @@ def publish(db):
     out = []
     for it in ready:
         k = it["kind"]
-        if room.get(k, 0) <= 0 or not it.get("media_path") or not os.path.exists(it["media_path"]):
+        if room.get(k, 0) <= 0 or not it.get("media_path"):
             continue
+        path = local_media(it)
+        if not path:
+            continue
+        it["media_path"] = path
         if config.DRY_RUN:
             out.append(f"[dry] {k} {it['case_name']}")
             room[k] -= 1
@@ -209,11 +311,11 @@ def publish(db):
     return f"posted {len(out)}" + (f": {out}" if out else "")
 
 def main(db):
-    d = download_footage(db)
+    d = 0 if CLOUD else download_footage(db)
     r = render(db)
     p = publish(db)
     return f"downloaded {d} files, rendered {r}, {p}"
 
 if __name__ == "__main__":
-    ok = run_agent("mac_runner", main)
+    ok = run_agent("publisher" if CLOUD else "mac_runner", main)
     sys.exit(0 if ok else 1)
