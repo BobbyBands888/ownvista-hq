@@ -16,10 +16,12 @@ def unpack_zips(folder):
     for z in Path(folder).rglob("*.zip"):
         dest = z.with_suffix("")
         if dest.exists():
+            z.unlink(missing_ok=True)
             continue
         try:
             with zipfile.ZipFile(z) as zf:
                 zf.extractall(dest)
+            z.unlink()                      # don't keep two copies of a multi-GB package
         except Exception:
             pass
 

@@ -11,10 +11,14 @@ concurrency:
 jobs:
   publish:
     runs-on: ubuntu-latest
-    timeout-minutes: 120
+    timeout-minutes: 300
     env:
       TENFOUR_HOME: ${{ github.workspace }}/.tft
     steps:
+      - name: Free disk space (agency footage packages can be many GB)
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL /usr/local/share/boost /usr/local/.ghcup || true
+          df -h / | tail -1
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
@@ -37,12 +41,12 @@ jobs:
           curl -L --fail -o "$TENFOUR_HOME/models/voices-v1.0.bin" "$KO/voices-v1.0.bin"
           curl -L --fail -o /tmp/inter.zip https://github.com/rsms/inter/releases/download/v4.1/Inter-4.1.zip
           unzip -j -o -q /tmp/inter.zip "extras/ttf/Inter-Black.ttf" "extras/ttf/Inter-Bold.ttf" -d "$TENFOUR_HOME/fonts"
-      - name: Restore footage + transcripts
+      - name: Restore transcripts + picks
         uses: actions/cache/restore@v4
         with:
-          path: ${{ env.TENFOUR_HOME }}/footage
-          key: tft-footage-${{ github.run_id }}
-          restore-keys: tft-footage-
+          path: ${{ env.TENFOUR_HOME }}/footage/**/.tft_*.json
+          key: tft-analysis-${{ github.run_id }}
+          restore-keys: tft-analysis-
       - run: python mac/runner.py
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -59,9 +63,9 @@ jobs:
           FB_PAGE_ID: ${{ secrets.FB_PAGE_ID }}
           FB_PAGE_TOKEN: ${{ secrets.FB_PAGE_TOKEN }}
           DRY_RUN: ${{ vars.DRY_RUN || '0' }}
-      - name: Save footage + transcripts
+      - name: Save transcripts + picks
         if: always()
         uses: actions/cache/save@v4
         with:
-          path: ${{ env.TENFOUR_HOME }}/footage
-          key: tft-footage-${{ github.run_id }}
+          path: ${{ env.TENFOUR_HOME }}/footage/**/.tft_*.json
+          key: tft-analysis-${{ github.run_id }}

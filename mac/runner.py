@@ -239,7 +239,8 @@ def _notify(title, text):
 def render(db):
     items = db.select("content", {"status": "eq.scripted", "compliance_status": "eq.pass",
                                   "approval_status": "in.(approved,not_required)",
-                                  "order": "kind.desc,created_at.asc", "limit": 6})   # shorts, reels, then episodes
+                                  "order": "lead_id.asc,kind.desc,created_at.asc", "limit": 12})
+    # all of a case's videos in one run, so its footage is downloaded once
     fails = json.loads(FAILS.read_text()) if FAILS.exists() else {}
     done = 0
     for it in items:

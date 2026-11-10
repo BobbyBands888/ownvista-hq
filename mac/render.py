@@ -130,8 +130,9 @@ def frame_filter(info, W, H):
         fg = f"crop=ih*4/3:ih,scale={W}:-2"          # bigger picture on phones
     if out_vertical == src_vertical:
         fg = f"scale={W}:{H}:force_original_aspect_ratio=increase,crop={W}:{H}"
-    return (f"[0:v]split[a][b];[a]scale={W}:{H}:force_original_aspect_ratio=increase,crop={W}:{H},"
-            f"boxblur=22:2,eq=brightness=-0.28[bg];[b]{fg}[fg];[bg][fg]overlay=(W-w)/2:(H-h)/2,"
+    # blur at quarter size then scale up: same look, several times faster on 2-core cloud runners
+    return (f"[0:v]split[a][b];[a]scale={W // 4}:{H // 4}:force_original_aspect_ratio=increase,crop={W // 4}:{H // 4},"
+            f"boxblur=6:1,eq=brightness=-0.28,scale={W}:{H}[bg];[b]{fg}[fg];[bg][fg]overlay=(W-w)/2:(H-h)/2,"
             f"setsar=1,fps=30,format=yuv420p[base]")
 
 
