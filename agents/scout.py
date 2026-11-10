@@ -9,6 +9,8 @@
 Then the LLM scores every new lead: one clear enforcement moment + place + stakes ranks highest; minors screened out."""
 import json
 import re
+import sys
+from collections import Counter
 from datetime import datetime, timedelta, timezone
 from urllib.parse import quote_plus, urljoin, urlparse
 import feedparser
@@ -150,8 +152,9 @@ def _watchlist(db):
     return {k: v for k, v in chans.items() if not k.startswith("_")}
 
 def from_watchlist(db):
+    forced = len(sys.argv) > 1 and sys.argv[1] == "scout"       # a manual "scout" run always checks the watchlist
     last = db.setting("scout_watch_last")
-    if last and (_now() - datetime.fromisoformat(last)).total_seconds() < WATCH_EVERY_H * 3600:
+    if not forced and last and (_now() - datetime.fromisoformat(last)).total_seconds() < WATCH_EVERY_H * 3600:
         return []
     chans = _watchlist(db)
     after = _now() - timedelta(days=WATCH_LOOKBACK_DAYS)
@@ -296,7 +299,10 @@ def main(db):
     for name, fn in (("watchlist", lambda: from_watchlist(db)), ("youtube", from_youtube),
                      ("dvids", from_dvids), ("news", from_news)):
         try:
-            raw += fn()
+            got = fn()
+            for l in got:
+                l["_src"] = name
+            raw += got
         except Exception as e:
             errors.append(f"{name}: {e}")
             db.alert("scout", f"source {name} failed: {e}", "warn")
@@ -326,6 +332,10 @@ def main(db):
             recent_titles.add(k)
             fresh.append(l)
     rows = score(db, fresh[:90]) if fresh else []
+    src = {k: f"{v}" for k, v in Counter(l["_src"] for l in raw).items()}
+    kept_src = Counter(r["_src"] for r in rows if r["status"] != "skipped")
+    for r in rows:
+        r.pop("_src", None)
     direct = take_direct(rows)
     if rows:
         db.insert("leads", rows, upsert=True, on_conflict="source_url")
@@ -350,6 +360,6 @@ def main(db):
             known.add(a.lower())
     kept = sum(1 for r in rows if r["status"] in ("new", "obtained"))
     top = sorted((r for r in rows if r["status"] in ("new", "obtained")), key=lambda r: -r["action_score"])[:3]
-    return (f"{len(raw)} found, {len(fresh)} new, {kept} kept, {len(direct)} agency-hosted (no request)"
+    return (f"{len(raw)} found ({', '.join(f'{k} {v}/{kept_src.get(k, 0)} kept' for k, v in src.items())}), {len(fresh)} new, {kept} kept, {len(direct)} agency-hosted (no request)"
             + (f"; top: " + "; ".join(f"{r['action_score']} {r['title'][:50]}" for r in top) if top else "")
             + (f"; errors: {errors}" if errors else ""))
