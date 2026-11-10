@@ -92,7 +92,7 @@ def _sources(ep, facts):
 
 def main(db):
     # Mix of sources: local police/sheriff/prosecutor footage first; federal DVIDS (mostly U.S. Customs and
-    # Border Protection) capped at 1 case per run so the channel isn't just Border Patrol videos.
+    # Border Protection) fills in (see below) so the channel isn't just Border Patrol videos.
     pool = db.select("leads", {"status": "eq.obtained", "order": "action_score.desc", "limit": 20})
     # cases already made as episodes before HQ existed — don't remake them
     made = ("yuma, az january 22, 2025", "brownsville, tx february 12, 2025", "brownsville, texas may 13, 2025",
@@ -107,9 +107,10 @@ def main(db):
     files = {l["id"]: casefacts.get(db, l["id"]) for l in pool[:12]}
     local = [l for l in local if files.get(l["id"])]
     federal = [l for l in federal if files.get(l["id"])]
+    # 3 Shorts/day = 1 case/day. Local cases first; federal DVIDS (public domain, no request needed) is capped at 1
+    # per run so the channel isn't all Border Patrol — except when no local case is ready, then 2 so it never runs dry.
     leads = local[:3]
-    if len(leads) < 3 and federal:
-        leads.append(federal[0])
+    leads += federal[:(1 if local else 2)][:3 - len(leads)]
     pb = db.select("playbook", {"active": "is.true", "order": "created_at.desc", "limit": 40})
     # scorecard lessons always make the cut (they're about OUR posts); then the newest of the rest
     playbook = [p["insight"] for p in pb if p.get("source") == "scorecard"][:5] + \

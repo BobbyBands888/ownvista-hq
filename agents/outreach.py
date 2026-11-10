@@ -2,6 +2,7 @@
 Rules: daily cap (default 10), max 2 per agency per day, only verified records addresses,
 always asks for a fee estimate before any work (we never pay), never offers or asks for calls."""
 import os
+import json
 import re
 import time
 from datetime import datetime, timedelta, timezone
@@ -131,10 +132,43 @@ def find_records_email(agency):
                 return e.lower(), link
     return None, None
 
-def compose(lead, agency, signature):
+VERIFY_SYSTEM = """You check a police incident before a public records request is sent. From the documents, decide
+which agency's officers are in the footage, which US state it is in, and what identifies the incident for a records
+clerk. Use ONLY the documents; cite nothing you can't see. Watch for look-alike place names: a "Washington County" or
+"Springfield" story may be in a different state than assumed — the news outlet's own city/state is a strong clue.
+Only include a suspect's full name if a document prints it. Never include minors, victims or bystanders."""
+
+def verify(lead, agency):
+    """Confirm agency + state + identifiers before anything is sent. Returns the check (dict)."""
+    from . import casefacts
+    docs = casefacts.gather(lead)
+    out = llm.ask(VERIFY_SYSTEM,
+                  "LEAD:\n" + json.dumps({k: lead.get(k) for k in ("title", "agency_name", "state", "incident_date", "summary")}) +
+                  f"\nWE WERE ABOUT TO SEND TO: {agency['name']} ({agency.get('state') or '?'})\n\nDOCUMENTS:\n" +
+                  json.dumps([{k: d[k] for k in ("i", "title", "url", "text")} for d in docs])[:20000] +
+                  '\n\nReturn JSON {"agency":"exact agency whose officers recorded it","state":"2-letter",'
+                  '"same_agency":true|false,"date":"YYYY-MM-DD or null","full_name":"suspect full name or null",'
+                  '"case_number":"or null","location":"road/address/landmark + city or null",'
+                  '"description":"2-3 neutral sentences for the records clerk: what happened, where, exact date, '
+                  'and the name/case number if known","why":"one line"}', max_tokens=700, temperature=0.1)
+    return out if isinstance(out, dict) else {}
+
+def ready_to_send(chk, agency):
+    """Agency and state confirmed, a specific date, and one more identifier (name, case number or exact place)."""
+    if not chk.get("same_agency"):
+        return False, f"footage is from {chk.get('agency') or 'another agency'} ({chk.get('state') or '?'}), not {agency['name']}"
+    if agency.get("state") and chk.get("state") and agency["state"].upper() != str(chk["state"]).upper():
+        return False, f"state mismatch: incident in {chk['state']}, agency listed in {agency['state']}"
+    if not re.match(r"\d{4}-\d{2}-\d{2}$", str(chk.get("date") or "")):
+        return False, "no specific incident date found"
+    if not (chk.get("full_name") or chk.get("case_number") or chk.get("location")):
+        return False, "no name, case number or exact location to identify it"
+    return True, ""
+
+def compose(lead, agency, signature, desc=None):
     statute = STATUTES.get((agency.get("state") or lead.get("state") or "").upper(),
                            "your state's public records law")
-    desc = llm.ask(
+    desc = desc or llm.ask(
         "Write ONE short, neutral paragraph (2-3 sentences) identifying a police incident for a public records "
         "request: what happened, where, approximate date, and any names or case numbers given. No opinions. "
         "Output plain text only.",
@@ -195,7 +229,7 @@ def main(db):
     agencies = {a["name"].lower(): a for a in db.select("agencies", {"select": "*"})}
     leads = db.select("leads", {"status": "eq.new", "source_type": "in.(agency_release,news_tip,prosecutor_release)",
                                 "order": "action_score.desc,created_at.desc", "limit": 40})
-    sent, no_contact = 0, 0
+    sent, no_contact, held, rerouted = 0, 0, 0, 0
     for lead in leads:
         if sent >= budget:
             break
@@ -214,7 +248,29 @@ def main(db):
                 if same:
                     db.update("leads", {"id": f"eq.{lead['id']}"}, {"status": "skipped", "notes": "duplicate incident"})
                     continue
-        subject, body = compose(lead, a, signature)
+        # never send blind: confirm the agency, state and identifiers first (Bundy went to the wrong state's sheriff)
+        try:
+            chk = verify(lead, a)
+        except Exception as e:
+            db.alert("outreach", f"Couldn't verify '{lead['title'][:60]}' before sending: {str(e)[:150]}", "info")
+            continue
+        ok, why = ready_to_send(chk, a)
+        if not ok:
+            held += 1
+            note = f"outreach check {_now():%Y-%m-%d}: not sent — {why}"
+            upd = {"notes": ((lead.get("notes") or "") + "\n" + note).strip()}
+            if not chk.get("same_agency") and chk.get("agency"):
+                # wrong agency: re-point the lead; the right agency gets its records email looked up next runs
+                upd.update(agency_name=chk["agency"], state=(chk.get("state") or lead.get("state")))
+                db.insert("agencies", {"name": chk["agency"], "state": chk.get("state")}, upsert=True, on_conflict="name")
+                rerouted += 1
+            else:
+                upd["status"] = "skipped"
+            db.update("leads", {"id": f"eq.{lead['id']}"}, upd)
+            continue
+        if chk.get("date") and not lead.get("incident_date"):
+            db.update("leads", {"id": f"eq.{lead['id']}"}, {"incident_date": chk["date"]})
+        subject, body = compose(lead, a, signature, desc=chk.get("description"))
         res = send_email(a["records_email"], subject, body)
         db.insert("records_requests", {"lead_id": lead["id"], "agency_id": a["id"], "to_email": a["records_email"],
                                        "subject": subject, "body": body, "sent_at": _now(),
@@ -224,4 +280,6 @@ def main(db):
         db.update("agencies", {"id": f"eq.{a['id']}"}, {"last_request_at": _now()})
         per_agency[a["id"]] = per_agency.get(a["id"], 0) + 1
         sent += 1
-    return f"sent {sent} requests ({len(sent_today) + sent}/{cap} today); {no_contact} leads waiting on an agency email; found {found} new agency emails"
+    return (f"sent {sent} requests ({len(sent_today) + sent}/{cap} today); held {held} that failed the pre-send check "
+            f"({rerouted} re-pointed to the right agency); {no_contact} leads waiting on an agency email; "
+            f"found {found} new agency emails")
