@@ -47,4 +47,31 @@ def ask(system, user, json_mode=True, max_tokens=2000, temperature=0.4):
             except json.JSONDecodeError:
                 last_err = "bad JSON from model"
                 continue
+    # Last resort: Cloudflare Workers AI free daily allowance (separate from Groq's caps)
+    import os
+    acct, tok = os.environ.get("CF_ACCOUNT_ID"), os.environ.get("CF_API_TOKEN")
+    if acct and tok:
+        for cf_model in ("@cf/meta/llama-3.3-70b-instruct-fp8-fast", "@cf/meta/llama-3.1-8b-instruct"):
+            try:
+                sys_msg = system + ("\nRespond with ONLY a valid JSON object, no other text." if json_mode else "")
+                r = requests.post(f"https://api.cloudflare.com/client/v4/accounts/{acct}/ai/run/{cf_model}",
+                                  headers={"Authorization": f"Bearer {tok}"}, timeout=120,
+                                  json={"messages": [{"role": "system", "content": sys_msg}, {"role": "user", "content": user}],
+                                        "max_tokens": max_tokens, "temperature": temperature})
+                if r.status_code >= 300:
+                    errs.append(f"{cf_model}: {r.status_code} {r.text[:120]}")
+                    continue
+                out = r.json().get("result", {}).get("response")
+                if isinstance(out, (dict, list)):
+                    return out if json_mode else json.dumps(out)
+                text = out or ""
+                if not json_mode:
+                    return text
+                import re
+                m = re.search(r"\{.*\}", text, re.S)
+                if m:
+                    return json.loads(m.group(0))
+                errs.append(f"{cf_model}: no JSON")
+            except Exception as e:
+                errs.append(f"{cf_model}: {type(e).__name__} {str(e)[:80]}")
     raise RuntimeError(f"LLM failed: {last_err} | tried: {' ; '.join(dict.fromkeys(errs))}")
