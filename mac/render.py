@@ -297,6 +297,12 @@ def render(plan_path, footage, out):
     work = Path(tempfile.mkdtemp(prefix="tft_render_"))
     try:
         job = Job(plan, footage, work)
+        total = sum(f["duration"] for f in job.files)
+        part = int(plan.get("part") or 1)
+        # Don't stretch thin footage: no 1-minute "episodes", no Part 3 that repeats Part 1
+        if (plan["kind"] == "episode" and total < 180) or (plan["kind"] == "short" and total < 40 * part):
+            print(f"NOT ENOUGH FOOTAGE: {total:.0f}s of video for a {plan['kind']}{' part ' + str(part) if plan['kind'] == 'short' else ''}")
+            sys.exit(3)
         LOG(f"{plan['kind']} '{plan.get('title')}' picks: {json.dumps(job.pick)[:400]}")
         Path(out).parent.mkdir(parents=True, exist_ok=True)
         if plan["kind"] == "episode":

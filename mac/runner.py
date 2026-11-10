@@ -283,6 +283,9 @@ def render(db):
             db.update("content", {"id": f"eq.{it['id']}"}, upd)
             fails.pop(str(it["id"]), None)
             done += 1
+        elif res.returncode == 3:
+            db.update("content", {"id": f"eq.{it['id']}"}, {"status": "failed",
+                      "publish_note": "Skipped: not enough footage for this format (avoids repeating the same clip)"})
         else:
             n = fails.get(str(it["id"]), 0) + 1
             fails[str(it["id"])] = n
