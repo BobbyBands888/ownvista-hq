@@ -43,7 +43,11 @@ NEVER_HOST_RX = re.compile(r"(^|\.)(youtube\.com|youtu\.be|facebook\.com|fb\.wat
 MEDIA_RX = re.compile(r"\.(mp4|mov|m4v|avi|zip|wmv|mkv|mts|mpg)(\?|$)", re.I)
 UA = {"User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 14_0) AppleWebKit/537.36 Chrome/130 Safari/537.36"}
 WATCH_EVERY_H = 20          # agency watchlist runs about once a day
-WATCH_LOOKBACK_DAYS = 3
+WATCH_LOOKBACK_DAYS = 7
+# only uploads that look like incident footage go to the scorer (agency channels also post recruiting, PSAs, pressers)
+FOOTAGE_RX = re.compile(r"body ?cam|body[- ]worn|\bbwc\b|dash ?cam|critical incident|officer[- ]involved|\bois\b|"
+                        r"pursuit|chase|video release|released video|footage|surveillance video|911 call|arrest|shots fired|"
+                        r"traffic stop|smuggl|standoff|carjack", re.I)
 NEWS_QUERIES = ["bodycam video released", "body camera footage released sheriff",
                 "police release body camera video arrest", "911 call and bodycam released",
                 "sheriff releases body camera video", "dash cam video released chase",
@@ -53,7 +57,8 @@ LOOKBACK_DAYS = 7
 def _now():
     return datetime.now(timezone.utc)
 
-FOUND_CHANNELS = {}          # channelId -> title, collected by the search pass for the watchlist
+FOUND_CHANNELS = {}
+STATS = {}          # channelId -> title, collected by the search pass for the watchlist
 
 def from_youtube():
     if _now().hour % 6 >= 3:                 # about every 6h: 6 searches x 100 units stays well inside free quota
@@ -141,6 +146,29 @@ def _watchlist(db):
             chans[items[0]["id"]] = items[0]["snippet"]["title"]
         resolved.add(h)
         changed = True
+    if not chans.get("_bootstrapped"):
+        # one time: every agency channel that posted bodycam in the last year (12 searches x 100 units)
+        after = (_now() - timedelta(days=365)).strftime("%Y-%m-%dT%H:%M:%SZ")
+        for q in YT_QUERIES:
+            token = None
+            for _ in range(2):
+                p = {"part": "snippet", "type": "video", "q": q, "publishedAfter": after, "maxResults": 50,
+                     "regionCode": "US"}
+                if token:
+                    p["pageToken"] = token
+                try:
+                    res = yt_get("search", p)
+                except Exception:
+                    break
+                for it in res.get("items", []):
+                    sn = it["snippet"]
+                    if AGENCY_RX.search(sn["channelTitle"]):
+                        FOUND_CHANNELS[sn["channelId"]] = sn["channelTitle"]
+                token = res.get("nextPageToken")
+                if not token:
+                    break
+        chans["_bootstrapped"] = _now().isoformat()
+        changed = True
     for cid, title in FOUND_CHANNELS.items():
         if cid not in chans:
             chans[cid] = title
@@ -172,12 +200,13 @@ def from_watchlist(db):
                 if datetime.fromisoformat(sn["publishedAt"].replace("Z", "+00:00")) < after:
                     continue
                 vid = sn.get("resourceId", {}).get("videoId")
-                if not vid:
+                if not vid or not FOOTAGE_RX.search(sn["title"] + " " + sn.get("description", "")[:500]):
                     continue
                 leads.append({"title": sn["title"][:300], "agency_name": chans.get(c["id"]) or sn.get("channelTitle"),
                               "summary": sn.get("description", "")[:600], "_desc": sn.get("description", ""),
                               "source_url": f"https://www.youtube.com/watch?v={vid}",
                               "source_type": "agency_release"})
+    STATS["channels"] = len(chans)
     db.insert("settings", {"key": "scout_watch_last", "value": _now().isoformat(), "updated_at": _now().isoformat()},
               upsert=True, on_conflict="key")
     return leads
@@ -360,6 +389,6 @@ def main(db):
             known.add(a.lower())
     kept = sum(1 for r in rows if r["status"] in ("new", "obtained"))
     top = sorted((r for r in rows if r["status"] in ("new", "obtained")), key=lambda r: -r["action_score"])[:3]
-    return (f"{len(raw)} found ({', '.join(f'{k} {v}/{kept_src.get(k, 0)} kept' for k, v in src.items())}), {len(fresh)} new, {kept} kept, {len(direct)} agency-hosted (no request)"
+    return ((f"watching {STATS['channels']} agency channels; " if STATS.get("channels") else "") + f"{len(raw)} found ({', '.join(f'{k} {v}/{kept_src.get(k, 0)} kept' for k, v in src.items())}), {len(fresh)} new, {kept} kept, {len(direct)} agency-hosted (no request)"
             + (f"; top: " + "; ".join(f"{r['action_score']} {r['title'][:50]}" for r in top) if top else "")
             + (f"; errors: {errors}" if errors else ""))
