@@ -173,7 +173,7 @@ def main(db):
 
     # fill in missing agency emails (a few per run, slow and polite)
     missing = db.select("agencies", {"records_email": "is.null", "portal_url": "is.null",
-                                     "or": "(notes.is.null,notes.not.like.*email lookup failed*)", "limit": 4})
+                                     "or": "(notes.is.null,notes.not.like.*email lookup failed*)", "limit": 2})
     found = 0
     for n, a in enumerate(missing):
         if n:
