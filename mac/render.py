@@ -148,7 +148,7 @@ def seg_clip(src, info, s, e, W, H, out, overlays=()):
         fc.append(f"[{last}][{n}:v]overlay=0:0:format=auto{en}[v{n}]")
         last = f"v{n}"
     if info["audio"]:
-        fc.append("[0:a]aresample=48000,aformat=channel_layouts=stereo,loudnorm=I=-15:TP=-1.5:LRA=11,"
+        fc.append("[0:a]aresample=48000,aformat=channel_layouts=stereo,dynaudnorm=f=200:g=15:p=0.9:m=12,alimiter=limit=0.89,volume=-6dB,"
                   f"aresample=48000,apad,atrim=0:{dur}[aout]")
         amap = "[aout]"
     else:
