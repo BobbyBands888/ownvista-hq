@@ -506,10 +506,22 @@ def picks_for(folder, files, plan):
         out = pick_reel(files, plan, cache)
     elif kind == "short":
         key = f"shorts:{plan.get('parent_id') or plan['case_name']}"
+        want = int(plan.get("part") or 1)
+        if recut and not cache.get(key + ":vision"):
+            # cut before the vision check existed: re-pick the whole series so Parts 1-3 stay in story order;
+            # the other parts' re-cuts then use these fresh picks instead of re-picking again
+            cache.pop(key, None)
+            cache[key + ":fresh"] = [1, 2, 3]
+            recut = False
         parts = pick_shorts(files, plan, cache)
+        cache[key + ":vision"] = True
+        fresh = cache.get(key + ":fresh") or []
+        if recut and want in fresh:
+            recut = False
+        if want in fresh:
+            cache[key + ":fresh"] = [x for x in fresh if x != want]
         if recut:
             parts = cache[key] = recut_short(files, plan, cache, parts)
-        want = int(plan.get("part") or 1)
         out = next((p for p in parts if p["part"] == want), parts[min(want, len(parts)) - 1])
     else:
         if recut:
