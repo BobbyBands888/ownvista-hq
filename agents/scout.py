@@ -15,17 +15,21 @@ from .lib.runner import RULES
 
 AGENCY_RX = re.compile(r"sheriff|police|\bpd\b|state attorney|district attorney|prosecutor|highway patrol|"
                        r"state police|public safety|marshal|department of corrections", re.I)
-YT_QUERIES = ["bodycam", "body worn camera video", "critical incident video"]
+YT_QUERIES = ["bodycam", "body worn camera video", "critical incident video", "officer involved shooting video",
+              "pursuit dash cam video", "deputy body camera arrest"]
 NEWS_QUERIES = ["bodycam video released", "body camera footage released sheriff",
-                "police release body camera video arrest", "911 call and bodycam released"]
+                "police release body camera video arrest", "911 call and bodycam released",
+                "sheriff releases body camera video", "dash cam video released chase",
+                "deputies body camera footage shows", "police release video of arrest"]
+LOOKBACK_DAYS = 7
 
 def _now():
     return datetime.now(timezone.utc)
 
 def from_youtube():
-    if _now().hour not in (2, 14):          # twice a day keeps quota low
+    if _now().hour % 6 >= 3:                 # about every 6h: 6 searches x 100 units stays well inside free quota
         return []
-    after = (_now() - timedelta(days=3)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    after = (_now() - timedelta(days=LOOKBACK_DAYS)).strftime("%Y-%m-%dT%H:%M:%SZ")
     leads = []
     for q in YT_QUERIES:
         res = yt_get("search", {"part": "snippet", "type": "video", "q": q, "order": "date",
@@ -58,7 +62,7 @@ def from_dvids():
 def from_news():
     leads = []
     for q in NEWS_QUERIES:
-        feed = feedparser.parse(f"https://news.google.com/rss/search?q={quote_plus(q)}+when:3d&hl=en-US&gl=US&ceid=US:en")
+        feed = feedparser.parse(f"https://news.google.com/rss/search?q={quote_plus(q)}+when:7d&hl=en-US&gl=US&ceid=US:en")
         for e in feed.entries[:20]:
             leads.append({"title": e.title[:300], "summary": re.sub(r"<[^>]+>", " ", e.get("summary", ""))[:600],
                           "source_url": e.link, "source_type": "news_tip"})
@@ -72,7 +76,10 @@ def score(db, leads):
         res = llm.ask(
             "You screen footage leads for Ten-Four Tapes. Bobby only wants real action on screen "
             "(arrests, fights, chases, shootouts, dramatic rescues, strong case stories with 911 + interrogation). "
-            "'Ok' isn't enough. Score honestly.\n" + RULES,
+            "'Ok' isn't enough. Score honestly. A lead is only a records REQUEST (free) — the footage itself gets "
+            "judged again before anything is made — so keep any real incident with likely on-camera action and an "
+            "identifiable U.S. agency. Skip opinion pieces, policy stories, lawsuits with no incident video, "
+            "and non-U.S. incidents.\n" + RULES,
             "Leads:\n" + json.dumps([{"i": n, "title": l["title"], "summary": l.get("summary", "")[:400],
                                        "agency": l.get("agency_name")} for n, l in enumerate(batch)]) +
             '\n\nReturn JSON {"leads":[{"i":0,"agency_name":"official agency that holds the footage or null",'
@@ -89,7 +96,11 @@ def score(db, leads):
             row["action_score"] = int(s.get("action_score") or 0)
             row["category"] = s.get("category") or "other"
             row["involves_minor"] = s.get("involves_minor")
-            keep = s.get("keep", False) and row["involves_minor"] is not True and row["action_score"] >= 6
+            # 5+ is enough to REQUEST footage; Maker only builds from footage that actually delivers
+            keep = row["involves_minor"] is not True and (row["action_score"] >= 6 or
+                                                          (s.get("keep") and row["action_score"] >= 5))
+            if keep and l["source_type"] != "dvids_public_domain" and not row["agency_name"]:
+                keep = False
             if not keep:
                 row["status"] = "skipped"
             elif l["source_type"] == "dvids_public_domain":
