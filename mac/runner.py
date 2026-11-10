@@ -154,6 +154,10 @@ def ensure_footage(db, it):
     else:
         for r in db.select("records_requests", {"lead_id": f"eq.{it['lead_id']}", "status": "eq.fulfilled"}):
             for url in r.get("download_links") or []:
+                if re.search(r"\.(png|jpe?g|gif|svg|ico)(\?|$)", url, re.I):
+                    continue
+                if any(p for p in dest.iterdir() if not p.name.startswith(".")):
+                    break                           # got the package from the first good link
                 try:
                     _fetch(url, dest)
                 except Exception as e:
