@@ -81,7 +81,10 @@ def write_vertical(job, log=print):
     whole = _span(f, pk["start"], pk["end"])
     j = _ask("You write the 2-3 second hook text that sits over the FIRST seconds of a vertical "
              f"{'YouTube Short' if plan['kind'] == 'short' else 'Facebook Reel'} of police bodycam footage, AFTER "
-             "the clip is cut. The hook must match what is on screen in those first seconds. " + RULES,
+             "the clip is cut. The hook must match what is on screen in those first seconds. " +
+             ("This Reel is a STANDALONE single moment: never say Part 1/2/3, 'continued', 'what happens next' or "
+              "refer to other clips; caption and question are about this clip only. " if plan["kind"] == "reel" else "")
+             + RULES,
              "FACTS:\n" + json.dumps(_facts(plan, sc)) +
              "\n\nDRAFT hook (rewrite if the footage doesn't show it): " + json.dumps(sc.get("hook_text") or sc.get("on_screen_text")) +
              "\n\nFIRST 4 SECONDS:\n" + json.dumps(first) + "\n\nWHOLE CLIP:\n" + json.dumps(whole) +

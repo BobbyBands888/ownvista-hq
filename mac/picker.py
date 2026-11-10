@@ -333,30 +333,69 @@ def redo(plan):
     return f"\nBobby REJECTED the previous cut of this video: \"{n}\". Pick different moments that fix that.\n" if n else ""
 
 
+REEL_PAD = 5          # seconds kept between two Reels of the same case so they never share a moment
+
+
+def _taken(files, plan, cache):
+    """Windows already used by this case's OTHER Reels: from the plan (runner passes rendered siblings' cuts)
+    and from this folder's pick cache. Returned as (file_index, start, end) padded by REEL_PAD."""
+    idx = {f["path"]: i for i, f in enumerate(files)}
+    out = []
+    for c in plan.get("sibling_cuts") or []:
+        i = idx.get(c.get("path"))
+        if i is not None:
+            out.append((i, float(c["start"]) - REEL_PAD, float(c["end"]) + REEL_PAD))
+    parent = plan.get("parent_id")
+    for k, v in cache.items():
+        if k.startswith("reel:") and k != f"reel:{plan['id']}" and isinstance(v, dict) and parent \
+                and v.get("parent") == parent and v.get("file") is not None:
+            out.append((v["file"], v["start"] - REEL_PAD, v["end"] + REEL_PAD))
+    return out
+
+
+def _clear(p, taken):
+    return all(not (p["file"] == i and p["start"] < e and p["end"] > s) for i, s, e in taken)
+
+
 def pick_reel(files, plan, cache):
+    """One standalone single-moment Reel. A case's 2-3 Reels never overlap; if no fresh 24s+ window with visible
+    action is left, returns None and the render is skipped (no Reel that repeats another Reel's clip)."""
     key = f"reel:{plan['id']}"
     if key in cache:
         return cache[key]
     sc = plan.get("script") or {}
+    taken = _taken(files, plan, cache)
     pick = None
     try:
         j = ask_llm("You cut 25-30 second Facebook Reels from police bodycam footage. " + RULES,
                     describe(files) + f"\n\nThe Reel is for this moment: {sc.get('moment') or plan.get('title')}\n"
                     f"Hook text: {sc.get('hook_text', '')}\n" + redo(plan) +
+                    (f"Windows other Reels of this case already use (do NOT overlap them, pick a different moment): "
+                     f"{[(i, round(a), round(b)) for i, a, b in taken]}\n" if taken else "") +
                     "Pick ONE continuous 25-30s window where visible action starts within the first 2 seconds. "
                     'Return JSON {"file":0,"start":12.0,"end":40.0,"why":"..."}')
         pick = clamp(files, j, 24, 30)
     except Exception:
         pass
-    if pick and looks_bad(files[pick["file"]], pick["start"], pick["end"], min_action=1.5, max_dull=0.35):
-        pick = None                             # the AI chose a stretch with nothing to see — use the vision ranking
+    if pick and (looks_bad(files[pick["file"]], pick["start"], pick["end"], min_action=1.5, max_dull=0.35)
+                 or not _clear(pick, taken)):
+        pick = None                             # nothing to see, or it reuses a sibling Reel's moment
     if not pick:
         long_enough = [f for f in files if f["duration"] >= 30] or files
-        pick = best_windows(long_enough, 27, 1)[0]
-        pick["file"] = files.index(long_enough[pick["file"]])
+        used = [(long_enough.index(files[i]), s, e) for i, s, e in taken if files[i] in long_enough]
+        for c in best_windows(long_enough, 27, 4, used=used):
+            c["file"] = files.index(long_enough[c["file"]])
+            if not looks_bad(files[c["file"]], c["start"], c["end"], min_action=1.0, max_dull=0.5) or not taken:
+                pick = c
+                break
+    if not pick:
+        return None
     f = files[pick["file"]]
     s = action_start(f["rms"], pick["start"], pick["end"], f)
     pick.update(start=float(s), end=float(min(f["duration"], s + (pick["end"] - pick["start"]))))
+    if taken and not _clear(pick, taken):       # action_start nudged it into a sibling's window
+        return None
+    pick["parent"] = plan.get("parent_id")
     cache[key] = pick
     return pick
 

@@ -2,6 +2,7 @@
 3 YouTube Shorts (Part 1/2/3) and standalone Facebook action Reels. Uses the live playbook from
 Research + Analytics. Rendering happens on Bobby's Mac (mac/runner.py) with the existing build tools."""
 import json
+import re
 from .lib import llm
 from .lib.runner import RULES
 from . import casefacts
@@ -18,7 +19,9 @@ FORMAT = """Ten-Four Tapes format:
   Credit line on screen and in description.
 - SHORTS: 3 vertical Shorts per episode labeled "<Case Name> Part 1/2/3", each ends "Follow for Part 2/3".
 - FACEBOOK REELS: standalone 25-30s enforcement-action Reels (never "Part 1/2/3" — Facebook doesn't show Part 2 to
-  Part 1's viewers), real audio, action in the first 2 seconds. Caption line 1 = PLACE + STAKES in under 15 words
+  Part 1's viewers), real audio, action in the first 2 seconds. When a case gets 2-3 Reels, each one is a DIFFERENT
+  single moment of the incident (e.g. the stop, the run, the takedown) and stands on its own: a viewer who sees only
+  that Reel understands it. No "part", "continued", "what happens next" or references to the other Reels. Caption line 1 = PLACE + STAKES in under 15 words
   (e.g. "Quemado, Texas. A man swinging tree branches has already hit a Border Patrol agent in the head."), then one
   short question, then 3-4 hashtags. Our page data: these get 37K-106K views; "Case Name — generic summary" captions
   and rescue Reels get under 1K.
@@ -31,7 +34,21 @@ FORMAT = """Ten-Four Tapes format:
   and why police were there; what_happened_next says how it ended, using the case file's wording rules. Charges are
   never called convictions. List the case file's sources at the end of the description under "Sources:"."""
 
+STRONG = 8          # action_score at/above this = a full enforcement moment + place + stakes -> 3 Reels
+PART_RE = re.compile(r"\bpart\s*(\d|one|two|three)\b|\bpt\.?\s*\d|continued|next reel|follow for part", re.I)
+
+def reel_count(lead):
+    """Rescues get no Reels (160-700 views on our page). Strong cases get 3 single-moment Reels, the rest 2."""
+    if lead.get("category") == "rescue":
+        return 0
+    return 3 if (lead.get("action_score") or 0) >= STRONG else 2
+
+def _standalone(r):
+    txt = " ".join(str(r.get(k) or "") for k in ("moment", "hook_text", "caption")).lower()
+    return bool((r.get("moment") or "").strip()) and not PART_RE.search(txt)
+
 def plan(lead, playbook, rejects=(), facts=None):
+    n_reels = reel_count(lead)
     return llm.ask(
         "You are the head of production for Ten-Four Tapes. Write production plans that follow the format exactly "
         "and apply the playbook. Accuracy matters: only state facts present in the lead.\n" + RULES + "\n" + FORMAT,
@@ -52,8 +69,9 @@ Return JSON:
    "angle_labels":["Body Cam Officer 1"],"what_happened_next":"","comment_question":"",
    "thumbnail_text":"max 4 words","blur_notes":"anything that must be blurred or cut (bodies, bystanders, IDs)"},
  "shorts":[{"part":1,"title":"<Case Name> Part 1","moment":"which moment to cut","on_screen_text":""}],
- "reels":[{"moment":"the 25-30s action moment","hook_text":"first 2s text","caption":"PLACE. STAKES (under 15 words) + one short question","hashtags":["#bodycam"]}]}
-3 shorts and 1-2 reels.""", max_tokens=2500, temperature=0.6)
+ "reels":[{"moment":"one single 25-30s action moment, different from the other reels","hook_text":"first 2s text","caption":"PLACE. STAKES of THIS moment (under 15 words) + one short question","hashtags":["#bodycam"]}]}
+3 shorts and """ + (f"exactly {n_reels} reels, each a different single moment in story order, each standalone."
+                    if n_reels else "no reels (\"reels\":[])."), max_tokens=2800, temperature=0.6)
 
 def _sources(ep, facts):
     if not facts or not facts.get("sources") or "Sources:" in (ep.get("description") or ""):
@@ -84,7 +102,7 @@ def main(db):
     rejects = [f"{r['kind']}: {r.get('title')} — {(r.get('publish_note') or '').replace('Rejected: ', '')}"
                for r in db.select("content", {"select": "kind,title,publish_note", "approval_status": "eq.rejected",
                                               "order": "created_at.desc", "limit": 15})]
-    made = 0
+    made = n_reel = 0
     for lead in leads:
         # clear any half-made plan from a failed earlier run of this lead (never touches rendered/posted items)
         db.delete("content", {"lead_id": f"eq.{lead['id']}", "status": "eq.scripted"})
@@ -105,14 +123,22 @@ def main(db):
                          "case_name": case, "title": s.get("title") or f"{case} Part {s.get('part')}",
                          "description": f"Full episode on the channel. {credit}", "script": s,
                          "source_type": src_type, "source_credit": credit, "source_urls": [lead.get("source_url")]})
-        # rescue Reels flop on our page (160-700 views) — rescues get the episode + Shorts only
-        for r in ([] if lead.get("category") == "rescue" else p.get("reels", [])[:2]):
+        # 2-3 standalone single-moment Reels (3 for strong cases); rescues get the episode + Shorts only
+        reels, seen = [], set()
+        for r in p.get("reels") or []:
+            key = (r.get("moment") or "").strip().lower()[:60]
+            if _standalone(r) and key not in seen:
+                seen.add(key)
+                reels.append(r)
+        for n, r in enumerate(reels[:reel_count(lead)], 1):
+            r["reel_no"] = n
             rows.append({"lead_id": lead["id"], "kind": "reel", "parent_id": epi["id"], "part": None, "case_name": case,
                          "title": case, "description": (r.get("caption") or case) + f"\nFull episode on YouTube: Ten-Four Tapes\n{credit}"
                          + ("\n" + " ".join(r["hashtags"][:4]) if r.get("hashtags") else ""),
                          "script": r, "source_type": src_type, "source_credit": credit,
                          "source_urls": [lead.get("source_url")]})
+        n_reel += sum(1 for r in rows if r["kind"] == "reel")
         db.insert("content", rows)
         db.update("leads", {"id": f"eq.{lead['id']}"}, {"status": "used"})
         made += 1
-    return f"planned {made} cases ({made} episodes + shorts + reels)"
+    return f"planned {made} cases ({made} episodes + shorts + {n_reel} standalone reels)"

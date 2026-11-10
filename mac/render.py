@@ -4,8 +4,8 @@ usage: python mac/render.py PLAN.json FOOTAGE_DIR OUT.mp4
 Episode (1920x1080): cold-open hook -> title card -> short narrated setup -> raw bodycam clips with
 "BODY CAM: OFFICER n" labels and brief narrator check-ins between them -> what happened next ->
 comment question -> subscribe end card. Narrator never talks over bodycam audio.
-Short / Reel (1080x1920): action from the first second, case badge (+ PART n), hook text, credit,
-"Follow for Part n" end card."""
+Short / Reel (1080x1920): action from the first second, case badge (+ PART n on Shorts only), hook text, credit,
+"Follow for Part n" end card on Shorts; Reels are standalone single moments ending "Follow for more cases"."""
 import json
 import shutil
 import sys
@@ -303,6 +303,10 @@ def render(plan_path, footage, out):
         if (plan["kind"] == "episode" and total < 180) or (plan["kind"] == "short" and total < 40 * part):
             print(f"NOT ENOUGH FOOTAGE: {total:.0f}s of video for a {plan['kind']}{' part ' + str(part) if plan['kind'] == 'short' else ''}")
             sys.exit(3)
+        if plan["kind"] == "reel" and not job.pick:
+            # every 24s+ stretch with visible action is already in another Reel of this case
+            print("NOT ENOUGH FOOTAGE: no fresh moment left for another standalone Reel of this case")
+            sys.exit(3)
         import writer
         written = writer.write(job, log=LOG)            # words are written from the locked cut, not the plan
         LOG(f"{plan['kind']} '{plan.get('title')}' picks: {json.dumps(job.pick)[:400]}")
@@ -312,7 +316,10 @@ def render(plan_path, footage, out):
         else:
             build_vertical(job, out)
         # what the Writer put on screen, for the runner to save back to the plan (dashboard + captions)
-        Path(str(out) + ".script.json").write_text(json.dumps({"script": job.sc, "written": bool(written),
+        cut = None
+        if plan["kind"] == "reel":                  # saved on the plan so the case's other Reels avoid these seconds
+            cut = {"path": job.files[job.pick["file"]]["path"], "start": job.pick["start"], "end": job.pick["end"]}
+        Path(str(out) + ".script.json").write_text(json.dumps({"script": job.sc, "written": bool(written), "cut": cut,
                                                                 "fixed": written.get("problems") or []}, default=str))
     finally:
         shutil.rmtree(work, ignore_errors=True)

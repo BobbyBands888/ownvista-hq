@@ -261,6 +261,12 @@ def render(db):
         QUEUE.mkdir(parents=True, exist_ok=True)
         OUT.mkdir(parents=True, exist_ok=True)
         plan_path = QUEUE / f"{it['id']}.json"
+        if it["kind"] == "reel" and it.get("parent_id"):
+            # seconds this case's other Reels already use (their picks may be on another machine's cache)
+            sib = db.select("content", {"parent_id": f"eq.{it['parent_id']}", "kind": "eq.reel",
+                                        "id": f"neq.{it['id']}", "select": "script"})
+            it["sibling_cuts"] = [s["script"]["cut"] for s in sib
+                                  if isinstance(s.get("script"), dict) and (s["script"].get("cut") or {}).get("path")]
         plan_path.write_text(json.dumps(it, indent=2, default=str))
         out = OUT / _file_name(it)
         cmd = RENDER_CMD.format(plan=shlex.quote(str(plan_path)), footage=shlex.quote(str(src)), out=shlex.quote(str(out)))
@@ -278,8 +284,11 @@ def render(db):
             if side.exists():                       # the Writer's final on-screen text, so the queue shows what's in the video
                 try:
                     w = json.loads(side.read_text())
+                    if w.get("cut"):
+                        base = upd.get("script") or (it.get("script") if isinstance(it.get("script"), dict) else {})
+                        upd["script"] = {**base, "cut": w["cut"]}
                     if w.get("written"):
-                        upd["script"] = w["script"]
+                        upd["script"] = {**w["script"], **({"cut": w["cut"]} if w.get("cut") else {})}
                         ws = w["script"]
                         if it["kind"] == "reel" and ws.get("caption"):
                             # Facebook caption from the locked cut: place + stakes, one question, credit, tags
@@ -358,10 +367,16 @@ def facebook_reel(path, caption):
     return vid
 
 REEL_GAP_H = 3
+CASE_REEL_GAP_H = 12   # a case's 2-3 Reels are spread out; another case's Reel goes in between when one is ready
 
 def posted_since(db, kind, hours):
     since = (_now() - timedelta(hours=hours)).isoformat()
     return len(db.select("content", {"kind": f"eq.{kind}", "posted_at": f"gte.{since}", "select": "id"}))
+
+def _case_reel_recent(db, parent_id):
+    since = (_now() - timedelta(hours=CASE_REEL_GAP_H)).isoformat()
+    return bool(db.select("content", {"parent_id": f"eq.{parent_id}", "kind": "eq.reel",
+                                      "posted_at": f"gte.{since}", "select": "id"}))
 
 def publish(db):
     if db.setting("posting_paused", False):
@@ -384,6 +399,8 @@ def publish(db):
     for it in ready:
         k = it["kind"]
         if room.get(k, 0) <= 0 or not it.get("media_path"):
+            continue
+        if k == "reel" and it.get("parent_id") and _case_reel_recent(db, it["parent_id"]):
             continue
         path = local_media(it)
         if not path:

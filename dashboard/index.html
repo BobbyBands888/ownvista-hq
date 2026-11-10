@@ -217,7 +217,8 @@ const AGENTS = {
   compliance:["Compliance","Safety and platform-policy gate"], analytics:["Analytics","Pulls our YouTube and Facebook numbers"],
   overseer:["Overseer","Health checks and daily report"], mac_runner:["Mac Renderer","Renders and posts from your Mac"],
 };
-const KIND = c => c.kind==="episode" ? "Episode" : c.kind==="short" ? `Short · Part ${c.part??""}` : "Facebook Reel";
+const KIND = c => c.kind==="episode" ? "Episode" : c.kind==="short" ? `Short · Part ${c.part??""}` :
+  `Facebook Reel${(c.script&&c.script.reel_no) ? " · Moment "+c.script.reel_no : ""}`;
 
 // plain-English status for one video
 function status(c){
