@@ -272,6 +272,15 @@ def render(db):
         if res.returncode == 0 and out.exists():
             link = store_render(out) if CLOUD else str(out)
             upd = {"status": "rendered", "media_path": link}
+            side = Path(str(out) + ".script.json")
+            if side.exists():                       # the Writer's final on-screen text, so the queue shows what's in the video
+                try:
+                    w = json.loads(side.read_text())
+                    if w.get("written"):
+                        upd["script"] = w["script"]
+                except Exception:
+                    pass
+                side.unlink(missing_ok=True)
             if it["approval_status"] == "approved":
                 # Approval window: the plan was OK'd, now Bobby OKs the exact video before it goes public.
                 check = (it.get("script") or {}).get("blur_notes") if isinstance(it.get("script"), dict) else None

@@ -237,7 +237,7 @@ def build_episode(job, out):
     # 4. bodycam clips, labelled; brief narrator check-ins between them
     checks = list(sc.get("check_ins") or [])
     for n, c in enumerate(pk["clips"]):
-        if n > 0 and checks and n <= len(checks):
+        if n > 0 and checks and n <= len(checks) and str(checks[n - 1]).strip():
             line = checks[n - 1]
             path_b, _ = job.src(c["file"])
             cbg = media.blurred_still(path_b, c["start"] + 2, W, H, job.p("png"))
@@ -303,12 +303,17 @@ def render(plan_path, footage, out):
         if (plan["kind"] == "episode" and total < 180) or (plan["kind"] == "short" and total < 40 * part):
             print(f"NOT ENOUGH FOOTAGE: {total:.0f}s of video for a {plan['kind']}{' part ' + str(part) if plan['kind'] == 'short' else ''}")
             sys.exit(3)
+        import writer
+        written = writer.write(job, log=LOG)            # words are written from the locked cut, not the plan
         LOG(f"{plan['kind']} '{plan.get('title')}' picks: {json.dumps(job.pick)[:400]}")
         Path(out).parent.mkdir(parents=True, exist_ok=True)
         if plan["kind"] == "episode":
             build_episode(job, out)
         else:
             build_vertical(job, out)
+        # what the Writer put on screen, for the runner to save back to the plan (dashboard + captions)
+        Path(str(out) + ".script.json").write_text(json.dumps({"script": job.sc, "written": bool(written),
+                                                                "fixed": written.get("problems") or []}, default=str))
     finally:
         shutil.rmtree(work, ignore_errors=True)
     LOG(f"rendered {out} ({media.probe(out)['duration']:.0f}s)")
