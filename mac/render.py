@@ -278,7 +278,7 @@ def build_vertical(job, out):
     bg = media.blurred_still(path, max(0, pk["end"] - 1), W, H, job.p("png"))
     if kind == "short" and part in (1, 2):
         end_t, end_vo = f"Follow for Part {part + 1}", f"Follow for part {'two' if part == 1 else 'three'}."
-    elif kind == "short":
+    elif kind == "short" and plan.get("episode_planned", True):
         end_t, end_vo = "Full episode on our channel", "Watch the full episode on our channel."
     else:
         end_t, end_vo = "Follow for more cases", "Follow for more cases like this."

@@ -371,9 +371,11 @@ def publish(db):
             if k in ("episode", "short"):
                 desc = it.get("description") or ""
                 if k == "short" and it.get("parent_id"):
-                    ep = db.select("content", {"id": f"eq.{it['parent_id']}", "select": "youtube_id"})
+                    ep = db.select("content", {"id": f"eq.{it['parent_id']}", "select": "youtube_id,approval_status,status"})
                     if ep and ep[0].get("youtube_id"):
                         desc = f"Full episode: https://youtu.be/{ep[0]['youtube_id']}\n" + desc
+                    elif not ep or ep[0].get("approval_status") == "rejected" or ep[0].get("status") == "failed":
+                        desc = "\n".join(l for l in desc.splitlines() if "full episode" not in l.lower())
                 vid, locked = youtube_upload(it["media_path"], it["title"], desc, it.get("tags"), short=(k == "short"))
                 upd["youtube_id"] = vid
                 if locked:
@@ -381,11 +383,14 @@ def publish(db):
                     db.alert("publisher", f"'{it['title']}' uploaded as PRIVATE (API audit pending) — set Public in Studio", "warn")
             else:
                 cap = it.get("description") or it["case_name"]
-                if it.get("parent_id"):
-                    ep = db.select("content", {"id": f"eq.{it['parent_id']}", "select": "youtube_id"})
-                    if ep and ep[0].get("youtube_id"):
-                        cap = cap.replace("Full episode on YouTube: Ten-Four Tapes",
-                                          f"Full episode: https://youtu.be/{ep[0]['youtube_id']}")
+                ep = db.select("content", {"id": f"eq.{it['parent_id']}", "select": "youtube_id,approval_status,status"}) \
+                    if it.get("parent_id") else []
+                if ep and ep[0].get("youtube_id"):
+                    cap = cap.replace("Full episode on YouTube: Ten-Four Tapes",
+                                      f"Full episode: https://youtu.be/{ep[0]['youtube_id']}")
+                elif not ep or ep[0].get("approval_status") == "rejected" or ep[0].get("status") == "failed":
+                    # no episode will ever exist for this case — never promise one
+                    cap = "\n".join(l for l in cap.splitlines() if "full episode" not in l.lower())
                 upd["facebook_id"] = facebook_reel(it["media_path"], cap)
             db.update("content", {"id": f"eq.{it['id']}"}, upd)
             room[k] -= 1
