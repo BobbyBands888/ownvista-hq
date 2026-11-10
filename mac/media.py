@@ -35,7 +35,12 @@ def ff(*args, quiet=True):
     global FF
     FF = FF or ffmpeg_bin()
     cmd = [FF, "-y", "-hide_banner"] + (["-v", "error"] if quiet else []) + [str(a) for a in args]
-    r = subprocess.run(cmd, capture_output=True, text=True)
+    raw = "rawvideo" in args
+    r = subprocess.run(cmd, capture_output=True, text=not raw)
+    if raw:
+        if r.returncode:
+            raise RuntimeError("ffmpeg failed")
+        return r
     if r.returncode:
         raise RuntimeError("ffmpeg failed: " + r.stderr[-1500:])
     return r
@@ -73,6 +78,22 @@ def loudness(path, dur):
         vals = []
     n = int(dur) + 1
     return (vals + [-90.0] * n)[:n]
+
+
+def visible(path, dur, samples=6):
+    """Share of sampled frames that actually show a picture (dispatch audio and some exports are a black screen)."""
+    lit = 0
+    for k in range(samples):
+        t = dur * (k + 0.5) / samples
+        try:
+            r = ff("-ss", round(t, 2), "-i", path, "-frames:v", "1", "-vf", "scale=64:36,format=gray",
+                   "-f", "rawvideo", "-", quiet=True)
+        except Exception:
+            continue
+        data = r.stdout.encode("latin-1", "ignore") if isinstance(r.stdout, str) else r.stdout
+        if data and sum(data) / len(data) > 18:
+            lit += 1
+    return lit / samples
 
 
 # ---------------- transcripts (Groq Whisper, free tier) ----------------

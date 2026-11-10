@@ -8,7 +8,7 @@ from pathlib import Path
 import media
 
 ANALYSIS = ".tft_analysis.json"
-PICKS = ".tft_picks.json"
+PICKS = ".tft_picks_v2.json"
 
 
 # ---------------- analysis (cached per footage folder) ----------------
@@ -36,7 +36,10 @@ def analyse(folder, groq_key, log=print):
     for p in vids:
         key = str(p.relative_to(folder))
         if key in known and known[key].get("size") == p.stat().st_size:
-            files.append(known[key])
+            f = known[key]
+            if "visible" not in f:
+                f["visible"] = media.visible(p, f["duration"])
+            files.append(f)
             continue
         info = media.probe(p)
         if not info["video"] or info["duration"] < 3:
@@ -44,12 +47,20 @@ def analyse(folder, groq_key, log=print):
         log(f"analysing {key} ({info['duration']:.0f}s)")
         info.update(path=key, size=p.stat().st_size,
                     rms=media.loudness(p, info["duration"]) if info["audio"] else [-90.0] * (int(info["duration"]) + 1),
-                    transcript=media.transcribe(p, folder / ".tft_work", groq_key) if info["audio"] else [])
+                    transcript=media.transcribe(p, folder / ".tft_work", groq_key) if info["audio"] else [],
+                    visible=media.visible(p, info["duration"]))
         files.append(info)
         media.save_json(folder / ANALYSIS, {"files": files + [f for f in cache["files"] if f["path"] not in {x["path"] for x in files}]})
     media.save_json(folder / ANALYSIS, {"files": files})
     if not files:
         raise RuntimeError(f"No usable video files in {folder}")
+    # Black-screen files (dispatch audio, blank exports) can't carry a bodycam segment
+    seen = [f for f in files if f.get("visible", 1) >= 0.5]
+    if seen:
+        dropped = len(files) - len(seen)
+        if dropped:
+            log(f"skipping {dropped} file(s) with no picture")
+        files = seen
     return files
 
 
@@ -171,7 +182,9 @@ def pick_reel(files, plan, cache):
     except Exception:
         pass
     if not pick:
-        pick = best_windows(files, 27, 1)[0]
+        long_enough = [f for f in files if f["duration"] >= 30] or files
+        pick = best_windows(long_enough, 27, 1)[0]
+        pick["file"] = files.index(long_enough[pick["file"]])
     f = files[pick["file"]]
     s = action_start(f["rms"], pick["start"], pick["end"])
     pick.update(start=float(s), end=float(min(f["duration"], s + (pick["end"] - pick["start"]))))
@@ -228,6 +241,9 @@ def pick_episode(files, plan, cache):
                     '"clips":[{"file":0,"start":0,"end":120,"label":"Body Cam Officer 1"}]}')
         clips = [c for c in (clamp(files, x, 15, 360) for x in j.get("clips", [])) if c]
         cold = clamp(files, j.get("cold_open") or {}, 5, 12)
+        total = sum(f["duration"] for f in files)
+        if sum(c["end"] - c["start"] for c in clips) < min(360, total * 0.4):
+            clips = []                      # AI cut was far too thin for the footage we have — use the fallback
         if clips:
             result = {"cold_open": cold or best_windows(files, 9, 1)[0], "clips": clips}
     except Exception:
