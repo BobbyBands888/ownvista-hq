@@ -145,7 +145,7 @@ def shared_footage(db):
     return made
 
 def main(db):
-    s = shared_footage(db)
+    shares = shared_footage(db)
     reqs = db.select("records_requests", {"status": f"in.({','.join(OPEN)})", "gmail_thread_id": "not.is.null",
                                           "order": "last_activity_at.asc", "limit": 40})
     changed = {}
@@ -158,5 +158,5 @@ def main(db):
             db.alert("tracker", f"could not read thread for '{r['subject'][:60]}': {e}", "warn")
     f = followups(db)
     p = portal_mail(db)
-    return (f"footage shares picked up {s}; checked {len(reqs)} open requests, updates {json.dumps(changed)}, "
+    return (f"footage shares picked up {shares}; checked {len(reqs)} open requests, updates {json.dumps(changed)}, "
             f"follow-ups sent {f}, untracked portal emails {p}")
