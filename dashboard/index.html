@@ -108,9 +108,12 @@ async function load(){
     .map(([v,l])=>`<div class="stat"><div class="v">${Number(v)?Number(v).toLocaleString():v}</div><div class="l">${l}</div></div>`).join("");
 
   // queue
+  window._content=content.data||[];
   $("queue").innerHTML=(content.data||[]).map(c=>{
     const btns=c.compliance_status==="pass"&&c.approval_status==="pending"
       ?`<button class="ok" data-approve="${c.id}">Approve</button><button class="no" data-reject="${c.id}">Reject</button>`
+      :c.approval_status==="rejected"&&c.status==="rendered"
+      ?`<button data-recut="${c.id}">Re-cut</button>`
       :c.compliance_status==="fail"&&/minors not confirmed/.test(c.compliance_notes||"")
       ?`<button data-nominors="${c.lead_id}">Confirm no minors</button>`:"";
     return `<div class="row"><span class="tag">${c.kind}${c.part?" "+c.part:""}</span><div class="main"><div class="t">${esc(c.title||c.case_name)}</div>
@@ -142,6 +145,12 @@ document.addEventListener("click", async e=>{
   if(d.reject){ const why=prompt("Why reject it? (the agents learn from this)","");
                 if(why===null) return;
                 await sb.from("content").update({approval_status:"rejected",publish_note:"Rejected: "+(why.trim()||"no reason given")}).eq("id",d.reject); }
+  if(d.recut){ const row=(window._content||[]).find(c=>c.id===d.recut)||{};
+                const was=(row.publish_note||"").replace(/^Rejected:\s*/,"");
+                const why=prompt("What should the re-cut fix? (it picks new moments using what's on screen)",was);
+                if(why===null) return;
+                await sb.from("content").update({status:"scripted",approval_status:"approved",
+                  publish_note:"Re-cut: "+(why.trim()||was||"pick better moments")}).eq("id",d.recut); }
   if(d.resolve) await sb.from("alerts").update({resolved:true}).eq("id",d.resolve);
   if(d.nominors){ await sb.from("leads").update({involves_minor:false}).eq("id",d.nominors);
                   await sb.from("content").update({compliance_status:"pending"}).eq("lead_id",d.nominors); }

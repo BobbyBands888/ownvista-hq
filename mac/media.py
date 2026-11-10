@@ -31,11 +31,11 @@ def ffmpeg_bin():
 
 FF = None
 
-def ff(*args, quiet=True):
+def ff(*args, quiet=True, raw=False):
     global FF
     FF = FF or ffmpeg_bin()
     cmd = [FF, "-y", "-hide_banner"] + (["-v", "error"] if quiet else []) + [str(a) for a in args]
-    raw = "rawvideo" in args
+    raw = raw or "rawvideo" in args
     r = subprocess.run(cmd, capture_output=True, text=not raw)
     if raw:
         if r.returncode:
@@ -94,6 +94,40 @@ def visible(path, dur, samples=6):
         if data and sum(data) / len(data) > 18:
             lit += 1
     return lit / samples
+
+
+def frame(path, t, w=416, h=234):
+    """One frame at t seconds as a PIL image (None if it can't be read)."""
+    import io
+    try:
+        r = ff("-ss", round(max(0, t), 2), "-i", path, "-frames:v", "1",
+               "-vf", f"scale={w}:{h}:force_original_aspect_ratio=decrease,pad={w}:{h}:(ow-iw)/2:(oh-ih)/2",
+               "-f", "image2pipe", "-c:v", "mjpeg", "-", quiet=True, raw=True)
+        return Image.open(io.BytesIO(r.stdout)).convert("RGB")
+    except Exception:
+        return None
+
+
+def contact_sheet(path, times, cols=3):
+    """A grid of frames with big numbered labels (1..n) burned in, as JPEG bytes — one vision call reads n frames."""
+    import io
+    from PIL import ImageDraw
+    w, h = 416, 234
+    rows = (len(times) + cols - 1) // cols
+    sheet = Image.new("RGB", (cols * w, rows * h), (0, 0, 0))
+    d = ImageDraw.Draw(sheet)
+    f = font("black", 34)
+    for k, t in enumerate(times):
+        im = frame(path, t, w, h)
+        x, y = (k % cols) * w, (k // cols) * h
+        if im:
+            sheet.paste(im, (x, y))
+        d.rectangle([x, y, x + 58, y + 46], fill=(230, 40, 50))
+        d.text((x + 12, y + 4), str(k + 1), font=f, fill=WHITE)
+        d.rectangle([x, y, x + w - 1, y + h - 1], outline=(255, 255, 255), width=2)
+    buf = io.BytesIO()
+    sheet.save(buf, "JPEG", quality=72)
+    return buf.getvalue()
 
 
 # ---------------- transcripts (Groq Whisper, free tier) ----------------
