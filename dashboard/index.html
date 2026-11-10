@@ -133,13 +133,15 @@ async function load(){
   const paused=S.posting_paused===true;
   $("controls").innerHTML=`<button data-set="posting_paused" data-val="${!paused}" class="${paused?"ok":"no"}">${paused?"Resume posting":"Pause all posting"}</button>
     <button data-set="approval_required_until" data-val="2000-01-01">Switch to full auto (no approvals)</button>
-    <span class="m" style="align-self:center">Approvals required until ${esc(S.approval_required_until)} · outreach cap ${esc(S.outreach_daily_cap)}/day</span>`;
+    <span class="m" style="align-self:center">${String(S.approval_required_until)>"2090"?`Approvals on · each format auto-posts after ${esc(S.auto_post_after_approvals??10)} approvals in a row`:`Approvals required until ${esc(S.approval_required_until)}`} · outreach cap ${esc(S.outreach_daily_cap)}/day</span>`;
 }
 
 document.addEventListener("click", async e=>{
   const d=e.target.dataset; if(!Object.keys(d).length) return;
   if(d.approve) await sb.from("content").update({approval_status:"approved"}).eq("id",d.approve);
-  if(d.reject) await sb.from("content").update({approval_status:"rejected"}).eq("id",d.reject);
+  if(d.reject){ const why=prompt("Why reject it? (the agents learn from this)","");
+                if(why===null) return;
+                await sb.from("content").update({approval_status:"rejected",publish_note:"Rejected: "+(why.trim()||"no reason given")}).eq("id",d.reject); }
   if(d.resolve) await sb.from("alerts").update({resolved:true}).eq("id",d.resolve);
   if(d.nominors){ await sb.from("leads").update({involves_minor:false}).eq("id",d.nominors);
                   await sb.from("content").update({compliance_status:"pending"}).eq("lead_id",d.nominors); }

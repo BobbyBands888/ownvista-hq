@@ -33,6 +33,15 @@ def main(db):
     items = db.select("content", {"compliance_status": "eq.pending", "order": "created_at.asc", "limit": 25})
     until = db.setting("approval_required_until", "2026-11-23")
     need_approval = date.today().isoformat() < str(until)
+    # Earned autonomy: a format (reel / short / episode) posts on its own once Bobby's last N decisions on
+    # that format were all approvals. One reject puts it back on review until it earns its way out again.
+    streak_needed = int(db.setting("auto_post_after_approvals", 10))
+    earned = {}
+    for kind in ("reel", "short", "episode"):
+        recent = db.select("content", {"select": "approval_status", "kind": f"eq.{kind}",
+                                       "approval_status": "in.(approved,rejected)",
+                                       "order": "created_at.desc", "limit": streak_needed})
+        earned[kind] = len(recent) >= streak_needed and all(r["approval_status"] == "approved" for r in recent)
     passed = failed = 0
     leads_cache = {}
     for it in items:
@@ -64,8 +73,11 @@ def main(db):
         else:
             db.update("content", {"id": f"eq.{it['id']}"}, {
                 "compliance_status": "pass", "compliance_notes": notes,
-                "approval_status": "pending" if need_approval else "not_required"})
+                "approval_status": "pending" if need_approval and not earned.get(it["kind"]) else "not_required"})
             passed += 1
     if failed:
         db.alert("compliance", f"{failed} item(s) blocked — see Content queue for reasons", "info")
-    return f"reviewed {len(items)}: {passed} passed, {failed} blocked; approval {'required until ' + str(until) if need_approval else 'off (full auto)'}"
+    auto = [k for k, v in earned.items() if v]
+    return (f"reviewed {len(items)}: {passed} passed, {failed} blocked; approval "
+            f"{'required until ' + str(until) if need_approval else 'off (full auto)'}"
+            f"{'; auto-posting earned: ' + ', '.join(auto) if auto and need_approval else ''}")

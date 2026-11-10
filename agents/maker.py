@@ -20,11 +20,13 @@ FORMAT = """Ten-Four Tapes format:
   case name, caption tags the full YouTube episode.
 - Titles: specific and dramatic but accurate. Never show the death itself, gore or a lingering body; blur bystanders as needed."""
 
-def plan(lead, playbook):
+def plan(lead, playbook, rejects=()):
     return llm.ask(
         "You are the head of production for Ten-Four Tapes. Write production plans that follow the format exactly "
         "and apply the playbook. Accuracy matters: only state facts present in the lead.\n" + RULES + "\n" + FORMAT,
         "Playbook (what works right now):\n" + json.dumps(playbook) +
+        ("\n\nBobby REJECTED these recently — don't repeat what he didn't like:\n" + json.dumps(list(rejects))
+         if rejects else "") +
         "\n\nLead:\n" + json.dumps({k: lead.get(k) for k in ("title", "agency_name", "state", "incident_date",
                                                               "summary", "category", "source_type")}) +
         """
@@ -55,11 +57,14 @@ def main(db):
     if len(leads) < 3 and federal:
         leads.append(federal[0])
     playbook = [p["insight"] for p in db.select("playbook", {"active": "is.true", "order": "created_at.desc", "limit": 20})]
+    rejects = [f"{r['kind']}: {r.get('title')} — {(r.get('publish_note') or '').replace('Rejected: ', '')}"
+               for r in db.select("content", {"select": "kind,title,publish_note", "approval_status": "eq.rejected",
+                                              "order": "created_at.desc", "limit": 15})]
     made = 0
     for lead in leads:
         # clear any half-made plan from a failed earlier run of this lead (never touches rendered/posted items)
         db.delete("content", {"lead_id": f"eq.{lead['id']}", "status": "eq.scripted"})
-        p = plan(lead, playbook)
+        p = plan(lead, playbook, rejects)
         ep = p.get("episode", {})
         case = p.get("case_name") or lead["title"][:30]
         credit = p.get("credit") or f"Footage: {lead.get('agency_name')}"
