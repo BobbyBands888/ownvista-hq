@@ -95,7 +95,7 @@ def see(prompt, jpeg, max_tokens=1500):
         for model in models:
             if model in _dead_vision:
                 continue
-            for attempt in range(3):
+            for attempt in range(5):
                 body = {"model": model, "max_tokens": max_tokens, "temperature": 0.1,
                         "messages": [{"role": "user", "content": [
                             {"type": "text", "text": prompt + "\nRespond with ONLY a JSON object."},
@@ -110,7 +110,13 @@ def see(prompt, jpeg, max_tokens=1500):
                         errs.append(f"{model}: daily cap")
                         _dead_vision.add(model)
                         break
-                    time.sleep(min(40, 10 * (attempt + 1)))
+                    # per-minute token cap (each image is ~2K tokens): wait as long as Groq asks
+                    wait = r.headers.get("retry-after")
+                    m = re.search(r"try again in ([\d.]+)(m?s)", r.text)
+                    secs = float(wait) if wait and wait.replace(".", "").isdigit() else \
+                        (float(m[1]) / (1000 if m and m[2] == "ms" else 1) if m else 15 * (attempt + 1))
+                    errs.append(f"{model}: 429 wait {secs:.0f}s")
+                    time.sleep(min(70, secs + 1))
                     continue
                 if r.status_code >= 300:
                     errs.append(f"{model}: {r.status_code} {r.text[:120]}")

@@ -265,8 +265,10 @@ def render(db):
         out = OUT / _file_name(it)
         cmd = RENDER_CMD.format(plan=shlex.quote(str(plan_path)), footage=shlex.quote(str(src)), out=shlex.quote(str(out)))
         res = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=3600)
+        lines = (res.stdout + res.stderr).strip().splitlines()
+        keep = [l for l in lines[:-8] if l.lstrip("[0-9:] ").startswith(("vision", "writer"))][-30:]
         print(f"--- {it['case_name']} {it['kind']}{it.get('part') or ''}: exit {res.returncode}\n"
-              + "\n".join((res.stdout + res.stderr).strip().splitlines()[-8:]), flush=True)
+              + "\n".join(keep + lines[-8:]), flush=True)
         (HOME / "logs").mkdir(exist_ok=True)
         (HOME / "logs" / f"render_{str(it['id'])[:8]}.log").write_text(res.stdout[-20000:] + "\n" + res.stderr[-20000:])
         if res.returncode == 0 and out.exists():

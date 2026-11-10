@@ -139,6 +139,8 @@ def write(job, log=print):
     for k, v in w.items():
         if k == "check_ins" and isinstance(v, list):
             job.sc[k] = v                  # even empty: the planner's check-ins don't match the new cut
+        elif k in ("hook_text", "on_screen_text", "cold_open_hook") and v == "":
+            job.sc.pop(k, None)            # the check found nothing true to say: fall back to the case name
         elif k != "problems" and v not in (None, [], ""):
             job.sc[k] = v
         elif k in ("what_happened_next",) and v == "":

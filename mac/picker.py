@@ -73,6 +73,7 @@ def analyse(folder, groq_key, log=print):
 
 # ---------------- vision: what is actually on screen ----------------
 SHEET = 9                                            # frames per vision call (3x3 grid)
+VISION_GAP = float(os.environ.get("TFT_VISION_GAP", "4"))     # seconds between vision calls
 MAX_SHEETS = int(os.environ.get("TFT_VISION_SHEETS", "70"))   # per case, keeps us inside the free tier
 LOOK_PROMPT = """This grid shows {n} numbered frames (red labels), in time order, from police body-camera / dash-camera footage.
 For EACH numbered frame judge ONLY what is visible in the picture (there is no audio):
@@ -103,10 +104,12 @@ def look(folder, files, log=print):
             chunk = times[k:k + SHEET]
             if all(t in got for t in chunk):
                 continue
-            if fails >= 3:                      # vision is down this run — stop burning time, retry next run
+            if fails >= 5:                      # vision is down this run — stop burning time, retry next run
                 ok = False
                 break
             try:
+                import time
+                time.sleep(VISION_GAP)          # stay under the free tier's tokens-per-minute cap
                 img = media.contact_sheet(Path(folder) / f["path"], chunk)
                 j = llm.see(LOOK_PROMPT.format(n=len(chunk)), img)
                 for fr in j.get("frames", []):
@@ -120,7 +123,9 @@ def look(folder, files, log=print):
             except Exception as e:
                 fails += 1
                 ok = False
-                log(f"vision: {str(e)[:160]}")
+                log(f"vision error: {str(e)[:300]}")
+                import time
+                time.sleep(20 * fails)          # back off; free-tier limits are per minute
         f["vision"] = sorted(got.values(), key=lambda v: v["t"])
         f["vision_step"] = step
         f["vision_ok"] = ok and len(f["vision"]) >= len(times) * 0.8
