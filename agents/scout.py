@@ -73,7 +73,7 @@ def from_youtube():
             if not AGENCY_RX.search(sn["channelTitle"]):
                 continue
             FOUND_CHANNELS[sn["channelId"]] = sn["channelTitle"]
-            leads.append({"title": sn["title"], "agency_name": sn["channelTitle"],
+            leads.append({"title": sn["title"], "agency_name": sn["channelTitle"], "_cid": sn["channelId"],
                           "summary": sn.get("description", "")[:600],
                           "source_url": f"https://www.youtube.com/watch?v={it['id']['videoId']}",
                           "source_type": "agency_release"})
@@ -173,11 +173,52 @@ def _watchlist(db):
         if cid not in chans:
             chans[cid] = title
             changed = True
+    for cid, v in list(chans.items()):
+        if not cid.startswith("_") and isinstance(v, str):
+            chans[cid] = {"t": v}
+    changed |= _classify(chans)
     chans["_handles_tried"] = sorted(resolved)
     if changed:
         db.insert("settings", {"key": "scout_channels", "value": chans, "updated_at": _now().isoformat()},
                   upsert=True, on_conflict="key")
-    return {k: v for k, v in chans.items() if not k.startswith("_")}
+    return {k: v for k, v in chans.items() if not k.startswith("_") and v.get("official")}
+
+def _classify(chans):
+    """Official agency channel or a re-uploader? Re-uploads ('Police Activity'-style channels) break the channel rule."""
+    todo = [k for k, v in chans.items() if not k.startswith("_") and "official" not in v]
+    for i in range(0, len(todo), 40):
+        ids = todo[i:i + 40]
+        info = {c["id"]: c["snippet"] for c in yt_get("channels", {"part": "snippet", "id": ",".join(ids)}).get("items", [])}
+        res = llm.ask(
+            "Decide which YouTube channels are run by a U.S. government law-enforcement or prosecutor agency itself "
+            "(a sheriff's office, police department, state patrol, district/state attorney, federal agency). Channels "
+            "that collect or re-upload other agencies' footage, news outlets, unions, foundations, fan pages and "
+            "commentary channels are NOT official, even with 'police' in the name. When unsure, say false.",
+            json.dumps([{"id": c, "title": chans[c]["t"], "handle": (info.get(c) or {}).get("customUrl"),
+                         "about": ((info.get(c) or {}).get("description") or "")[:300]} for c in ids]) +
+            '\n\nReturn JSON {"channels":[{"id":"...","official":true|false}]}', max_tokens=1500, temperature=0)
+        got = {x.get("id"): bool(x.get("official")) for x in res.get("channels", [])}
+        for c in ids:
+            chans[c]["official"] = got.get(c, False) if c in info else False
+    return bool(todo)
+
+def drop_reuploads(db, chans_all):
+    """Open leads that came from a non-agency channel get skipped (we only request what the agency itself released)."""
+    rows = db.select("leads", {"select": "id,source_url", "source_type": "eq.agency_release",
+                               "status": "in.(new,queued_request)", "source_url": "like.*youtube.com/watch*", "limit": 300})
+    vids = {re.search(r"v=([\w-]+)", r["source_url"])[1]: r["id"] for r in rows if re.search(r"v=([\w-]+)", r["source_url"])}
+    ids, dropped = list(vids), 0
+    for i in range(0, len(ids), 50):
+        for v in yt_get("videos", {"part": "snippet", "id": ",".join(ids[i:i + 50])}).get("items", []):
+            cid = v["snippet"]["channelId"]
+            if cid not in chans_all:
+                chans_all[cid] = {"t": v["snippet"]["channelTitle"]}
+                _classify({cid: chans_all[cid]})
+            if not chans_all[cid].get("official"):
+                db.update("leads", {"id": f"eq.{vids[v['id']]}"},
+                          {"status": "skipped", "notes": f"re-upload channel ({v['snippet']['channelTitle']}), not the agency"})
+                dropped += 1
+    return dropped
 
 def from_watchlist(db):
     forced = len(sys.argv) > 1 and sys.argv[1] == "scout"       # a manual "scout" run always checks the watchlist
@@ -202,11 +243,11 @@ def from_watchlist(db):
                 vid = sn.get("resourceId", {}).get("videoId")
                 if not vid or not FOOTAGE_RX.search(sn["title"] + " " + sn.get("description", "")[:500]):
                     continue
-                leads.append({"title": sn["title"][:300], "agency_name": chans.get(c["id"]) or sn.get("channelTitle"),
+                leads.append({"title": sn["title"][:300], "agency_name": chans[c["id"]]["t"], "_cid": c["id"],
                               "summary": sn.get("description", "")[:600], "_desc": sn.get("description", ""),
                               "source_url": f"https://www.youtube.com/watch?v={vid}",
                               "source_type": "agency_release"})
-    STATS["channels"] = len(chans)
+    STATS["channels"] = len(chans)        # official channels only
     db.insert("settings", {"key": "scout_watch_last", "value": _now().isoformat(), "updated_at": _now().isoformat()},
               upsert=True, on_conflict="key")
     return leads
@@ -325,7 +366,7 @@ def take_direct(rows):
 
 def main(db):
     raw, errors = [], []
-    for name, fn in (("watchlist", lambda: from_watchlist(db)), ("youtube", from_youtube),
+    for name, fn in (("youtube", from_youtube), ("watchlist", lambda: from_watchlist(db)),
                      ("dvids", from_dvids), ("news", from_news)):
         try:
             got = fn()
@@ -335,11 +376,19 @@ def main(db):
         except Exception as e:
             errors.append(f"{name}: {e}")
             db.alert("scout", f"source {name} failed: {e}", "warn")
-    if FOUND_CHANNELS:                  # search-pass channels join the watchlist for tomorrow
-        try:
-            _watchlist(db)
-        except Exception as e:
-            errors.append(f"watchlist save: {e}")
+    try:
+        official = set(_watchlist(db))          # also classifies channels the search pass just found
+        before = len(raw)
+        raw = [l for l in raw if not l.get("_cid") or l["_cid"] in official]
+        STATS["reuploads"] = before - len(raw)
+        if STATS.get("channels"):              # once a day, with the watchlist pass
+            chans_all = {k: v for k, v in (db.setting("scout_channels", {}) or {}).items()}
+            STATS["dropped"] = drop_reuploads(db, chans_all)
+            db.insert("settings", {"key": "scout_channels", "value": chans_all, "updated_at": _now().isoformat()},
+                      upsert=True, on_conflict="key")
+    except Exception as e:
+        errors.append(f"channel check: {e}")
+        raw = [l for l in raw if not l.get("_cid")]      # can't verify the channel -> don't use YouTube leads this run
     # de-dupe against what we already have
     urls = [l["source_url"] for l in raw if l.get("source_url")]
     seen = set()
@@ -365,6 +414,7 @@ def main(db):
     kept_src = Counter(r["_src"] for r in rows if r["status"] != "skipped")
     for r in rows:
         r.pop("_src", None)
+        r.pop("_cid", None)
     direct = take_direct(rows)
     if rows:
         db.insert("leads", rows, upsert=True, on_conflict="source_url")
@@ -389,6 +439,7 @@ def main(db):
             known.add(a.lower())
     kept = sum(1 for r in rows if r["status"] in ("new", "obtained"))
     top = sorted((r for r in rows if r["status"] in ("new", "obtained")), key=lambda r: -r["action_score"])[:3]
-    return ((f"watching {STATS['channels']} agency channels; " if STATS.get("channels") else "") + f"{len(raw)} found ({', '.join(f'{k} {v}/{kept_src.get(k, 0)} kept' for k, v in src.items())}), {len(fresh)} new, {kept} kept, {len(direct)} agency-hosted (no request)"
+    return ((f"watching {STATS['channels']} agency channels; " if STATS.get("channels") else "") + (f"{STATS['reuploads']} re-upload items ignored, " if STATS.get("reuploads") else "")
+            + (f"{STATS['dropped']} old re-upload leads skipped; " if STATS.get("dropped") else "") + f"{len(raw)} found ({', '.join(f'{k} {v}/{kept_src.get(k, 0)} kept' for k, v in src.items())}), {len(fresh)} new, {kept} kept, {len(direct)} agency-hosted (no request)"
             + (f"; top: " + "; ".join(f"{r['action_score']} {r['title'][:50]}" for r in top) if top else "")
             + (f"; errors: {errors}" if errors else ""))
