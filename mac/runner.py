@@ -371,6 +371,27 @@ def set_thumbnail(db, it, vid):
     except Exception as e:
         db.alert("publisher", f"Thumbnail not set on '{it['title']}': {str(e)[:200]}", "warn")
 
+YT_UPLOADS_PER_DAY = 6     # YouTube API: 10,000 units/day, an upload costs 1,600
+
+def reel_to_youtube(db, it, cap, ep_yt):
+    """Cross-post a standalone Reel as a YouTube Short, inside the API's daily upload budget."""
+    since = (_now() - timedelta(hours=24)).isoformat()
+    used = len(db.select("content", {"youtube_id": "not.is.null", "posted_at": f"gte.{since}", "select": "id"}))
+    if used >= YT_UPLOADS_PER_DAY:
+        return None
+    sc = it.get("script") if isinstance(it.get("script"), dict) else {}
+    first = (cap.splitlines() or [""])[0]
+    title = (sc.get("hook_text") or first or it["case_name"]).strip()
+    title = (title[:88].rstrip() + " #shorts")[:100]
+    lines = [l for l in cap.splitlines() if "full episode" not in l.lower()]
+    desc = "\n".join(([f"Full episode: https://youtu.be/{ep_yt}"] if ep_yt else []) + lines)
+    try:
+        vid, _ = youtube_upload(it["media_path"], title, desc, it.get("tags"), short=True)
+        return vid
+    except Exception as e:
+        db.alert("publisher", f"Reel posted to Facebook but not YouTube ('{it['title']}'): {str(e)[:200]}", "info")
+        return None
+
 def facebook_reel(path, caption):
     tok = config.FB_PAGE_TOKEN
     start = requests.post(FB + f"{config.FB_PAGE_ID}/video_reels",
@@ -469,6 +490,10 @@ def publish(db):
                     # no episode will ever exist for this case — never promise one
                     cap = "\n".join(l for l in cap.splitlines() if "full episode" not in l.lower())
                 upd["facebook_id"] = facebook_reel(it["media_path"], cap)
+                # same standalone moment also goes up as a YouTube Short (a failure here never undoes the FB post)
+                yt = reel_to_youtube(db, it, cap, ep[0].get("youtube_id") if ep else None)
+                if yt:
+                    upd["youtube_id"] = yt
             db.update("content", {"id": f"eq.{it['id']}"}, upd)
             room[k] -= 1
             out.append(f"{k}: {it['title']}")
