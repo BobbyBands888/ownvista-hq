@@ -192,11 +192,21 @@ def see(prompt, jpeg, max_tokens=1500, check=None):
     if acct and tok and "cf" not in _dead_vision:
         cf = f"https://api.cloudflare.com/client/v4/accounts/{acct}/ai/run/@cf/meta/llama-3.2-11b-vision-instruct"
         h = {"Authorization": f"Bearer {tok}"}
-        for attempt in range(2):
+        bodies = [  # current Workers AI shape (image inside the message), then the older top-level "image" shape
+            {"messages": [{"role": "user", "content": [
+                {"type": "text", "text": prompt + "\nRespond with ONLY a JSON object."},
+                {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{b64}"}}]}],
+             "max_tokens": max_tokens, "temperature": 0.1},
+            {"messages": [{"role": "user", "content": prompt + "\nRespond with ONLY a JSON object."}],
+             "image": f"data:image/jpeg;base64,{b64}", "max_tokens": max_tokens, "temperature": 0.1}]
+        for attempt in range(3):
             try:
-                r = requests.post(cf, headers=h, timeout=120, json={
-                    "messages": [{"role": "user", "content": prompt + "\nRespond with ONLY a JSON object."}],
-                    "image": f"data:image/jpeg;base64,{b64}", "max_tokens": max_tokens, "temperature": 0.1})
+                r = requests.post(cf, headers=h, timeout=120, json=bodies[min(attempt, 1)])
+                if r.status_code == 400 and "no user-supplied" in r.text and attempt == 0:
+                    continue                                         # wrong shape for this model version: try the other
+                if attempt > 0 and r.status_code == 400 and "no user-supplied" in r.text:
+                    errs.append(f"cf vision: {r.status_code} {r.text[:120]}")
+                    break
                 if r.status_code >= 300 and "agree" in r.text.lower() and attempt == 0:
                     requests.post(cf, headers=h, json={"prompt": "agree"}, timeout=60)   # one-time Meta licence accept
                     continue
