@@ -4,6 +4,7 @@ Groq LLM when available and a loudness/vision fallback otherwise, so a render ne
 Every pick is checked against what is ON SCREEN: a window that only shows a cruiser's interior, a dashboard
 or a black screen is swapped out even if the audio (sirens, shouting) is loud."""
 import os
+import re
 import statistics
 import zipfile
 from pathlib import Path
@@ -64,7 +65,7 @@ def analyse(folder, groq_key, log=print):
         if dropped:
             log(f"skipping {dropped} file(s) with no picture")
         files = seen
-    if any(not f.get("vision_ok") for f in files):
+    if any(not f.get("vision_ok") or f.get("vision_v") != VISION_V for f in files):
         look(folder, files, log)
         media.save_json(folder / ANALYSIS, {"files": files + [f for f in media.load_json(folder / ANALYSIS, {"files": []})["files"]
                                                          if f["path"] not in {x["path"] for x in files}]})
@@ -72,6 +73,7 @@ def analyse(folder, groq_key, log=print):
 
 
 # ---------------- vision: what is actually on screen ----------------
+VISION_V = 2                                         # bump when LOOK_PROMPT changes: cached frames get re-read
 SHEET = 9                                            # frames per vision call (3x3 grid)
 VISION_GAP = float(os.environ.get("TFT_VISION_GAP", "4"))     # seconds between vision calls
 MAX_SHEETS = int(os.environ.get("TFT_VISION_SHEETS", "70"))   # per case, keeps us inside the free tier
@@ -80,11 +82,15 @@ For EACH numbered frame judge ONLY what is visible in the picture (there is no a
 - view: "outside" (officer on foot outdoors), "road_ahead" (dash/windshield view of the road), "inside_car" (cruiser
   interior: dashboard, steering wheel, seats, laptop, officer driving with nothing happening outside), "indoor", "black"
   (blank, dark, covered or too blurry to see), "screen" (anything that is NOT live camera footage: title card, text
-  slate, disclaimer, document, map, satellite/aerial still, Google Street View, diagram, agency briefing graphic)
+  slate, disclaimer, viewer warning, document, map, satellite/aerial still, Google Street View, diagram, agency
+  briefing graphic, or a paragraph of text laid over dimmed / blurred footage)
 - action 0-3: 0 nothing happening / empty scene; 1 calm talking, walking, routine driving; 2 tense: confrontation,
   weapon drawn, someone fleeing, pursuit with the suspect vehicle visible ahead; 3 peak: struggle, tackle, arrest
   on the ground, crash, shots fired, foot chase with the suspect in view
-- child: true if a child appears; gore: true if blood, a badly injured person or a body is visible
+- child: true if a child appears
+- gore: true if blood, a badly injured person or a body is visible, AND true for any aftermath of force: a person
+  lying limp or motionless on the ground after shots / a struggle, someone being given CPR, first aid or checked
+  for a pulse, officers kneeling over a downed person. When unsure whether a person on the ground is hurt, say true
 - desc: what is visible, max 10 words
 Return {{"frames":[{{"n":1,"view":"outside","action":2,"child":false,"gore":false,"desc":"officer points gun at driver"}}]}}"""
 
@@ -130,6 +136,8 @@ def look(folder, files, log=print):
     step = max(5.0, total / (MAX_SHEETS * SHEET))
     fails = 0
     for f in files:
+        if f.get("vision_v") != VISION_V:      # older prompt missed slates over footage and aftermath: re-read
+            f["vision"], f["vision_ok"] = [], False
         if f.get("vision_ok") and f.get("vision_step", 99) <= step + 0.01:
             continue
         times = [round(t, 1) for t in frange(step / 2, f["duration"] - 0.5, step)] or [f["duration"] / 2]
@@ -162,6 +170,7 @@ def look(folder, files, log=print):
                 time.sleep(20 * fails)          # back off; free-tier limits are per minute
         f["vision"] = sorted(got.values(), key=lambda v: v["t"])
         f["vision_step"] = step
+        f["vision_v"] = VISION_V
         f["vision_ok"] = ok and len(f["vision"]) >= len(times) * 0.8
         log(f"vision {f['path']}: {len(f['vision'])}/{len(times)} frames read")
     return files
@@ -172,6 +181,25 @@ def frange(a, b, step):
     while t < b:
         yield t
         t += step
+
+
+# Words that only come after someone is down. From AFTERMATH_LEAD s before the first one to the end of that file is
+# treated like gore: vision samples every few seconds and can miss a body; the audio doesn't.
+AFTERMATH = re.compile(r"\bno pulse\b|check (?:the |his |her |for a )?pulse|\bcpr\b|compressions|not breathing|"
+                       r"recovery position|(?:he|she)(?:'s| is) (?:dead|gone|not responsive|unresponsive)|tourniquet|"
+                       r"chest seal|where(?:'s| is) he hit|stay with (?:me|us)", re.I)
+AFTERMATH_LEAD = 60
+
+
+def aftermath_from(f):
+    """Second from which this file shows the aftermath of force (by its audio), or None."""
+    hits = [s.get("start", 0) for s in f.get("transcript") or [] if AFTERMATH.search(s.get("text") or "")]
+    return max(0, int(min(hits)) - AFTERMATH_LEAD) if hits else None
+
+
+def hits_aftermath(f, s, e):
+    a = aftermath_from(f)
+    return a is not None and e > a
 
 
 _VA = {}
@@ -186,7 +214,8 @@ def vis(f):
         _VA[key] = None
         return None
     n = int(f["duration"]) + 1
-    act, dull, bad = [0.0] * n, [0.0] * n, [0.0] * n
+    act, dull, bad, screen = [0.0] * n, [0.0] * n, [0.0] * n, [0.0] * n
+    after = aftermath_from(f)
     j = 0
     for t in range(n):
         while j + 1 < len(fr) and abs(fr[j + 1]["t"] - t) <= abs(fr[j]["t"] - t):
@@ -195,8 +224,9 @@ def vis(f):
         act[t] = v["action"]
         dull[t] = 1.0 if v["view"] == "screen" or (v["action"] < 2 and (v["view"] in ("inside_car", "black")
                                                                          or v["action"] == 0)) else 0.0
-        bad[t] = 1.0 if v["child"] or v["gore"] else 0.0
-    out = {"act": act, "dull": dull, "bad": bad}
+        bad[t] = 1.0 if v["child"] or v["gore"] or (after is not None and t >= after) else 0.0
+        screen[t] = 1.0 if v["view"] == "screen" else 0.0
+    out = {"act": act, "dull": dull, "bad": bad, "screen": screen}
     _VA[key] = out
     return out
 
@@ -214,6 +244,8 @@ def on_screen(f, s, e):
 
 
 def looks_bad(f, s, e, min_action=1.0, max_dull=0.5):
+    if hits_aftermath(f, s, e):
+        return True
     q = on_screen(f, s, e)
     return bool(q) and (q[0] < min_action or q[1] > max_dull or q[2])
 
@@ -235,7 +267,7 @@ def scored_windows(f, length):
     anything showing a child or gore is excluded."""
     sc = window_scores(f["rms"], length)
     if not vis(f):
-        return sc
+        return [(s, v) for s, v in sc if not hits_aftermath(f, s, s + length)]
     out = []
     for s, v in sc:
         a, dull, bad = on_screen(f, s, s + length)
@@ -426,6 +458,7 @@ def pick_reel(files, plan, cache):
     if not pick:
         return None
     f = files[pick["file"]]
+    pick = trim_open(f, pick, 24)
     s = action_start(f["rms"], pick["start"], pick["end"], f)
     pick.update(start=float(s), end=float(min(f["duration"], s + (pick["end"] - pick["start"]))))
     if taken and not _clear(pick, taken):       # action_start nudged it into a sibling's window
@@ -449,13 +482,16 @@ def pick_shorts(files, plan, cache):
                     'on screen, not just sound. Return JSON {"parts":[{"part":1,"file":0,"start":0,"end":45}, ...]}')
         for p in j.get("parts", [])[:3]:
             c = clamp(files, p, 30, 55)
+            if c:
+                c = trim_open(files[c["file"]], c, 30)
             if c and not looks_bad(files[c["file"]], c["start"], c["end"]):
                 c["part"] = int(p.get("part", len(parts) + 1))
                 parts.append(c)
     except Exception:
         pass
     if len(parts) < 3:                          # top up only the missing parts from the vision/loudness ranking
-        extra = best_windows(files, 45, 3 - len(parts), used=[(p["file"], p["start"], p["end"]) for p in parts])
+        extra = [trim_open(files[x["file"]], x, 30)
+                 for x in best_windows(files, 45, 3 - len(parts), used=[(p["file"], p["start"], p["end"]) for p in parts])]
         parts += extra
         parts.sort(key=lambda p: (p["file"], p["start"]))
         for n, p in enumerate(parts, 1):
@@ -477,6 +513,8 @@ def recut_short(files, plan, cache, parts):
                     f"Windows already used (don't overlap): {used}\n"
                     'Pick ONE 35-55s window with visible action. Return JSON {"file":0,"start":0,"end":45}')
         c = clamp(files, j, 30, 55)
+        if c:
+            c = trim_open(files[c["file"]], c, 30)
         if c and not looks_bad(files[c["file"]], c["start"], c["end"]) and \
                 all(not (c["file"] == u[0] and c["start"] < u[2] and c["end"] > u[1]) for u in used):
             new = c
@@ -490,12 +528,34 @@ def recut_short(files, plan, cache, parts):
 
 
 LEAD_IN = 15        # seconds of build-up kept before the first tense moment
-DULL_GAP = 20       # a dead stretch this long (slates, maps, silent cruiser) is cut out
+DULL_GAP = 20       # a dead stretch this long (maps, silent cruiser) is cut out
+SLATE_GAP = 3       # text slates, warnings and maps are always dead footage: any run this long is cut out
+
+def trim_open(f, c, min_len):
+    """Shorts and Reels are one window: move the start past opening slates / dead frames, keeping the length
+    (the end slides later) as long as that doesn't run into gore or the end of the file."""
+    v = vis(f)
+    if not v:
+        return c
+    s, e = int(c["start"]), int(c["end"])
+    t = s
+    while t < e - min_len and t < len(v["dull"]) and (v["dull"][t] or v["screen"][t]) and not v["bad"][t]:
+        t += 1
+    if t == s:
+        return c
+    end = min(f["duration"], e + (t - s))
+    if any(v["bad"][int(e):int(min(end, len(v["bad"])))]):
+        end = e
+    return dict(c, start=float(t), end=float(end))
+
 
 def clean_clip(f, c):
     """Trim cruiser-interior / black stretches off a clip's ends and split it around any child/gore frames."""
     v = vis(f)
     if not v:
+        a = aftermath_from(f)
+        if a is not None and c["end"] > a:
+            return [dict(c, end=float(a))] if a - c["start"] >= 15 else []
         return [c]
     s, e = int(c["start"]), int(min(c["end"], len(v["act"])))
     while s < e - 15 and v["dull"][s] and not v["bad"][s]:
@@ -508,12 +568,23 @@ def clean_clip(f, c):
     if first is not None and first - s > LEAD_IN:
         s = first - LEAD_IN
     segs, cur = [], s
-    run = 0
+    run = slate = 0
     for t in range(s, e):
         if v["bad"][t]:
             if t - 3 - cur >= 15:
                 segs.append((cur, t - 3))
             cur = t + 4
+            run = slate = 0
+            continue
+        slate = slate + 1 if v["screen"][t] else 0
+        if slate == SLATE_GAP:                  # slates go no matter how short the rest of the dead stretch is
+            if t - SLATE_GAP + 1 - cur >= 15:
+                segs.append((cur, t - SLATE_GAP + 1))
+            cur = t + 1
+            run = 0
+            continue
+        elif slate > SLATE_GAP:
+            cur = t + 1
             run = 0
             continue
         run = run + 1 if v["dull"][t] else 0
