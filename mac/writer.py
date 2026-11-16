@@ -194,7 +194,11 @@ def write(job, log=print):
     if job.plan["kind"] == "episode" and not w.get("title") and not packaging.title_ok(
             job.plan.get("title"), (job.sc.get("analysis_tags") or {}).get("title_formula") or "Place + incident + bodycam",
             bool(cf.get("outcome") or job.sc.get("what_happened_next"))):
-        log("writer: plan title promises an outcome the case file doesn't have — needs a new title")
+        case = job.plan.get("case_name") or "Bodycam"
+        job.sc["title"] = f"{case}: Full Bodycam"[:60]
+        job.sc["title_formula"] = "Place + incident + bodycam"
+        w["title"] = job.sc["title"]
+        log(f"writer: plan title promised an outcome the case file doesn't have — using '{job.sc['title']}'")
     for p in w.get("problems") or []:
         log(f"writer fixed: {str(p)[:160]}")
     for k, v in w.items():

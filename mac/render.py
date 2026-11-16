@@ -522,6 +522,11 @@ def render(plan_path, footage, out):
         if (plan["kind"] == "episode" and total < 180) or (plan["kind"] == "short" and total < 40 * part):
             print(f"NOT ENOUGH FOOTAGE: {total:.0f}s of video for a {plan['kind']}{' part ' + str(part) if plan['kind'] == 'short' else ''}")
             sys.exit(3)
+        # Never cut blind: without vision HQ can't see slates, maps, gore or the body, and the fallback is the raw
+        # file (Las Cruces re-cut, Nov 16: 14 min of briefing + unblurred aftermath). Wait for vision instead.
+        if not job.files or not all(f.get("vision_ok") for f in job.files):
+            print("VISION NOT READY: frames couldn't be read this run; will retry next run")
+            sys.exit(4)
         if plan["kind"] == "reel" and not job.pick:
             # every 24s+ stretch with visible action is already in another Reel of this case
             print("NOT ENOUGH FOOTAGE: no fresh moment left for another standalone Reel of this case")

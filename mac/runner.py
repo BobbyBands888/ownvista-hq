@@ -447,6 +447,13 @@ def render(db):
             db.update("content", {"id": f"eq.{it['id']}"}, upd)
             fails.pop(str(it["id"]), None)
             done += 1
+        elif res.returncode == 4:
+            # vision down (free-tier cap / provider error): keep it queued, say so once per case per day
+            key = f"vision_wait:{it['lead_id']}:{_now():%Y-%m-%d}"
+            if not fails.get(key):
+                fails[key] = 1
+                db.alert("mac_runner", f"Waiting to render {it['case_name']}: the frame-reading AI is down or capped "
+                         "right now. It retries automatically every run; nothing renders blind.", "info")
         elif res.returncode == 3:
             db.update("content", {"id": f"eq.{it['id']}"}, {"status": "failed",
                       "publish_note": "Skipped: not enough footage for this format (avoids repeating the same clip)"})
