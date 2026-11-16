@@ -253,19 +253,17 @@ def build_episode(job, out):
 
     # 2. title card: 3 seconds max (packaging rule). Narrated so there's no silent stretch, but only with a line
     # that fits; a longer title_card line is read on the setup card instead.
+    # The card shows the case name only; a long title_card line is dropped, never moved onto the setup card
+    # (that made a 17s wall of text right after the hook on Las Cruces).
     tc = sc.get("title_card") or job.plan.get("title") or case
     tc_vo = job.vo(tc)
-    spill = None
     if tc_vo and media.wav_dur(tc_vo) > TITLE_CARD_MAX - 0.5:
-        spill = tc if tc != case else None
-        tc_vo = job.vo(case)
+        tc, tc_vo = case, job.vo(case)
         if media.wav_dur(tc_vo) > TITLE_CARD_MAX - 0.5:
             tc_vo = None
     segs.append(seg_card(png_card(bg, W, H, job.p("png"), kicker="Ten-Four Tapes", title=case,
-                                  body=tc if tc != case and not spill else None),
+                                  body=tc if tc != case else None),
                          job.p("mp4"), tc_vo, min_dur=2.5, pad=0.4, max_dur=TITLE_CARD_MAX))
-    if spill and sc.get("narration_setup") and spill.lower() not in sc["narration_setup"].lower():
-        sc["narration_setup"] = spill.rstrip(".") + ". " + sc["narration_setup"]
 
     # 3. short narrated setup
     if sc.get("narration_setup"):
@@ -407,23 +405,33 @@ def _thumb_text(job, n):
 def build_thumbnail(job, out_jpg, moment=None, text=None):
     """1280x720 JPEG under 2MB: punched-up action frame zoomed so the subject is big, dark fade behind 2-3 big
     stroked words (last word gold), red BODY CAM tag, channel mark."""
-    from PIL import ImageEnhance, ImageFilter
+    from PIL import ImageEnhance, ImageFilter, ImageStat
     i, t = moment or thumb_moments(job, 1)[0]
     path, _ = job.src(i)
     raw = job.p("png")
     zw, zh = int(THUMB_W * THUMB_ZOOM), int(THUMB_H * THUMB_ZOOM)
-    # zoom in, keep the frame's centre-right (the subject side; text sits on the left)
+    # zoom in on the centre of the frame (where the subject usually is)
     media.ff("-ss", round(max(0, t), 2), "-i", path, "-frames:v", "1", "-vf",
              f"scale={zw}:{zh}:force_original_aspect_ratio=increase,"
-             f"crop={THUMB_W}:{THUMB_H}:(iw-{THUMB_W})*0.62:(ih-{THUMB_H})*0.45", raw)
+             f"crop={THUMB_W}:{THUMB_H}:(iw-{THUMB_W})/2:(ih-{THUMB_H})*0.45", raw)
     im = Image.open(raw).convert("RGB")
+    from PIL import ImageOps
+    if sum(ImageStat.Stat(im.convert("L")).mean) < 70:      # night bodycam: lift it so the subject reads on a phone
+        im = ImageOps.autocontrast(im, cutoff=1)
+        im = ImageEnhance.Brightness(im).enhance(1.35)
     im = ImageEnhance.Contrast(im).enhance(1.3)
     im = ImageEnhance.Color(im).enhance(1.3)
     im = ImageEnhance.Sharpness(im).enhance(1.6)
+    # text goes on the emptier half so it never sits on the people (less edge detail = less going on)
+    edges = im.convert("L").filter(ImageFilter.FIND_EDGES)
+    busy_l = ImageStat.Stat(edges.crop((0, 0, THUMB_W // 2, THUMB_H))).mean[0]
+    busy_r = ImageStat.Stat(edges.crop((THUMB_W // 2, 0, THUMB_W, THUMB_H))).mean[0]
+    right = busy_r < busy_l * 0.9
     fade = Image.new("L", (THUMB_W, THUMB_H), 0)
     fd = ImageDraw.Draw(fade)
     for x in range(THUMB_W):
-        fd.line([(x, 0), (x, THUMB_H)], fill=int(200 * max(0.0, 1 - x / (THUMB_W * 0.5)) ** 1.4))
+        dx = (THUMB_W - 1 - x) if right else x
+        fd.line([(x, 0), (x, THUMB_H)], fill=int(200 * max(0.0, 1 - dx / (THUMB_W * 0.5)) ** 1.4))
     im = Image.composite(Image.new("RGB", im.size, (0, 0, 0)), im, fade)
     vig = Image.new("L", im.size, 0)
     ImageDraw.Draw(vig).ellipse([-200, -160, THUMB_W + 200, THUMB_H + 160], fill=255)
@@ -434,14 +442,16 @@ def build_thumbnail(job, out_jpg, moment=None, text=None):
     text = text if text is not None else _thumb_text(job, 0)
     words = text.split()
     if text:
-        maxw = int(THUMB_W * 0.46)                   # text stays on the left ~half; the subject owns the rest
+        maxw = int(THUMB_W * 0.40)                   # text stays on the left ~40%; the subject owns the rest
         f = media.fit_font(d, text, "black", 170, maxw, 2)
+        while f.size > 60 and any(d.textlength(l, font=f) > maxw for l in media.wrap(d, text, f, maxw)):
+            f = media.font("black", f.size - 6)          # a single long word must fit too
         lines = media.wrap(d, text, f, maxw)
         lh = int(f.size * 1.02)
         y = (THUMB_H - lh * len(lines)) // 2 + 20
         last = words[-1]
         for n, line in enumerate(lines):
-            x = 52
+            x = THUMB_W - 52 - d.textlength(line, font=f) if right else 52
             if n == len(lines) - 1 and len(words) > 1 and line.endswith(last):
                 head = line[: -len(last)]
                 d.text((x, y), head, font=f, fill=WHITE, stroke_width=10, stroke_fill=(0, 0, 0))

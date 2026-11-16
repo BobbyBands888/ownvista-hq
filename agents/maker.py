@@ -119,7 +119,8 @@ def analysis_tags(raw, lead):
 def fix_packaging(ep, lead, facts):
     """Title from one of the 5 formulas (one retry if the plan missed), 3 thumbnail texts."""
     f = packaging.formula_of(ep.get("title_formula") or (ep.get("analysis_tags") or {}).get("title_formula"))
-    if not packaging.title_ok(ep.get("title"), f):
+    has_outcome = bool((facts or {}).get("outcome") or (facts or {}).get("sentence"))
+    if not packaging.title_ok(ep.get("title"), f, has_outcome):
         try:
             j = llm.ask("You title police bodycam episodes for YouTube. Accuracy first: only facts in the lead.",
                         packaging.TITLE_RULES + "\n\n" + packaging.THUMB_RULES +
@@ -128,7 +129,7 @@ def fix_packaging(ep, lead, facts):
                         f"\nRejected title: {ep.get('title')!r}\n"
                         'Return JSON {"title":"","title_formula":"","thumbnail_texts":["","",""]}',
                         max_tokens=300, temperature=0.5)
-            if packaging.title_ok(j.get("title"), j.get("title_formula")):
+            if packaging.title_ok(j.get("title"), j.get("title_formula"), has_outcome):
                 ep["title"], f = j["title"].strip(), packaging.formula_of(j["title_formula"])
                 ep["thumbnail_texts"] = ep.get("thumbnail_texts") or j.get("thumbnail_texts")
         except Exception:

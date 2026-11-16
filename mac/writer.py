@@ -76,7 +76,9 @@ Return JSON {{"cold_open_hook":"","narration_setup":"","check_ins":[""],"labels"
     for k in ("cold_open_hook", "narration_setup", "what_happened_next", "comment_question"):
         if isinstance(j.get(k), str):
             out[k] = j[k].strip()
-    if packaging.title_ok(j.get("title"), j.get("title_formula")):
+    cf = job.plan.get("case_facts") or {}
+    has_outcome = bool(cf.get("outcome") or cf.get("sentence") or (sc.get("what_happened_next") or "").strip())
+    if packaging.title_ok(j.get("title"), j.get("title_formula"), has_outcome):
         out["title"] = j["title"].strip()
         out["title_formula"] = packaging.formula_of(j["title_formula"])
     tt = packaging.thumb_texts(j.get("thumbnail_texts"), out.get("title") or job.plan.get("title"))
@@ -157,7 +159,9 @@ def check(job, written):
              'support (rewrite them so they are supported, or "" if nothing fits). Also add "problems":["..."] '
              'listing what you changed.')
     fixed = {k: j[k] for k in written if k in j and type(j[k]) is type(written[k])}
-    if "title" in fixed and not packaging.title_ok(fixed["title"], fixed.get("title_formula") or written.get("title_formula")):
+    cf = job.plan.get("case_facts") or {}
+    has_outcome = bool(cf.get("outcome") or cf.get("sentence") or (written.get("what_happened_next") or "").strip())
+    if "title" in fixed and not packaging.title_ok(fixed["title"], fixed.get("title_formula") or written.get("title_formula"), has_outcome):
         fixed.pop("title")                  # the check broke the formula/length: keep the checked original
     if "thumbnail_texts" in fixed:
         fixed["thumbnail_texts"] = packaging.thumb_texts(fixed["thumbnail_texts"], fixed.get("title") or written.get("title")) \
@@ -180,6 +184,11 @@ def write(job, log=print):
         w = check(job, w)
     except Exception as e:
         log(f"writer check skipped: {str(e)[:160]}")
+    cf = job.plan.get("case_facts") or {}
+    if job.plan["kind"] == "episode" and not w.get("title") and not packaging.title_ok(
+            job.plan.get("title"), (job.sc.get("analysis_tags") or {}).get("title_formula") or "Place + incident + bodycam",
+            bool(cf.get("outcome") or job.sc.get("what_happened_next"))):
+        log("writer: plan title promises an outcome the case file doesn't have — needs a new title")
     for p in w.get("problems") or []:
         log(f"writer fixed: {str(p)[:160]}")
     for k, v in w.items():
