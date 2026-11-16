@@ -158,8 +158,16 @@ def ensure_footage(db, it):
             if files:
                 _fetch(files[-1]["src"], dest, f"dvids_{m[1]}.mp4")
     else:
+        from urllib.parse import urljoin, urlparse
         for r in db.select("records_requests", {"lead_id": f"eq.{it['lead_id']}", "status": "eq.fulfilled"}):
-            for url in r.get("download_links") or []:
+            links = r.get("download_links") or []
+            # some share emails (Evidence.com) give the download button as a site-relative link: rebuild it
+            # from the share's own host so it doesn't fail with "No scheme supplied"
+            hosts = [f"{u.scheme}://{u.netloc}" for u in map(urlparse, links) if u.scheme and "evidence.com" in u.netloc] \
+                or [f"{u.scheme}://{u.netloc}" for u in map(urlparse, links) if u.scheme]
+            links = [urljoin(hosts[0] + "/", l) if l.startswith("/") and hosts else l for l in links]
+            links = [l for l in links if not l.startswith("/")]
+            for url in links:
                 if re.search(r"\.(png|jpe?g|gif|svg|ico)(\?|$)", url, re.I):
                     continue
                 if any(p for p in dest.iterdir() if not p.name.startswith(".")):
@@ -240,6 +248,16 @@ def _notify(title, text):
         t = text.replace('"', "'")[:200]
         subprocess.run(["osascript", "-e", f'display notification "{t}" with title "{title}"'], capture_output=True)
 
+def _free_footage(folder):
+    """Delete a case's downloaded video files but keep the .tft_*.json transcripts/picks (they're cached)."""
+    try:
+        for f in Path(folder).rglob("*"):
+            if f.is_file() and not f.name.startswith(".tft_"):
+                f.unlink(missing_ok=True)
+    except Exception as e:
+        print(f"cleanup: {e}", flush=True)
+
+
 def render(db):
     items = db.select("content", {"status": "eq.scripted", "compliance_status": "eq.pass",
                                   "approval_status": "in.(approved,not_required)",
@@ -247,8 +265,12 @@ def render(db):
     # all of a case's videos in one run, so its footage is downloaded once
     fails = json.loads(FAILS.read_text()) if FAILS.exists() else {}
     done = 0
+    prev = None
     for it in items:
         src = FOOTAGE / str(it["lead_id"])
+        if CLOUD and prev and prev != src:
+            _free_footage(prev)                     # cloud runner disk is small: one case's footage at a time
+        prev = src
         try:
             have = ensure_footage(db, it)
         except Exception as e:
@@ -267,6 +289,11 @@ def render(db):
                                         "id": f"neq.{it['id']}", "select": "script"})
             it["sibling_cuts"] = [s["script"]["cut"] for s in sib
                                   if isinstance(s.get("script"), dict) and (s["script"].get("cut") or {}).get("path")]
+        try:                                        # who / why / how it ended, for the narrator lines
+            from agents import casefacts
+            it["case_facts"] = casefacts.get(db, it["lead_id"]) if it.get("lead_id") else None
+        except Exception:
+            it["case_facts"] = None
         plan_path.write_text(json.dumps(it, indent=2, default=str))
         out = OUT / _file_name(it)
         cmd = RENDER_CMD.format(plan=shlex.quote(str(plan_path)), footage=shlex.quote(str(src)), out=shlex.quote(str(out)))
@@ -279,6 +306,9 @@ def render(db):
         (HOME / "logs" / f"render_{str(it['id'])[:8]}.log").write_text(res.stdout[-20000:] + "\n" + res.stderr[-20000:])
         if res.returncode == 0 and out.exists():
             link = store_render(out) if CLOUD else str(out)
+            if CLOUD:
+                for big in OUT.glob("*.mp4"):           # stored on the release; free the runner disk
+                    big.unlink(missing_ok=True)
             upd = {"status": "rendered", "media_path": link}
             side = Path(str(out) + ".script.json")
             if side.exists():                       # the Writer's final on-screen text, so the queue shows what's in the video

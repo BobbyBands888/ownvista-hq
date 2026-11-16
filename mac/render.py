@@ -4,7 +4,8 @@ usage: python mac/render.py PLAN.json FOOTAGE_DIR OUT.mp4
 Episode (1920x1080): cold-open hook -> title card -> short narrated setup -> raw bodycam clips with
 "BODY CAM: OFFICER n" labels and brief narrator check-ins between them -> what happened next ->
 comment question -> subscribe end card. Narrator never talks over bodycam audio.
-Short / Reel (1080x1920): action from the first second, case badge (+ PART n on Shorts only), hook text, credit,
+Short / Reel (1080x1920): action from the first second with the narrator setting it up over the opening seconds
+(bodycam audio low underneath), case badge (+ PART n on Shorts only), hook text, credit, narrated "how it ended",
 "Follow for Part n" end card on Shorts; Reels are standalone single moments ending "Follow for more cases"."""
 import json
 import shutil
@@ -136,7 +137,14 @@ def frame_filter(info, W, H):
             f"setsar=1,fps=30,format=yuv420p[base]")
 
 
-def seg_clip(src, info, s, e, W, H, out, overlays=()):
+CAM_AF = ("aresample=48000:async=1:first_pts=0,aformat=sample_fmts=fltp:channel_layouts=stereo,"
+          "dynaudnorm=f=200:g=15:p=0.9:m=12,alimiter=limit=0.89,volume=-6dB")
+CAM_AF_SAFE = "aresample=48000:async=1:first_pts=0,aformat=sample_fmts=fltp:channel_layouts=stereo,volume=-3dB"
+
+
+def seg_clip(src, info, s, e, W, H, out, overlays=(), vo_wav=None):
+    """One bodycam clip. With vo_wav, the narrator talks over the opening seconds and the bodycam audio
+    drops low underneath (never muted, so viewers still hear the scene), then comes back to full level."""
     dur = round(e - s, 2)
     args = ["-ss", s, "-t", dur, "-i", src]
     for png, *_ in overlays:
@@ -147,15 +155,32 @@ def seg_clip(src, info, s, e, W, H, out, overlays=()):
         en = f":enable='between(t,{t0},{t1})'" if t1 is not None else ""
         fc.append(f"[{last}][{n}:v]overlay=0:0:format=auto{en}[v{n}]")
         last = f"v{n}"
+    nxt = len(overlays) + 1
     if info["audio"]:
-        fc.append("[0:a]aresample=48000,aformat=channel_layouts=stereo,dynaudnorm=f=200:g=15:p=0.9:m=12,alimiter=limit=0.89,volume=-6dB,"
-                  f"aresample=48000,apad,atrim=0:{dur}[aout]")
-        amap = "[aout]"
+        cam = "[0:a]"
     else:
         args += ["-f", "lavfi", "-t", dur, "-i", "anullsrc=r=48000:cl=stereo"]
-        amap = f"{len(overlays) + 1}:a"
-    ff(*args, "-filter_complex", ";".join(fc), "-map", f"[{last}]", "-map", amap, *ENC_V, *ENC_A,
-       "-t", dur, out)
+        cam, nxt = f"[{nxt}:a]", nxt + 1
+    if vo_wav:
+        args += ["-i", vo_wav]
+        vd = round(min(media.wav_dur(vo_wav) + 0.6, dur), 2)
+        vo_chain = (f"[{nxt}:a]aresample=48000,aformat=sample_fmts=fltp:channel_layouts=stereo,loudnorm=I=-14:TP=-1.5,"
+                    f"aresample=48000,adelay=300|300,apad,atrim=0:{dur}[vo]")
+
+    def run(cam_af):
+        a = [f"{cam}{cam_af},aresample=48000,apad,atrim=0:{dur}" + ("[cam]" if vo_wav else "[aout]")]
+        if vo_wav:
+            a += [f"[cam]volume=0.16:enable='between(t,0,{vd})'[camd]", vo_chain,
+                  "[camd][vo]amix=inputs=2:normalize=0:duration=first,alimiter=limit=0.95,"
+                  "aformat=sample_fmts=fltp:channel_layouts=stereo[aout]"]
+        ff(*args, "-filter_complex", ";".join(fc + a), "-map", f"[{last}]", "-map", "[aout]", *ENC_V, *ENC_A,
+           "-t", dur, out)
+
+    try:
+        run(CAM_AF if info["audio"] else "anull")
+    except RuntimeError as err:                 # odd source audio can break the loudness chain: retry plain
+        LOG(f"clip audio retry ({str(err)[-120:]})")
+        run(CAM_AF_SAFE if info["audio"] else "anull")
     return out
 
 
@@ -164,7 +189,7 @@ def seg_card(card_png, out, vo_wav=None, min_dur=2.0, pad=0.7):
     args = ["-loop", "1", "-t", round(dur, 2), "-i", card_png]
     if vo_wav:
         args += ["-i", vo_wav]
-        af = ["-filter_complex", f"[1:a]aresample=48000,aformat=channel_layouts=stereo,loudnorm=I=-15:TP=-1.5,"
+        af = ["-filter_complex", f"[1:a]aresample=48000,aformat=sample_fmts=fltp:channel_layouts=stereo,loudnorm=I=-15:TP=-1.5,"
               f"aresample=48000,adelay=250|250,apad,atrim=0:{round(dur, 2)}[a]", "-map", "0:v", "-map", "[a]"]
     else:
         args += ["-f", "lavfi", "-t", round(dur, 2), "-i", "anullsrc=r=48000:cl=stereo"]
@@ -263,6 +288,8 @@ def build_episode(job, out):
 
 
 def build_vertical(job, out):
+    """Vertical Short / Reel: narrator sets it up over the opening seconds (who + why police were there) while the
+    bodycam keeps playing underneath, raw bodycam audio after that, then a narrated "how it ended" + follow card."""
     W, H = 1080, 1920
     plan, sc, pk = job.plan, job.sc, job.pick
     kind = plan["kind"]
@@ -271,10 +298,15 @@ def build_vertical(job, out):
     path, info = job.src(pk["file"])
     hook = sc.get("hook_text") or sc.get("on_screen_text") or plan.get("title") or case
     credit = job.credit.replace("Footage: ", "Footage: ")[:70]
+    intro = (sc.get("intro_vo") or "").strip()
+    if kind == "short" and part > 1:
+        intro = ""                                  # Parts 2/3 pick up the story; only Part 1 is set up
+    intro_wav = job.vo(intro) if intro else None
+    hook_end = max(3.2, round(media.wav_dur(intro_wav) + 0.6, 1)) if intro_wav else 3.2
     ov = [(png_watermark(W, H, job.p("png"), credit=credit), 0, None),
           (png_badge(W, H, case, part, job.p("png")), 0, None),
-          (png_hook(W, H, hook, job.p("png"), vertical=True), 0, 3.2)]
-    segs = [seg_clip(path, info, pk["start"], pk["end"], W, H, job.p("mp4"), ov)]
+          (png_hook(W, H, hook, job.p("png"), vertical=True), 0, hook_end)]
+    segs = [seg_clip(path, info, pk["start"], pk["end"], W, H, job.p("mp4"), ov, vo_wav=intro_wav)]
     bg = media.blurred_still(path, max(0, pk["end"] - 1), W, H, job.p("png"))
     if kind == "short" and part in (1, 2):
         end_t, end_vo = f"Follow for Part {part + 1}", f"Follow for part {'two' if part == 1 else 'three'}."
@@ -282,6 +314,10 @@ def build_vertical(job, out):
         end_t, end_vo = "Full episode on our channel", "Watch the full episode on our channel."
     else:
         end_t, end_vo = "Follow for more cases", "Follow for more cases like this."
+    outcome = (sc.get("outcome_vo") or "").strip()
+    if outcome and not (kind == "short" and part in (1, 2)):   # the ending goes on the last part / the Reel
+        segs.append(seg_card(png_card(bg, W, H, job.p("png"), kicker="How it ended", body=outcome), job.p("mp4"),
+                             job.vo(outcome), min_dur=3, pad=0.6))
     segs.append(seg_card(png_card(bg, W, H, job.p("png"), kicker=case, title=end_t), job.p("mp4"),
                          job.vo(end_vo), min_dur=2.2, pad=0.5))
     concat(segs, out, job.work)

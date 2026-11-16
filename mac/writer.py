@@ -21,8 +21,11 @@ def _span(f, s, e, pad=0.0):
 
 def _facts(plan, sc):
     keep = ("narration_setup", "what_happened_next", "title_card", "moment")
+    cf = plan.get("case_facts") or {}
+    case_file = {k: cf.get(k) for k in ("suspect_name", "suspect_age", "say_name", "why", "charges", "status", "outcome",
+                                        "sentence") if cf.get(k) not in (None, "", [])}
     return {"title": plan.get("title"), "case": plan.get("case_name"), "description": (plan.get("description") or "")[:1200],
-            **{k: sc.get(k) for k in keep if sc.get(k)}}
+            **({"case_file": case_file} if case_file else {}), **{k: sc.get(k) for k in keep if sc.get(k)}}
 
 
 def _ask(system, user):
@@ -79,22 +82,41 @@ def write_vertical(job, log=print):
     f = job.files[pk["file"]]
     first = _span(f, pk["start"], pk["start"] + 4, pad=1)
     whole = _span(f, pk["start"], pk["end"])
-    j = _ask("You write the 2-3 second hook text that sits over the FIRST seconds of a vertical "
+    part = int(plan.get("part") or 0)
+    from agents import casefacts
+    narr = casefacts.narration_rules(plan.get("case_facts"))
+    j = _ask("You write the hook text and the narrator lines for a vertical "
              f"{'YouTube Short' if plan['kind'] == 'short' else 'Facebook Reel'} of police bodycam footage, AFTER "
-             "the clip is cut. The hook must match what is on screen in those first seconds. " +
+             "the clip is cut. The hook must match what is on screen in those first seconds. A narrator voice reads "
+             "intro_vo over the opening seconds while the bodycam keeps playing underneath, and reads outcome_vo on "
+             "an end card. " +
              ("This Reel is a STANDALONE single moment: never say Part 1/2/3, 'continued', 'what happens next' or "
               "refer to other clips; caption and question are about this clip only. " if plan["kind"] == "reel" else "")
              + RULES,
-             "FACTS:\n" + json.dumps(_facts(plan, sc)) +
+             "FACTS:\n" + json.dumps(_facts(plan, sc)) + "\n\n" + narr +
              "\n\nDRAFT hook (rewrite if the footage doesn't show it): " + json.dumps(sc.get("hook_text") or sc.get("on_screen_text")) +
+             "\nDRAFT narrator lines: " + json.dumps({k: sc.get(k) for k in ("intro_vo", "outcome_vo")}) +
              "\n\nFIRST 4 SECONDS:\n" + json.dumps(first) + "\n\nWHOLE CLIP:\n" + json.dumps(whole) +
              '\n\nReturn JSON {"hook_text":"under 9 words, about what is visible right away (or what is about to happen '
-             'in this clip)"' + (',"caption":"PLACE. STAKES in under 15 words, about what this clip shows (e.g. '
+             'in this clip)",'
+             '"intro_vo":"' + ('' if plan["kind"] == "short" and part > 1 else
+                               '1-2 short spoken sentences, max 24 words, read in about 6 seconds: place, who the suspect '
+                               'is and why police were there, from the CASE FILE/FACTS only, natural documentary tone '
+                               '(e.g. \'Las Cruces, New Mexico. Agents are chasing a man wanted on a felony warrant, '
+                               'and he is not giving up.\'). Must not contradict the first seconds.') + '",'
+             '"outcome_vo":"' + ('' if plan["kind"] == "short" and part in (1, 2) else
+                                 'how the case ended in max 25 spoken words, following the HOW IT ENDED wording rule; '
+                                 '"" if there is no case file or no outcome') + '"'
+             + (',"caption":"PLACE. STAKES in under 15 words, about what this clip shows (e.g. '
              '\'Quemado, Texas. A man swinging tree branches has already hit a Border Patrol agent in the head.\')",'
              '"question":"one short question for the comments about what the viewer just saw",'
              '"hashtags":["3-4 tags like #bodycam #police"]' if plan["kind"] == "reel" else "") + "}")
     h = (j.get("hook_text") or "").strip()
     out = {"hook_text": h, "on_screen_text": h} if h else {}
+    for k in ("intro_vo", "outcome_vo"):
+        v = j.get(k)
+        if isinstance(v, str):
+            out[k] = v.strip()
     if plan["kind"] == "reel" and (j.get("caption") or "").strip():
         out["caption"] = j["caption"].strip()
         out["question"] = (j.get("question") or "").strip()
@@ -146,7 +168,7 @@ def write(job, log=print):
             job.sc.pop(k, None)            # the check found nothing true to say: fall back to the case name
         elif k != "problems" and v not in (None, [], ""):
             job.sc[k] = v
-        elif k in ("what_happened_next",) and v == "":
+        elif k in ("what_happened_next", "outcome_vo") and v == "":
             job.sc.pop(k, None)            # facts don't give an outcome: say nothing rather than guess
     log("writer: " + json.dumps({k: v for k, v in w.items() if k != "problems"})[:600])
     return w

@@ -17,6 +17,9 @@ FORMAT = """Ten-Four Tapes format:
   boosted (muted only while narrator talks), brief narrator check-ins, "what happened next" outro, one comment
   question, subscribe end card. Multiple angles are labeled "Body Cam Officer 1", "Body Cam Officer 2", etc.
   Credit line on screen and in description.
+- NARRATOR ON VERTICALS: every Reel and Part 1 Short opens with the narrator setting it up over the first seconds
+  (place, who, why police were there) while the bodycam plays underneath; every Reel and Part 3 ends with a narrated
+  "how it ended" line. Same voice as the episodes.
 - SHORTS: 3 vertical Shorts per episode labeled "<Case Name> Part 1/2/3", each ends "Follow for Part 2/3".
 - FACEBOOK REELS: standalone 25-30s enforcement-action Reels (never "Part 1/2/3" — Facebook doesn't show Part 2 to
   Part 1's viewers), real audio, action in the first 2 seconds. When a case gets 2-3 Reels, each one is a DIFFERENT
@@ -70,8 +73,9 @@ Return JSON:
    "narration_setup":"max 3 short sentences","check_ins":["max 4 brief lines"],
    "angle_labels":["Body Cam Officer 1"],"what_happened_next":"","comment_question":"",
    "thumbnail_text":"2-4 words in big letters over the peak action frame: the stakes or the twist, true to the lead, not the case name or the title repeated, no gore words","blur_notes":"anything that must be blurred or cut (bodies, bystanders, IDs)"},
- "shorts":[{"part":1,"title":"<Case Name> Part 1","moment":"which moment to cut","on_screen_text":""}],
- "reels":[{"moment":"one single 25-30s action moment, different from the other reels","hook_text":"first 2s text","caption":"PLACE. STAKES of THIS moment (under 15 words) + one short question","hashtags":["#bodycam"]}]}
+ "shorts":[{"part":1,"title":"<Case Name> Part 1","moment":"which moment to cut","on_screen_text":"",
+   "intro_vo":"Part 1 only: 1-2 spoken sentences (max 24 words): place, who, why police were there","outcome_vo":"Part 3 only: how it ended (max 25 words) or \"\""}],
+ "reels":[{"moment":"one single 25-30s action moment, different from the other reels","hook_text":"first 2s text","caption":"PLACE. STAKES of THIS moment (under 15 words) + one short question","hashtags":["#bodycam"],"intro_vo":"1-2 spoken sentences (max 24 words) the narrator reads over the opening seconds: place, who, why police were there","outcome_vo":"how it ended (max 25 words) or \"\""}]}
 3 shorts and """ + (f"exactly {n_reels} reels, each a different single moment in story order, each standalone."
                     if n_reels else "no reels (\"reels\":[])."), max_tokens=2800, temperature=0.6)
 
