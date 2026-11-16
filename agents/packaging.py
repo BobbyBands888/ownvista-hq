@@ -10,6 +10,8 @@ FORMULAS = {
     "Number + stakes": "14 Minutes of Pursuit Ends in a Backyard",
 }
 MAX_TITLE = 60
+ACRONYMS = {"ICE", "CBP", "FBI", "DEA", "ATF", "SWAT", "DUI", "AZ", "TX", "FL", "CA", "NM", "NJ", "NY", "US", "USA",
+            "AR", "AK", "HP", "FHP", "PD", "SO", "TV", "ID", "AM", "PM"}
 
 TITLE_RULES = ("YOUTUBE TITLE: use exactly ONE of these 5 formulas (examples show the shape):\n"
                + "\n".join(f"- {k}: \"{v}\"" for k, v in FORMULAS.items()) +
@@ -33,7 +35,7 @@ def title_ok(title, formula):
         return False
     if re.search(r"\bpart\s*\d|ten-four tapes", t, re.I):
         return False
-    caps = [w for w in re.findall(r"[A-Za-z]{4,}", t) if w.isupper()]
+    caps = [w for w in re.findall(r"[A-Za-z]{2,}", t) if w.isupper() and w not in ACRONYMS]
     return not caps
 
 
@@ -42,8 +44,8 @@ def thumb_texts(xs, title=""):
     tw = {w.lower() for w in re.findall(r"[A-Za-z']+", title or "")}
     out = []
     for x in xs or []:
-        words = str(x).upper().split()[:3]
-        if not words:
+        words = str(x).upper().split()
+        if not words or len(words) > 3:         # never chop a phrase mid-thought ("HE HAD A")
             continue
         if sum(w.lower().strip(".,!?") in tw for w in words) >= len(words):   # fully repeats the title
             continue

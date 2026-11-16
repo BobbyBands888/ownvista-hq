@@ -401,7 +401,7 @@ def _thumb_text(job, n):
         texts.insert(0, job.sc["thumbnail_text"])
     if not texts:
         texts = [job.plan.get("case_name") or ""]
-    return " ".join(texts[n % len(texts)].upper().split()[:3])     # fewer words: 3 max
+    return " ".join(texts[n % len(texts)].upper().split()[:3])     # fewer words: 3 max (packaging.thumb_texts already drops longer ones)
 
 
 def build_thumbnail(job, out_jpg, moment=None, text=None):
