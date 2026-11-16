@@ -79,7 +79,8 @@ LOOK_PROMPT = """This grid shows {n} numbered frames (red labels), in time order
 For EACH numbered frame judge ONLY what is visible in the picture (there is no audio):
 - view: "outside" (officer on foot outdoors), "road_ahead" (dash/windshield view of the road), "inside_car" (cruiser
   interior: dashboard, steering wheel, seats, laptop, officer driving with nothing happening outside), "indoor", "black"
-  (blank, dark, covered or too blurry to see), "screen" (title card, document, map)
+  (blank, dark, covered or too blurry to see), "screen" (anything that is NOT live camera footage: title card, text
+  slate, disclaimer, document, map, satellite/aerial still, Google Street View, diagram, agency briefing graphic)
 - action 0-3: 0 nothing happening / empty scene; 1 calm talking, walking, routine driving; 2 tense: confrontation,
   weapon drawn, someone fleeing, pursuit with the suspect vehicle visible ahead; 3 peak: struggle, tackle, arrest
   on the ground, crash, shots fired, foot chase with the suspect in view
@@ -192,7 +193,8 @@ def vis(f):
             j += 1
         v = fr[j]
         act[t] = v["action"]
-        dull[t] = 1.0 if v["action"] < 2 and (v["view"] in ("inside_car", "black", "screen") or v["action"] == 0) else 0.0
+        dull[t] = 1.0 if v["view"] == "screen" or (v["action"] < 2 and (v["view"] in ("inside_car", "black")
+                                                                         or v["action"] == 0)) else 0.0
         bad[t] = 1.0 if v["child"] or v["gore"] else 0.0
     out = {"act": act, "dull": dull, "bad": bad}
     _VA[key] = out
@@ -487,6 +489,9 @@ def recut_short(files, plan, cache, parts):
     return sorted(others + [new], key=lambda p: p["part"])
 
 
+LEAD_IN = 15        # seconds of build-up kept before the first tense moment
+DULL_GAP = 20       # a dead stretch this long (slates, maps, silent cruiser) is cut out
+
 def clean_clip(f, c):
     """Trim cruiser-interior / black stretches off a clip's ends and split it around any child/gore frames."""
     v = vis(f)
@@ -497,12 +502,27 @@ def clean_clip(f, c):
         s += 1
     while e > s + 15 and v["dull"][e - 1] and not v["bad"][e - 1]:
         e -= 1
+    # No slow lead-in: start at most LEAD_IN s before the first tense moment (agency briefings open with maps,
+    # slates and minutes of silent driving)
+    first = next((t for t in range(s, e) if v["act"][t] >= 2), None)
+    if first is not None and first - s > LEAD_IN:
+        s = first - LEAD_IN
     segs, cur = [], s
+    run = 0
     for t in range(s, e):
         if v["bad"][t]:
             if t - 3 - cur >= 15:
                 segs.append((cur, t - 3))
             cur = t + 4
+            run = 0
+            continue
+        run = run + 1 if v["dull"][t] else 0
+        if run == DULL_GAP:                     # cut long dead stretches out of the middle too
+            if t - DULL_GAP + 1 - cur >= 15:
+                segs.append((cur, t - DULL_GAP + 1))
+            cur = t + 1
+        elif run > DULL_GAP:
+            cur = t + 1
     if e - cur >= 15:
         segs.append((cur, e))
     out = []
