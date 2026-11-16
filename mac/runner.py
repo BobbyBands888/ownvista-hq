@@ -159,8 +159,10 @@ def ensure_footage(db, it):
                 _fetch(files[-1]["src"], dest, f"dvids_{m[1]}.mp4")
     else:
         from urllib.parse import urljoin, urlparse
+        if CLOUD and restore_mirror(it["lead_id"], dest):
+            return True                             # kept copy: works after the agency's link expires
         for r in db.select("records_requests", {"lead_id": f"eq.{it['lead_id']}", "status": "eq.fulfilled"}):
-            links = r.get("download_links") or []
+            links = repair_links(r.get("download_links") or [])
             # some share emails (Evidence.com) give the download button as a site-relative link: rebuild it
             # from the share's own host so it doesn't fail with "No scheme supplied"
             hosts = [f"{u.scheme}://{u.netloc}" for u in map(urlparse, links) if u.scheme and "evidence.com" in u.netloc] \
@@ -176,7 +178,101 @@ def ensure_footage(db, it):
                     _fetch(url, dest)
                 except Exception as e:
                     db.alert("publisher", f"Footage download for {it.get('case_name')}: {e}", "warn")
+        if CLOUD and any(p for p in dest.iterdir() if not p.name.startswith(".")):
+            try:
+                n = save_mirror(it["lead_id"], dest)
+                db.alert("publisher", f"Footage for {it.get('case_name')} is in HQ: kept {n} files, so renders keep "
+                         "working after the agency's link expires", "info")
+            except Exception as e:
+                db.alert("publisher", f"Couldn't keep a copy of {it.get('case_name')} footage ({str(e)[:160]}). "
+                         "Renders work until the agency's link expires", "warn")
     return any(p for p in dest.iterdir() if not p.name.startswith("."))
+
+
+def repair_links(links):
+    """Axon packages sometimes get stored as the site-relative segment link ('/?class=Evidence&proc=PackagePublic...')
+    with no host, which fails with 'Invalid URL'. Find the Evidence.com email carrying the same token and put its
+    full /axon/download/ link first (the Axon API path rebuilds the segments from it)."""
+    from urllib.parse import urlparse, parse_qs
+    rel = [l for l in links if l.startswith("/") and "token=" in l]
+    if not rel or any("/axon/download/" in l for l in links):
+        return links
+    tok = (parse_qs(urlparse(rel[0]).query).get("token") or [None])[0]
+    if not tok:
+        return links
+    try:
+        from agents.lib.google import search, get_thread, message_links
+        for h in search("newer_than:60d from:evidence.com", 25):
+            for m in get_thread(h["threadId"]).get("messages", []):
+                for l in message_links(m):
+                    if "/axon/download/" in l and (parse_qs(urlparse(l).query).get("token") or [None])[0] == tok:
+                        print(f"repaired relative Axon link from Gmail thread {h['threadId']}", flush=True)
+                        return [l] + [x for x in links if x not in rel]
+    except Exception as e:
+        print(f"link repair: {str(e)[:160]}", flush=True)
+    return links
+
+# ---------------- footage mirror (cloud): agency links expire, a kept copy doesn't ----------------
+PART = 1_900_000_000            # GitHub release assets max out at 2 GB: bigger files are stored in parts
+MEDIA_FILES = re.compile(r"\.(mp4|mov|m4v|avi|wmv|mkv|ts|mts|asf|mpg|wav|mp3|m4a)$", re.I)
+
+def _mirror_release(lead_id, create=False):
+    tag = f"footage-{lead_id}"
+    r = _gh("GET", f"{GH_API}/releases/tags/{tag}")
+    if r.status_code == 404 and create:
+        r = _gh("POST", f"{GH_API}/releases", json={"tag_name": tag, "name": f"Footage {lead_id}", "prerelease": True,
+                                                     "body": "Kept copy of agency footage for this lead. Managed by the publisher."})
+    if r.status_code == 404:
+        return None
+    r.raise_for_status()
+    return r.json()
+
+def save_mirror(lead_id, folder):
+    """Upload the case's footage files (zips unpacked first) to the footage-<lead_id> release."""
+    sys.path.insert(0, str(REPO / "mac"))
+    import picker
+    picker.unpack_zips(folder)
+    rel = _mirror_release(lead_id, create=True)
+    have = {a["name"] for a in rel.get("assets", [])}
+    up = rel["upload_url"].split("{")[0]
+    n = 0
+    for f in sorted(Path(folder).rglob("*")):
+        if not f.is_file() or not MEDIA_FILES.search(f.name):
+            continue
+        base = re.sub(r"[^\w.-]", "_", str(f.relative_to(folder)))
+        size = f.stat().st_size
+        parts = [(base, 0, size)] if size <= PART else \
+            [(f"{base}.part{i:02d}", o, min(PART, size - o)) for i, o in enumerate(range(0, size, PART))]
+        for name, off, ln in parts:
+            if name in have:
+                continue
+            with open(f, "rb") as fh:
+                fh.seek(off)
+                data = fh.read(ln)
+            r = _gh("POST", up, params={"name": name}, data=data, timeout=3600,
+                    headers={"Content-Type": "application/octet-stream", "Accept": "application/vnd.github+json"})
+            r.raise_for_status()
+        n += 1
+    return n
+
+def restore_mirror(lead_id, dest):
+    """Download a kept copy (rejoining .partNN files). True if anything came back."""
+    try:
+        rel = _mirror_release(lead_id)
+    except Exception:
+        return False
+    if not rel or not rel.get("assets"):
+        return False
+    for a in sorted(rel["assets"], key=lambda a: a["name"]):
+        name = re.sub(r"\.part\d\d$", "", a["name"])
+        mode = "ab" if a["name"] != name and not a["name"].endswith(".part00") else "wb"
+        with _gh("GET", a["url"], headers={"Accept": "application/octet-stream"}, stream=True, timeout=3600) as r:
+            r.raise_for_status()
+            with open(Path(dest) / name, mode) as f:
+                for chunk in r.iter_content(1 << 20):
+                    f.write(chunk)
+    print(f"restored {len(rel['assets'])} kept footage files for lead {lead_id}", flush=True)
+    return any(p for p in Path(dest).iterdir() if not p.name.startswith("."))
 
 # ---------------- release storage (cloud) ----------------
 GH_API = "https://api.github.com/repos/" + os.environ.get("GITHUB_REPOSITORY", "")
