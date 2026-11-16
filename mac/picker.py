@@ -309,6 +309,29 @@ def loud_peaks(f, k=10):
     return sorted(out)
 
 
+BLUR_TAIL = 20     # seconds of aftermath shown fully blurred (real audio) instead of cut — episodes only
+
+
+def add_blurred_tails(files, clips):
+    """Rule (Nov 16): a death case may show what happens after someone goes down, but only fully blurred, max
+    BLUR_TAIL seconds, never in thumbnails / cold opens / Shorts / Reels. A clip that stops at a file's aftermath
+    line gets a blurred continuation right after it."""
+    out, done = [], set()
+    for c in clips:
+        out.append(c)
+        f = files[c["file"]]
+        a = aftermath_from(f)
+        if a is None or c["file"] in done or c.get("blur"):
+            continue
+        if a - 8 <= c["end"] <= a + 1:
+            e = min(f["duration"], a + BLUR_TAIL)
+            if e - a >= 5:
+                out.append({"file": c["file"], "start": float(a), "end": float(e), "blur": True,
+                            "label": c.get("label")})
+                done.add(c["file"])
+    return out
+
+
 def _cold_fallback(files, clips):
     """Best 9s window anywhere usable; else the first 9s of the first clip (never crashes on an empty pick)."""
     bw = best_windows(files, 9, 1)
@@ -668,6 +691,7 @@ def pick_episode(files, plan, cache):
         if not clips:
             clips = [{"file": 0, "start": 0.0, "end": float(min(files[0]["duration"], target))}]
         result = {"cold_open": _cold_fallback(files, clips), "clips": clips}
+    result["clips"] = add_blurred_tails(files, result["clips"])
     labels = (sc.get("angle_labels") or [])
     for n, c in enumerate(result["clips"]):
         if not c.get("label"):

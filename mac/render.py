@@ -142,7 +142,10 @@ CAM_AF = ("aresample=48000:async=1:first_pts=0,aformat=sample_fmts=fltp:channel_
 CAM_AF_SAFE = "aresample=48000:async=1:first_pts=0,aformat=sample_fmts=fltp:channel_layouts=stereo,volume=-3dB"
 
 
-def seg_clip(src, info, s, e, W, H, out, overlays=(), vo_wav=None):
+BLUR_LABEL = "Blurred out of respect"
+
+
+def seg_clip(src, info, s, e, W, H, out, overlays=(), vo_wav=None, blur=False):
     """One bodycam clip. With vo_wav, the narrator talks over the opening seconds and the bodycam audio
     drops low underneath (never muted, so viewers still hear the scene), then comes back to full level."""
     dur = round(e - s, 2)
@@ -151,6 +154,9 @@ def seg_clip(src, info, s, e, W, H, out, overlays=(), vo_wav=None):
         args += ["-loop", "1", "-t", dur, "-i", png]
     fc = [frame_filter(info, W, H)]
     last = "base"
+    if blur:                                    # whole frame, heavy: nothing identifiable survives
+        fc.append(f"[base]scale={W // 16}:{H // 16},boxblur=6:3,scale={W}:{H},setsar=1[blr]")
+        last = "blr"
     for n, (png, t0, t1) in enumerate(overlays, 1):
         en = f":enable='between(t,{t0},{t1})'" if t1 is not None else ""
         fc.append(f"[{last}][{n}:v]overlay=0:0:format=auto{en}[v{n}]")
@@ -279,8 +285,11 @@ def build_episode(job, out):
             cbg = media.blurred_still(path_b, c["start"] + 2, W, H, job.p("png"))
             segs.append(seg_card(png_card(cbg, W, H, job.p("png"), body=line), job.p("mp4"), job.vo(line)))
         path, info = job.src(c["file"])
-        ov = [(wm_credit if n == 0 else wm, 0, None), (png_label(W, H, c.get("label") or "Body Cam", job.p("png")), 0, 5)]
-        segs.append(seg_clip(path, info, c["start"], c["end"], W, H, job.p("mp4"), ov))
+        if c.get("blur"):
+            ov = [(wm, 0, None), (png_label(W, H, BLUR_LABEL, job.p("png")), 0, None)]
+        else:
+            ov = [(wm_credit if n == 0 else wm, 0, None), (png_label(W, H, c.get("label") or "Body Cam", job.p("png")), 0, 5)]
+        segs.append(seg_clip(path, info, c["start"], c["end"], W, H, job.p("mp4"), ov, blur=bool(c.get("blur"))))
         LOG(f"clip {n + 1}/{len(pk['clips'])} done")
 
     # 5. outro: what happened next, one comment question, subscribe end card
@@ -346,7 +355,7 @@ def thumb_moments(job, k=3):
     """Up to k (file index, seconds) of the strongest SAFE frames inside the episode's cut, each from a different
     peak: highest vision action, never a frame tagged child or gore. Without vision data: loudest peaks."""
     pk = job.pick
-    wins = [pk["cold_open"]] + list(pk.get("clips") or [])
+    wins = [pk["cold_open"]] + [c for c in (pk.get("clips") or []) if not c.get("blur")]
     cands = []
     for w in wins:
         f = job.files[w["file"]]

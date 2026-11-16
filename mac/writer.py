@@ -42,6 +42,11 @@ def write_episode(job, log=print):
     clips = []
     for n, c in enumerate(pk["clips"]):
         f = files[c["file"]]
+        if c.get("blur"):
+            clips.append({"clip": n + 1, "label_now": c.get("label"), "length_s": round(c["end"] - c["start"]),
+                          "shown": "FULLY BLURRED out of respect (aftermath). Its check-in line may only say the next "
+                                   "moments are blurred out of respect; never describe injuries or the body."})
+            continue
         clips.append({"clip": n + 1, "label_now": c.get("label"), "length_s": round(c["end"] - c["start"]),
                       **_span(f, c["start"], c["end"])})
     co = pk["cold_open"]
@@ -89,7 +94,7 @@ Return JSON {{"cold_open_hook":"","narration_setup":"","check_ins":[""],"labels"
         out["check_ins"] = [str(x).strip() for x in j["check_ins"]][:max(0, len(clips) - 1)]
     if isinstance(j.get("labels"), list):
         for c, lab in zip(pk["clips"], j["labels"]):
-            if lab:
+            if lab and not c.get("blur"):
                 c["label"] = str(lab)[:40]
     return out
 
@@ -149,7 +154,8 @@ def check(job, written):
     pk, files = job.pick, job.files
     if job.plan["kind"] == "episode":
         ctx = {"cold_open": _span(files[pk["cold_open"]["file"]], pk["cold_open"]["start"], pk["cold_open"]["end"], 3),
-               "clips": [_span(files[c["file"]], c["start"], c["end"])["frames"][:20] for c in pk["clips"]]}
+               "clips": [["(fully blurred aftermath)"] if c.get("blur") else
+                         _span(files[c["file"]], c["start"], c["end"])["frames"][:20] for c in pk["clips"]]}
     else:
         ctx = _span(files[pk["file"]], pk["start"], pk["end"])
     j = _ask("You fact-check video text against the footage and the facts before it is published. " + RULES,
