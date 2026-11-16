@@ -337,7 +337,7 @@ async function load(){
       <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap"><span class="badge">${esc(c.case_name||"Case")}</span><span class="kind">${KIND(c)}</span></div>
       <div class="t">${esc(c.title||c.case_name)}</div>
       ${w?`<a class="watch" href="${esc(w)}" target="_blank" rel="noopener">▶ Watch before you approve</a>`:`<div class="m">Video plan only. It renders after you approve.</div>`}
-      ${(c.script&&/^https:/.test(c.script.thumbnail||""))?`<a class="watch" href="${esc(c.script.thumbnail)}" target="_blank" rel="noopener">See the YouTube thumbnail</a>`:""}
+      ${(c.script&&Array.isArray(c.script.thumbnails)&&c.script.thumbnails.filter(u=>/^https:/.test(u||"")).length>1)?c.script.thumbnails.filter(u=>/^https:/.test(u||"")).map((u,i)=>`<a class="watch" href="${esc(u)}" target="_blank" rel="noopener">Thumbnail ${"ABC"[i]}</a>`).join(" "):(c.script&&/^https:/.test(c.script.thumbnail||""))?`<a class="watch" href="${esc(c.script.thumbnail)}" target="_blank" rel="noopener">See the YouTube thumbnail</a>`:""}
       ${c.compliance_notes?`<details><summary>Safety check notes</summary><div class="m">${esc(c.compliance_notes)}</div></details>`:""}
       <div class="actions"><button class="primary" data-approve="${c.id}">Approve</button><button class="danger" data-reject="${c.id}">Reject</button></div>
     </div>`;}).join("") || `<div class="empty">Nothing waiting for your approval.</div>`;

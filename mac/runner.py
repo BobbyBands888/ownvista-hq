@@ -314,17 +314,23 @@ def render(db):
             if side.exists():                       # the Writer's final on-screen text, so the queue shows what's in the video
                 try:
                     w = json.loads(side.read_text())
-                    if w.get("thumb") and Path(w["thumb"]).exists():
-                        tl = store_render(w["thumb"], "image/jpeg") if CLOUD else w["thumb"]
+                    thumbs = [t for t in (w.get("thumbs") or [w.get("thumb")]) if t and Path(t).exists()]
+                    if thumbs:
+                        tls = [store_render(t, "image/jpeg") if CLOUD else t for t in thumbs]
                         base = upd.get("script") or (it.get("script") if isinstance(it.get("script"), dict) else {})
-                        upd["script"] = {**base, "thumbnail": tl}
+                        upd["script"] = {**base, "thumbnail": tls[0], "thumbnails": tls}
                     if w.get("cut"):
                         base = upd.get("script") or (it.get("script") if isinstance(it.get("script"), dict) else {})
                         upd["script"] = {**base, "cut": w["cut"]}
                     if w.get("written"):
-                        keep = {k: upd["script"][k] for k in ("thumbnail",) if k in (upd.get("script") or {})}
+                        keep = {k: upd["script"][k] for k in ("thumbnail", "thumbnails") if k in (upd.get("script") or {})}
                         upd["script"] = {**w["script"], **keep, **({"cut": w["cut"]} if w.get("cut") else {})}
                         ws = w["script"]
+                        if it["kind"] == "episode" and ws.get("title"):
+                            upd["title"] = ws["title"]          # formula title written from the locked cut
+                            tags = ws.get("analysis_tags") if isinstance(ws.get("analysis_tags"), dict) else {}
+                            if ws.get("title_formula"):
+                                upd["script"]["analysis_tags"] = {**tags, "title_formula": ws["title_formula"]}
                         if it["kind"] == "reel" and ws.get("caption"):
                             # Facebook caption from the locked cut: place + stakes, one question, credit, tags
                             upd["description"] = "\n".join(x for x in [
@@ -506,6 +512,12 @@ def publish(db):
                 upd["youtube_id"] = vid
                 if k == "episode":
                     set_thumbnail(db, it, vid)
+                    ab = (it.get("script") or {}).get("thumbnails") if isinstance(it.get("script"), dict) else None
+                    if ab and len(ab) > 1:
+                        # The YouTube API can't start a Test & Compare; Studio can. Thumbnail A is already set.
+                        db.alert("publisher", f"'{it['title']}' is live with thumbnail A. Start Test & Compare in "
+                                 f"Studio (https://studio.youtube.com/video/{vid}/edit → Thumbnail → Test & compare) "
+                                 f"with these {len(ab)}: " + " | ".join(ab), "warn")
                 if locked:
                     upd["publish_note"] = "Uploaded but locked private until Google audits the API app — publish in YouTube Studio"
                     db.alert("publisher", f"'{it['title']}' uploaded as PRIVATE (API audit pending) — set Public in Studio", "warn")
