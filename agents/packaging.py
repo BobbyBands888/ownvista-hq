@@ -5,7 +5,7 @@ import re
 FORMULAS = {
     "Person + action + twist": "Man Pulls Rifle on Border Agents, Then Makes One Mistake",
     "Situation + realization": "Driver Thinks He Lost the Deputies. He Didn't.",
-    "Place + incident + bodycam": "Las Cruces Shootout: Full Bodycam and What Happened Next",
+    "Place + incident + bodycam": "Las Cruces Shootout: Full Bodycam of the Desert Stop",
     "Outcome tease": "He Ran From Police. The Judge Wasn't Impressed.",
     "Number + stakes": "14 Minutes of Pursuit Ends in a Backyard",
 }
@@ -17,7 +17,7 @@ TITLE_RULES = ("YOUTUBE TITLE: use exactly ONE of these 5 formulas (examples sho
                + "\n".join(f"- {k}: \"{v}\"" for k, v in FORMULAS.items()) +
                f"\nUnder {MAX_TITLE} characters, Title Case, no ALL CAPS words, at most one emotional word, never promise "
                "something the footage doesn't show, no case name / 'Part' / channel name in the title. "
-               "Outcome tease only when the case file has the outcome.")
+               "Never promise an ending ('what happened next', 'the judge', 'sentenced', 'ends in') unless the case file has the outcome.")
 
 THUMB_RULES = ("THUMBNAIL TEXTS: 3 different options, 2-3 words each, ALL different, each about a DIFFERENT peak "
                "moment or angle (the stakes, the twist, the danger). Never repeat words already in the title, never "
@@ -29,9 +29,16 @@ def formula_of(name):
     return next((k for k in FORMULAS if k.lower() == n), None)
 
 
-def title_ok(title, formula):
+PROMISES_OUTCOME = re.compile(r"what happened next|how it ended|the ending|sentenced|sentence|verdict|judge|jury|"
+                              r"convicted|years in prison|\bends? in\b|\bended\b", re.I)
+
+
+def title_ok(title, formula, has_outcome=True):
+    """has_outcome=False (the case file has no outcome): no Outcome tease and no title that promises an ending."""
     t = str(title or "").strip()
     if not t or len(t) > MAX_TITLE or not formula_of(formula):
+        return False
+    if not has_outcome and (formula_of(formula) == "Outcome tease" or PROMISES_OUTCOME.search(t)):
         return False
     if re.search(r"\bpart\s*\d|ten-four tapes", t, re.I):
         return False
