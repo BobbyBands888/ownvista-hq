@@ -309,6 +309,15 @@ def loud_peaks(f, k=10):
     return sorted(out)
 
 
+def _cold_fallback(files, clips):
+    """Best 9s window anywhere usable; else the first 9s of the first clip (never crashes on an empty pick)."""
+    bw = best_windows(files, 9, 1)
+    if bw:
+        return bw[0]
+    c = clips[0]
+    return {"file": c["file"], "start": c["start"], "end": min(c["end"], c["start"] + 9)}
+
+
 def best_windows(files, length, count, used=None):
     used = list(used or [])
     cands = []
@@ -633,7 +642,7 @@ def pick_episode(files, plan, cache):
         if sum(c["end"] - c["start"] for c in clips) < min(360, total * 0.4):
             clips = []                      # AI cut was far too thin for the footage we have — use the fallback
         if clips:
-            result = {"cold_open": cold or best_windows(files, 9, 1)[0], "clips": clips}
+            result = {"cold_open": cold or _cold_fallback(files, clips), "clips": clips}
     except Exception:
         pass
     if not result:
@@ -649,13 +658,16 @@ def pick_episode(files, plan, cache):
             s = max(0, (active[0] if active else 0) - 15)
             e = min(f["duration"], (active[-1] if active else f["duration"]) + 15)
             if e - s > share:  # keep the best stretch of this file
-                s = max(0, best_windows([f], int(share), 1)[0]["start"])
+                bw = best_windows([f], int(share), 1)
+                if not bw:                  # nothing usable in this file (e.g. all aftermath): skip it
+                    continue
+                s = max(0, bw[0]["start"])
                 e = s + share
             if e - s >= 15:
                 clips += clean_clip(f, {"file": i, "start": float(s), "end": float(e)})
         if not clips:
             clips = [{"file": 0, "start": 0.0, "end": float(min(files[0]["duration"], target))}]
-        result = {"cold_open": best_windows(files, 9, 1)[0], "clips": clips}
+        result = {"cold_open": _cold_fallback(files, clips), "clips": clips}
     labels = (sc.get("angle_labels") or [])
     for n, c in enumerate(result["clips"]):
         if not c.get("label"):
