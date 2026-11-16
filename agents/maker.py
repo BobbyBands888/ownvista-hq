@@ -44,18 +44,40 @@ FORMAT = """Ten-Four Tapes format:
 STRONG = 8          # action_score at/above this = a full enforcement moment + place + stakes -> 3 Reels
 PART_RE = re.compile(r"\bpart\s*(\d|one|two|three)\b|\bpt\.?\s*\d|continued|next reel|follow for part", re.I)
 
-def reel_count(lead):
-    """Rescues get no Reels (160-700 views on our page). Strong cases get 3 single-moment Reels, the rest 2."""
+FATAL_RE = re.compile(r"\b(died|dies|dead|death|killed|fatal|deceased|pronounced)\b", re.I)
+
+
+def is_fatal(facts):
+    """True when the case file says someone died. Fatal cases keep getting blocked as Reels (the big moment is the
+    shooting), so they get one Reel from before anyone is hurt and go to the back of the queue."""
+    if not facts:
+        return False
+    if (facts.get("status") or "").lower() in ("deceased", "dead", "killed"):
+        return True
+    return bool(FATAL_RE.search(facts.get("outcome") or ""))
+
+
+def reel_count(lead, facts=None):
+    """How many standalone Reels a case gets. Facebook Reels are where the page's reach is, so long agency packages
+    (records requests: often hours of footage, many separate moments) get 4-5; short federal DVIDS clips 2-3;
+    fatal cases 1; rescues none (160-700 views on our page)."""
     if lead.get("category") == "rescue":
         return 0
-    return 3 if (lead.get("action_score") or 0) >= STRONG else 2
+    if is_fatal(facts):
+        return 1
+    strong = (lead.get("action_score") or 0) >= STRONG
+    if lead.get("source_type") != "dvids_public_domain":
+        return 5 if strong else 4
+    return 3 if strong else 2
 
 def _standalone(r):
     txt = " ".join(str(r.get(k) or "") for k in ("moment", "hook_text", "caption")).lower()
     return bool((r.get("moment") or "").strip()) and not PART_RE.search(txt)
 
 def plan(lead, playbook, rejects=(), facts=None, graded=None):
-    n_reels = reel_count(lead)
+    n_reels = reel_count(lead, facts)
+    fatal_note = (" Someone died in this case: the one Reel must END BEFORE any shot, strike or injury — the"
+                  " confrontation or the chase, never the outcome." if is_fatal(facts) else "")
     return llm.ask(
         "You are the head of production for Ten-Four Tapes. Write production plans that follow the format exactly "
         "and apply the playbook. Accuracy matters: only state facts present in the lead.\n" + RULES + "\n" + FORMAT,
@@ -81,7 +103,7 @@ Return JSON:
  "shorts":[{"part":1,"title":"<Case Name> Part 1","moment":"which moment to cut","on_screen_text":"",
    "intro_vo":"Part 1 only: 1-2 spoken sentences (max 24 words): place, who, why police were there","outcome_vo":"Part 3 only: how it ended (max 25 words) or \"\""}],
  "reels":[{"moment":"one single 25-30s action moment, different from the other reels","hook_text":"first 2s text","caption":"PLACE. STAKES of THIS moment (under 15 words) + one short question","hashtags":["#bodycam"],"intro_vo":"1-2 spoken sentences (max 24 words) the narrator reads over the opening seconds: place, who, why police were there","outcome_vo":"how it ended (max 25 words) or \"\""}]}
-3 shorts and """ + (f"exactly {n_reels} reels, each a different single moment in story order, each standalone."
+3 shorts and """ + (f"exactly {n_reels} reels, each a different single moment in story order, each standalone." + fatal_note
                     if n_reels else "no reels (\"reels\":[])."), max_tokens=2800, temperature=0.6)
 
 def scorecard_examples(db):
@@ -158,11 +180,13 @@ def main(db):
     pool = [l for l in pool if not any(m in (l.get("title") or "").lower() for m in made)]
     # enforcement action first (it's what the page's hits are), then case stories, then rescues
     rank = {"enforcement": 0, "case_story": 1, "other": 2, "rescue": 3}
-    pool.sort(key=lambda l: (rank.get(l.get("category") or "other", 2), -(l.get("action_score") or 0)))
+    # Case Desk must have researched who/why/outcome first; cases without a case file wait for its next run
+    files = {l["id"]: casefacts.get(db, l["id"]) for l in pool}
+    # within each category, cases where nobody died go first: they pass review and yield more Reels
+    pool.sort(key=lambda l: (rank.get(l.get("category") or "other", 2), is_fatal(files.get(l["id"])),
+                             -(l.get("action_score") or 0)))
     local = [l for l in pool if l.get("source_type") != "dvids_public_domain"]
     federal = [l for l in pool if l.get("source_type") == "dvids_public_domain"]
-    # Case Desk must have researched who/why/outcome first; cases without a case file wait for its next run
-    files = {l["id"]: casefacts.get(db, l["id"]) for l in pool[:12]}
     local = [l for l in local if files.get(l["id"])]
     federal = [l for l in federal if files.get(l["id"])]
     # 3 Shorts/day = 1 case/day. Local cases first; federal DVIDS (public domain, no request needed) is capped at 1
@@ -200,14 +224,14 @@ def main(db):
                          "case_name": case, "title": s.get("title") or f"{case} Part {s.get('part')}",
                          "description": f"Full episode on the channel. {credit}", "script": s,
                          "source_type": src_type, "source_credit": credit, "source_urls": [lead.get("source_url")]})
-        # 2-3 standalone single-moment Reels (3 for strong cases); rescues get the episode + Shorts only
+        # standalone single-moment Reels (count from reel_count); rescues get the episode + Shorts only
         reels, seen = [], set()
         for r in p.get("reels") or []:
             key = (r.get("moment") or "").strip().lower()[:60]
             if _standalone(r) and key not in seen:
                 seen.add(key)
                 reels.append(r)
-        for n, r in enumerate(reels[:reel_count(lead)], 1):
+        for n, r in enumerate(reels[:reel_count(lead, facts)], 1):
             r["reel_no"] = n
             rows.append({"lead_id": lead["id"], "kind": "reel", "parent_id": epi["id"], "part": None, "case_name": case,
                          "title": case, "description": (r.get("caption") or case) + f"\nFull episode on YouTube: Ten-Four Tapes\n{credit}"
