@@ -184,8 +184,10 @@ def seg_clip(src, info, s, e, W, H, out, overlays=(), vo_wav=None):
     return out
 
 
-def seg_card(card_png, out, vo_wav=None, min_dur=2.0, pad=0.7):
+def seg_card(card_png, out, vo_wav=None, min_dur=2.0, pad=0.7, max_dur=None):
     dur = max(min_dur, (media.wav_dur(vo_wav) + pad) if vo_wav else min_dur)
+    if max_dur:
+        dur = min(dur, max_dur)
     args = ["-loop", "1", "-t", round(dur, 2), "-i", card_png]
     if vo_wav:
         args += ["-i", vo_wav]
@@ -249,10 +251,21 @@ def build_episode(job, out):
     first_path, first_info = job.src(pk["clips"][0]["file"])
     bg = media.blurred_still(first_path, pk["clips"][0]["start"] + 3, W, H, job.p("png"))
 
-    # 2. title card (narrated, so there's no silent stretch)
+    # 2. title card: 3 seconds max (packaging rule). Narrated so there's no silent stretch, but only with a line
+    # that fits; a longer title_card line is read on the setup card instead.
     tc = sc.get("title_card") or job.plan.get("title") or case
-    segs.append(seg_card(png_card(bg, W, H, job.p("png"), kicker="Ten-Four Tapes", title=case, body=tc if tc != case else None),
-                         job.p("mp4"), job.vo(tc), min_dur=3))
+    tc_vo = job.vo(tc)
+    spill = None
+    if tc_vo and media.wav_dur(tc_vo) > TITLE_CARD_MAX - 0.5:
+        spill = tc if tc != case else None
+        tc_vo = job.vo(case)
+        if media.wav_dur(tc_vo) > TITLE_CARD_MAX - 0.5:
+            tc_vo = None
+    segs.append(seg_card(png_card(bg, W, H, job.p("png"), kicker="Ten-Four Tapes", title=case,
+                                  body=tc if tc != case and not spill else None),
+                         job.p("mp4"), tc_vo, min_dur=2.5, pad=0.4, max_dur=TITLE_CARD_MAX))
+    if spill and sc.get("narration_setup") and spill.lower() not in sc["narration_setup"].lower():
+        sc["narration_setup"] = spill.rstrip(".") + ". " + sc["narration_setup"]
 
     # 3. short narrated setup
     if sc.get("narration_setup"):
@@ -323,54 +336,94 @@ def build_vertical(job, out):
     concat(segs, out, job.work)
 
 
-# ---------------- YouTube thumbnail ----------------
+# ---------------- YouTube thumbnails (3 variants for Test & Compare) ----------------
 THUMB_W, THUMB_H = 1280, 720
+THUMB_ZOOM = 1.35            # crop in so the subject fills the frame (bigger subjects read on a phone)
+TITLE_CARD_MAX = 3.0         # seconds: the title card never holds the viewer longer than this
 SAFE_VIEWS = ("outside", "road_ahead", "indoor")
+MOMENT_GAP_S = 20            # variants come from different peaks, not neighbouring frames
 
 
-def thumb_moment(job):
-    """(file index, seconds) of the strongest SAFE frame inside the episode's cut: highest vision action, never a
-    frame tagged child or gore. Without vision data: the loudest stretch of the cold open (already a checked pick)."""
+def thumb_moments(job, k=3):
+    """Up to k (file index, seconds) of the strongest SAFE frames inside the episode's cut, each from a different
+    peak: highest vision action, never a frame tagged child or gore. Without vision data: loudest peaks."""
     pk = job.pick
     wins = [pk["cold_open"]] + list(pk.get("clips") or [])
-    best = None
+    cands = []
     for w in wins:
         f = job.files[w["file"]]
         for v in f.get("vision") or []:
             if not (w["start"] + 1 <= v["t"] <= w["end"] - 1) or v.get("child") or v.get("gore"):
                 continue
-            score = (v.get("action") or 0) * 10 + (3 if v.get("view") in SAFE_VIEWS else -20) + (1 if w is wins[0] else 0)
-            if best is None or score > best[0]:
-                best = (score, w["file"], v["t"])
-    if best and best[0] >= 20:          # action 2+ in a usable view
-        return best[1], best[2]
-    co = pk["cold_open"]
-    f = job.files[co["file"]]
-    peaks = [s for s, _ in picker.loud_peaks(f, 10) if co["start"] <= s + 2 <= co["end"]]
-    t = (peaks[0] + 2) if peaks else (co["start"] + co["end"]) / 2
-    if picker.looks_bad(f, max(0, t - 1), t + 1):
-        t = (co["start"] + co["end"]) / 2
-    return co["file"], t
+            score = (v.get("action") or 0) * 10 + (3 if v.get("view") in SAFE_VIEWS else -20)
+            if score >= 20:                          # action 2+ in a usable view
+                cands.append((score, w["file"], v["t"]))
+        for s_, _ in picker.loud_peaks(f, 10):       # audio peaks fill in when vision is thin
+            t = s_ + 2
+            if w["start"] + 1 <= t <= w["end"] - 1 and not picker.looks_bad(f, max(0, t - 1), t + 1):
+                cands.append((15, w["file"], t))
+    cands.sort(key=lambda c: -c[0])
+    out = []
+    for _, i, t in cands:
+        if all(i != j or abs(t - u) >= MOMENT_GAP_S for j, u in out):
+            out.append((i, t))
+        if len(out) == k:
+            break
+    if not out:
+        co = pk["cold_open"]
+        out = [(co["file"], (co["start"] + co["end"]) / 2)]
+    return out
 
 
-def build_thumbnail(job, out_jpg):
-    """1280x720 JPEG under 2MB: punched-up action frame, dark fade behind big stroked thumbnail_text (last word gold),
-    red BODY CAM tag, channel mark. Text is the Maker's thumbnail_text (max 4 words, checked by Compliance)."""
+def anchor_cold_open(job):
+    """The cold open shows the exact moment on thumbnail A: re-centre it on the #1 thumbnail frame (that frame
+    lands ~6s in). Keeps the picker's cold open if the new window would include unsafe or dead frames."""
+    if job.plan.get("kind") != "episode" or not job.pick:
+        return
+    i, t = thumb_moments(job, 1)[0]
+    co = job.pick["cold_open"]
+    if co["file"] == i and co["start"] + 1 <= t <= co["end"] - 1:
+        job.thumb_anchor = (i, t)
+        return
+    f = job.files[i]
+    s = max(0.0, t - 6)
+    e = min(f["duration"], s + 10)
+    s = max(0.0, e - 10)
+    if e - s >= 5 and not picker.looks_bad(f, s, e, min_action=1.0, max_dull=0.3):
+        job.pick["cold_open"] = {"file": i, "start": round(s, 2), "end": round(e, 2)}
+        LOG(f"cold open moved to file {i} {s:.0f}-{e:.0f}s so it shows thumbnail A's moment")
+        job.thumb_anchor = (i, t)
+
+
+def _thumb_text(job, n):
+    texts = [str(x) for x in (job.sc.get("thumbnail_texts") or []) if str(x).strip()]
+    if job.sc.get("thumbnail_text") and job.sc["thumbnail_text"] not in texts:
+        texts.insert(0, job.sc["thumbnail_text"])
+    if not texts:
+        texts = [job.plan.get("case_name") or ""]
+    return " ".join(texts[n % len(texts)].upper().split()[:3])     # fewer words: 3 max (packaging.thumb_texts already drops longer ones)
+
+
+def build_thumbnail(job, out_jpg, moment=None, text=None):
+    """1280x720 JPEG under 2MB: punched-up action frame zoomed so the subject is big, dark fade behind 2-3 big
+    stroked words (last word gold), red BODY CAM tag, channel mark."""
     from PIL import ImageEnhance, ImageFilter
-    i, t = thumb_moment(job)
+    i, t = moment or thumb_moments(job, 1)[0]
     path, _ = job.src(i)
     raw = job.p("png")
+    zw, zh = int(THUMB_W * THUMB_ZOOM), int(THUMB_H * THUMB_ZOOM)
+    # zoom in, keep the frame's centre-right (the subject side; text sits on the left)
     media.ff("-ss", round(max(0, t), 2), "-i", path, "-frames:v", "1", "-vf",
-             f"scale={THUMB_W}:{THUMB_H}:force_original_aspect_ratio=increase,crop={THUMB_W}:{THUMB_H}", raw)
+             f"scale={zw}:{zh}:force_original_aspect_ratio=increase,"
+             f"crop={THUMB_W}:{THUMB_H}:(iw-{THUMB_W})*0.62:(ih-{THUMB_H})*0.45", raw)
     im = Image.open(raw).convert("RGB")
-    im = ImageEnhance.Contrast(im).enhance(1.25)
+    im = ImageEnhance.Contrast(im).enhance(1.3)
     im = ImageEnhance.Color(im).enhance(1.3)
-    im = ImageEnhance.Sharpness(im).enhance(1.5)
-    # dark fade from the left (text side) + light vignette
+    im = ImageEnhance.Sharpness(im).enhance(1.6)
     fade = Image.new("L", (THUMB_W, THUMB_H), 0)
     fd = ImageDraw.Draw(fade)
     for x in range(THUMB_W):
-        fd.line([(x, 0), (x, THUMB_H)], fill=int(205 * max(0.0, 1 - x / (THUMB_W * 0.62)) ** 1.4))
+        fd.line([(x, 0), (x, THUMB_H)], fill=int(200 * max(0.0, 1 - x / (THUMB_W * 0.5)) ** 1.4))
     im = Image.composite(Image.new("RGB", im.size, (0, 0, 0)), im, fade)
     vig = Image.new("L", im.size, 0)
     ImageDraw.Draw(vig).ellipse([-200, -160, THUMB_W + 200, THUMB_H + 160], fill=255)
@@ -378,32 +431,30 @@ def build_thumbnail(job, out_jpg):
     im = Image.composite(im, Image.new("RGB", im.size, (0, 0, 0)), vig)
     d = ImageDraw.Draw(im)
 
-    words = (job.sc.get("thumbnail_text") or job.plan.get("case_name") or "").upper().split()[:4]
-    text = " ".join(words)
+    text = text if text is not None else _thumb_text(job, 0)
+    words = text.split()
     if text:
-        maxw = int(THUMB_W * 0.56)
-        f = media.fit_font(d, text, "black", 150, maxw, 2)
+        maxw = int(THUMB_W * 0.46)                   # text stays on the left ~half; the subject owns the rest
+        f = media.fit_font(d, text, "black", 170, maxw, 2)
         lines = media.wrap(d, text, f, maxw)
         lh = int(f.size * 1.02)
         y = (THUMB_H - lh * len(lines)) // 2 + 20
         last = words[-1]
         for n, line in enumerate(lines):
-            x = 56
+            x = 52
             if n == len(lines) - 1 and len(words) > 1 and line.endswith(last):
                 head = line[: -len(last)]
-                d.text((x, y), head, font=f, fill=WHITE, stroke_width=9, stroke_fill=(0, 0, 0))
-                d.text((x + d.textlength(head, font=f), y), last, font=f, fill=GOLD, stroke_width=9, stroke_fill=(0, 0, 0))
+                d.text((x, y), head, font=f, fill=WHITE, stroke_width=10, stroke_fill=(0, 0, 0))
+                d.text((x + d.textlength(head, font=f), y), last, font=f, fill=GOLD, stroke_width=10, stroke_fill=(0, 0, 0))
             else:
-                d.text((x, y), line, font=f, fill=WHITE, stroke_width=9, stroke_fill=(0, 0, 0))
+                d.text((x, y), line, font=f, fill=WHITE, stroke_width=10, stroke_fill=(0, 0, 0))
             y += lh
-    # red BODY CAM tag, top-left
     tf = media.font("black", 38)
     tag = "BODY CAM"
     tw = d.textlength(tag, font=tf)
     d.rectangle([40, 36, 40 + tw + 84, 36 + 66], fill=RED)
     d.ellipse([62, 58, 84, 80], fill=WHITE)
     d.text((100, 47), tag, font=tf, fill=WHITE)
-    # channel mark, bottom-right
     mf = media.font("black", 26)
     mark = "TEN-FOUR TAPES"
     mw = d.textlength(mark, font=mf)
@@ -418,6 +469,22 @@ def build_thumbnail(job, out_jpg):
         q -= 10
     LOG(f"thumbnail {Path(out_jpg).name}: file {i} at {t:.0f}s, text '{text}'")
     return out_jpg
+
+
+def build_thumbnails(job, out_base):
+    """A/B/C for YouTube Test & Compare. A = the cold-open moment; B and C = other peaks in the episode, each with
+    its own 2-3 words. Returns the paths that built (A first)."""
+    moments = thumb_moments(job, 3)
+    anchor = getattr(job, "thumb_anchor", None)
+    if anchor:
+        moments = [anchor] + [m for m in moments if m[0] != anchor[0] or abs(m[1] - anchor[1]) >= MOMENT_GAP_S][:2]
+    paths = []
+    for n, (m, tag) in enumerate(zip(moments, ("thumb", "thumbB", "thumbC"))):
+        try:
+            paths.append(build_thumbnail(job, str(Path(out_base).with_suffix(f".{tag}.jpg")), m, _thumb_text(job, n)))
+        except Exception as e:
+            LOG(f"thumbnail {tag} error: {str(e)[:200]}")
+    return paths
 
 
 def render(plan_path, footage, out):
@@ -440,15 +507,17 @@ def render(plan_path, footage, out):
             # every 24s+ stretch with visible action is already in another Reel of this case
             print("NOT ENOUGH FOOTAGE: no fresh moment left for another standalone Reel of this case")
             sys.exit(3)
+        anchor_cold_open(job)                           # before the Writer, so the hook matches the new cold open
         import writer
         written = writer.write(job, log=LOG)            # words are written from the locked cut, not the plan
         LOG(f"{plan['kind']} '{plan.get('title')}' picks: {json.dumps(job.pick)[:400]}")
         Path(out).parent.mkdir(parents=True, exist_ok=True)
-        thumb = None
+        thumb, thumbs = None, []
         if plan["kind"] == "episode":
             build_episode(job, out)
             try:                                    # a thumbnail problem never blocks the episode
-                thumb = build_thumbnail(job, str(Path(out).with_suffix(".thumb.jpg")))
+                thumbs = build_thumbnails(job, out)
+                thumb = thumbs[0] if thumbs else None
             except Exception as e:
                 LOG(f"thumbnail error: {str(e)[:200]}")
         else:
@@ -457,7 +526,7 @@ def render(plan_path, footage, out):
         cut = None
         if plan["kind"] == "reel":                  # saved on the plan so the case's other Reels avoid these seconds
             cut = {"path": job.files[job.pick["file"]]["path"], "start": job.pick["start"], "end": job.pick["end"]}
-        Path(str(out) + ".script.json").write_text(json.dumps({"script": job.sc, "written": bool(written), "cut": cut, "thumb": thumb,
+        Path(str(out) + ".script.json").write_text(json.dumps({"script": job.sc, "written": bool(written), "cut": cut, "thumb": thumb, "thumbs": thumbs,
                                                                 "fixed": written.get("problems") or []}, default=str))
     finally:
         shutil.rmtree(work, ignore_errors=True)

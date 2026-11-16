@@ -4,6 +4,10 @@ so the text always matches the picture. Facts stay limited to what the plan alre
 from the lead and Compliance checked it). The Maker's lines are treated as drafts.
 Fails soft: if the AI is down, the Maker's drafts are used, minus any line the check flags."""
 import json
+import sys
+from pathlib import Path
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from agents import packaging
 
 RULES = """Rules: on-screen text and narration may only describe what the frames/transcript show for that moment,
 plus facts from FACTS. Never invent arrests, charges, injuries, names, motives or outcomes. No graphic or gory
@@ -62,12 +66,23 @@ Write:
   road_ahead/windshield footage is "Dash Cam"
 - what_happened_next: outcome from FACTS only, or "" if FACTS don't say
 - comment_question: one short question about what the viewer just saw
+- title + title_formula: the YouTube title, written for THIS cut (the cold open moment is what thumbnail A shows)
+- thumbnail_texts: 3 options; option 1 is for the cold open moment, 2 and 3 for other peaks in the clips
+{packaging.TITLE_RULES}
+{packaging.THUMB_RULES}
 Return JSON {{"cold_open_hook":"","narration_setup":"","check_ins":[""],"labels":[""],"what_happened_next":"",
-"comment_question":""}}""")
+"comment_question":"","title":"","title_formula":"","thumbnail_texts":["","",""]}}""")
     out = {}
     for k in ("cold_open_hook", "narration_setup", "what_happened_next", "comment_question"):
         if isinstance(j.get(k), str):
             out[k] = j[k].strip()
+    if packaging.title_ok(j.get("title"), j.get("title_formula")):
+        out["title"] = j["title"].strip()
+        out["title_formula"] = packaging.formula_of(j["title_formula"])
+    tt = packaging.thumb_texts(j.get("thumbnail_texts"), out.get("title") or job.plan.get("title"))
+    if tt:
+        out["thumbnail_texts"] = tt
+        out["thumbnail_text"] = tt[0]
     if isinstance(j.get("check_ins"), list):
         out["check_ins"] = [str(x).strip() for x in j["check_ins"]][:max(0, len(clips) - 1)]
     if isinstance(j.get("labels"), list):
@@ -142,6 +157,12 @@ def check(job, written):
              'support (rewrite them so they are supported, or "" if nothing fits). Also add "problems":["..."] '
              'listing what you changed.')
     fixed = {k: j[k] for k in written if k in j and type(j[k]) is type(written[k])}
+    if "title" in fixed and not packaging.title_ok(fixed["title"], fixed.get("title_formula") or written.get("title_formula")):
+        fixed.pop("title")                  # the check broke the formula/length: keep the checked original
+    if "thumbnail_texts" in fixed:
+        fixed["thumbnail_texts"] = packaging.thumb_texts(fixed["thumbnail_texts"], fixed.get("title") or written.get("title")) \
+            or written["thumbnail_texts"]
+        fixed["thumbnail_text"] = fixed["thumbnail_texts"][0]
     return {**written, **fixed, "problems": j.get("problems") or []}
 
 

@@ -6,6 +6,7 @@ import re
 from .lib import llm
 from .lib.runner import RULES
 from . import casefacts
+from . import packaging
 
 FORMAT = """Ten-Four Tapes format:
 - Every case gets a short, unique CASE NAME (e.g. "Backyard Shootout", "Bee Swarm") used on the Reel badge,
@@ -29,6 +30,8 @@ FORMAT = """Ten-Four Tapes format:
   short question, then 3-4 hashtags. Our page data: these get 37K-106K views; "Case Name — generic summary" captions
   and rescue Reels get under 1K.
 - Titles: specific and dramatic but accurate. Never show the death itself, gore or a lingering body; blur bystanders as needed.
+- """ + packaging.TITLE_RULES + """
+- """ + packaging.THUMB_RULES + """
 - FACTS: every narration line, check-in and "what happened next" must be stated in the lead text. Never invent an
   outcome (arrest, custody, charges, injuries, deaths). If the lead doesn't say how it ended, leave
   what_happened_next as "" — a wrong outcome is worse than none. If the lead says someone died, say so plainly
@@ -68,12 +71,12 @@ def plan(lead, playbook, rejects=(), facts=None, graded=None):
 Return JSON:
 {"case_name":"2-3 words",
  "credit":"Footage: <agency> (<public domain | public records request | official release>)",
- "episode":{"style":"case_story|action","title":"","description":"includes context + credit + no spoilers in first line",
+ "episode":{"style":"case_story|action","title":"one of the 5 formulas, under 60 chars","title_formula":"the formula used","description":"includes context + credit + no spoilers in first line",
    "tags":[""],"cold_open_hook":"on-screen text, under 12 words","title_card":"",
    "narration_setup":"max 3 short sentences","check_ins":["max 4 brief lines"],
    "angle_labels":["Body Cam Officer 1"],"what_happened_next":"","comment_question":"",
-   "thumbnail_text":"2-4 words in big letters over the peak action frame: the stakes or the twist, true to the lead, not the case name or the title repeated, no gore words","blur_notes":"anything that must be blurred or cut (bodies, bystanders, IDs)",
-   "analysis_tags":{"pillar":"Case File|Pursuit|Border|Update","title_formula":"Person + action + twist|Situation + realization|Place + incident + bodycam|Outcome tease|Number + stakes|Other","thumbnail_type":"weapon|crash|face|scene","case_type":"pursuit|shooting|standoff|rescue|death in story|other"}},
+   "thumbnail_texts":["3 options, 2-3 words each, big letters over 3 different peak frames: the stakes or the twist, true to the lead, not the case name or the title repeated, no gore words"],"blur_notes":"anything that must be blurred or cut (bodies, bystanders, IDs)",
+   "analysis_tags":{"pillar":"Case File|Pursuit|Border|Update","title_formula":"Person + action + twist|Situation + realization|Place + incident + bodycam|Outcome tease|Number + stakes","thumbnail_type":"weapon|crash|face|scene","case_type":"pursuit|shooting|standoff|rescue|death in story|other"}},
  "shorts":[{"part":1,"title":"<Case Name> Part 1","moment":"which moment to cut","on_screen_text":"",
    "intro_vo":"Part 1 only: 1-2 spoken sentences (max 24 words): place, who, why police were there","outcome_vo":"Part 3 only: how it ended (max 25 words) or \"\""}],
  "reels":[{"moment":"one single 25-30s action moment, different from the other reels","hook_text":"first 2s text","caption":"PLACE. STAKES of THIS moment (under 15 words) + one short question","hashtags":["#bodycam"],"intro_vo":"1-2 spoken sentences (max 24 words) the narrator reads over the opening seconds: place, who, why police were there","outcome_vo":"how it ended (max 25 words) or \"\""}]}
@@ -112,6 +115,31 @@ def analysis_tags(raw, lead):
                              else "Other")
     tags["narration"] = "AI"
     return tags
+
+def fix_packaging(ep, lead, facts):
+    """Title from one of the 5 formulas (one retry if the plan missed), 3 thumbnail texts."""
+    f = packaging.formula_of(ep.get("title_formula") or (ep.get("analysis_tags") or {}).get("title_formula"))
+    if not packaging.title_ok(ep.get("title"), f):
+        try:
+            j = llm.ask("You title police bodycam episodes for YouTube. Accuracy first: only facts in the lead.",
+                        packaging.TITLE_RULES + "\n\n" + packaging.THUMB_RULES +
+                        "\n\nLead:\n" + json.dumps({k: lead.get(k) for k in ("title", "agency_name", "state", "summary")}) +
+                        "\nCase file: " + json.dumps(facts or {})[:1500] +
+                        f"\nRejected title: {ep.get('title')!r}\n"
+                        'Return JSON {"title":"","title_formula":"","thumbnail_texts":["","",""]}',
+                        max_tokens=300, temperature=0.5)
+            if packaging.title_ok(j.get("title"), j.get("title_formula")):
+                ep["title"], f = j["title"].strip(), packaging.formula_of(j["title_formula"])
+                ep["thumbnail_texts"] = ep.get("thumbnail_texts") or j.get("thumbnail_texts")
+        except Exception:
+            pass
+    tt = packaging.thumb_texts((ep.get("thumbnail_texts") or []) + [ep.get("thumbnail_text") or ""], ep.get("title"))
+    if tt:
+        ep["thumbnail_texts"], ep["thumbnail_text"] = tt, tt[0]
+    ep.setdefault("analysis_tags", {})
+    if isinstance(ep["analysis_tags"], dict):
+        ep["analysis_tags"]["title_formula"] = f or "Other"
+    return ep
 
 def _sources(ep, facts):
     if not facts or not facts.get("sources") or "Sources:" in (ep.get("description") or ""):
@@ -157,6 +185,7 @@ def main(db):
         case = p.get("case_name") or lead["title"][:30]
         credit = p.get("credit") or f"Footage: {lead.get('agency_name')}"
         src_type = lead["source_type"]
+        ep = fix_packaging(ep, lead, facts)
         ep["analysis_tags"] = analysis_tags(ep.get("analysis_tags"), lead)
         epi = db.insert("content", {
             "lead_id": lead["id"], "kind": "episode", "case_name": case, "title": ep.get("title"),
