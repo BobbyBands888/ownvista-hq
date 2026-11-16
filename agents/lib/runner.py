@@ -8,7 +8,9 @@ RULES = """Ten-Four Tapes channel rules (never break these):
   or be public-domain federal footage (DVIDS). Never news-station clips, never other YouTubers' uploads,
   never downloaded from YouTube.
 - No minors on camera in any capacity.
-- Cases involving a death are OK, but never show the death itself, gore, or a lingering body.
+- Cases involving a death are OK. The force itself may be shown; what follows once someone goes down (the body,
+  injuries, CPR) is only ever shown FULLY BLURRED by the renderer, max 20s, in long-form episodes only — never in
+  thumbnails, cold opens, Shorts or Reels. No unblurred gore or body, ever.
 - Credit the agency on every video.
 - No spending money of any kind. Any fee quote goes to Bobby; nothing is paid.
 - We never reply to comments.

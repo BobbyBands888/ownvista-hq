@@ -32,7 +32,7 @@ def review(item, lead=None, facts=None):
         'plan could show the person dying, dead or badly wounded — fail it; an outcome worded more strongly than the case file '
         '(charges called a conviction, "is a thief" before a verdict) — fail it; a named person when the case file says '
         'say_name is false — fail it; graphic or shocking words in title/thumbnail text; misleading or clickbait claims not supported by '
-        'the script; any sign a minor appears; any plan to show a death, gore or a lingering body; missing educational/'
+        'the script; any sign a minor appears; any plan to show unblurred gore, a body or a death (the renderer fully blurs aftermath in episodes — that is allowed); any death imagery planned for a thumbnail, Short or Reel; missing educational/'
         'documentary context in the description; personal info (addresses, phone numbers) of private people.\n'
         'Return JSON {"verdict":"pass|fail","issues":["..."],"required_edits":["blur/cut/rename instructions for the render"],'
         '"minor_present":true|false|null}', max_tokens=700, temperature=0.1)

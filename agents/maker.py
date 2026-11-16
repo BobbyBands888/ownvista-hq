@@ -29,7 +29,8 @@ FORMAT = """Ten-Four Tapes format:
   (e.g. "Quemado, Texas. A man swinging tree branches has already hit a Border Patrol agent in the head."), then one
   short question, then 3-4 hashtags. Our page data: these get 37K-106K views; "Case Name — generic summary" captions
   and rescue Reels get under 1K.
-- Titles: specific and dramatic but accurate. Never show the death itself, gore or a lingering body; blur bystanders as needed.
+- Titles: specific and dramatic but accurate. Unblurred gore or a body is never shown; in episodes the renderer shows
+  the aftermath fully blurred (max 20s); Shorts, Reels and thumbnails never include it. Blur bystanders as needed.
 - """ + packaging.TITLE_RULES + """
 - """ + packaging.THUMB_RULES + """
 - FACTS: every narration line, check-in and "what happened next" must be stated in the lead text. Never invent an
