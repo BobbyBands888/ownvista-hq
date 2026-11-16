@@ -43,6 +43,116 @@ def youtube(db):
                                  "duration": v["contentDetails"]["duration"], **w}})
     return rows
 
+# ---------------- deeper YouTube numbers (packaging, traffic, retention, money) ----------------
+YTA = "https://youtubeanalytics.googleapis.com/v2/reports"
+DEEP_DAYS = 60            # traffic + retention are pulled for videos published in the last 60 days
+RETENTION_MIN_S = 120     # long-form only; Shorts curves are too short to read
+
+def _yta(params):
+    """One YouTube Analytics report. Returns (columns, rows) or raises with YouTube's own message."""
+    end = date.today()
+    base = {"ids": "channel==MINE", "startDate": (end - timedelta(days=365)).isoformat(), "endDate": end.isoformat()}
+    r = requests.get(YTA, headers={"Authorization": f"Bearer {access_token('youtube')}"}, params={**base, **params}, timeout=30)
+    if r.status_code >= 300:
+        raise RuntimeError(f"YouTube Analytics {r.status_code}: {r.text[:200]}")
+    j = r.json()
+    return [c["name"] for c in j.get("columnHeaders", [])], j.get("rows", [])
+
+def _by_video(metrics):
+    cols, rows = _yta({"metrics": metrics, "dimensions": "video", "sort": "-views" if "views" in metrics else None,
+                       "maxResults": 200})
+    return {row[0]: dict(zip(cols[1:], row[1:])) for row in rows}
+
+def packaging(ids):
+    """Impressions + click-through rate per video. YouTube only exposes these for some channels; if it refuses,
+    the weekly review reads them from Studio instead (the doc's fallback)."""
+    try:
+        return _by_video("views,videoThumbnailImpressions,videoThumbnailImpressionsClickRate"), None
+    except Exception as e:
+        return {}, str(e)[:160]
+
+def money():
+    """Revenue, RPM and monetized playbacks — only works after the channel is in the Partner Program."""
+    try:
+        return _by_video("views,estimatedRevenue,rpm,monetizedPlaybacks"), None
+    except Exception as e:
+        return {}, str(e)[:160]
+
+def traffic(vid):
+    cols, rows = _yta({"metrics": "views", "dimensions": "insightTrafficSourceType", "filters": f"video=={vid}",
+                       "sort": "-views"})
+    total = sum(r[1] for r in rows) or 0
+    return {r[0]: {"views": r[1], "share": round(r[1] / total, 3) if total else 0} for r in rows}
+
+def retention(vid, duration_s):
+    """Audience retention curve (100 points). Finds the biggest drop and biggest spike and the second they happen."""
+    cols, rows = _yta({"metrics": "audienceWatchRatio,relativeRetentionPerformance",
+                       "dimensions": "elapsedVideoTimeRatio", "filters": f"video=={vid};audienceType==ORGANIC"})
+    pts = sorted((r[0], r[1], r[2] if len(r) > 2 else None) for r in rows)
+    if len(pts) < 10:
+        return None
+    sec = lambda ratio: int(ratio * duration_s)
+    # skip the first 3% — every video loses people in the opening seconds, that's not a "cliff"
+    steps = [(pts[i][0], pts[i][1] - pts[i - 1][1]) for i in range(1, len(pts)) if pts[i][0] > 0.03]
+    drop = min(steps, key=lambda s: s[1]) if steps else None
+    spike = max(steps, key=lambda s: s[1]) if steps else None
+    at30 = next((p[1] for p in pts if sec(p[0]) >= 30), None)
+    rel = [p[2] for p in pts if p[2] is not None]
+    return {"retention_at_30s": round(at30, 3) if at30 is not None else None,
+            "biggest_drop": {"second": sec(drop[0]), "change": round(drop[1], 3)} if drop and drop[1] < 0 else None,
+            "biggest_spike": {"second": sec(spike[0]), "change": round(spike[1], 3)} if spike and spike[1] > 0 else None,
+            "relative_retention": round(sum(rel) / len(rel), 3) if rel else None}
+
+def deepen(db, rows):
+    """Adds packaging, traffic, retention, subs/1K and money to the YouTube rows (stored in metrics.raw)."""
+    from .lib.google import iso_duration_to_s
+    vids = [r for r in rows if r["platform"] == "youtube" and r["external_id"] != "channel"]
+    if not vids:
+        return []
+    notes = []
+    pack, perr = packaging([r["external_id"] for r in vids])
+    cash, _ = money()
+    if perr:
+        notes.append("impressions/CTR not exposed by YouTube for us yet — read them from Studio in the weekly review")
+    cutoff = datetime.now(timezone.utc) - timedelta(days=DEEP_DAYS)
+    log = db.setting("retention_log", []) or []
+    logged = {e["video"] for e in log}
+    deep_calls = 0
+    for r in vids:
+        raw, vid = r["raw"], r["external_id"]
+        p = pack.get(vid, {})
+        if p:
+            raw["impressions"] = p.get("videoThumbnailImpressions")
+            ctr = p.get("videoThumbnailImpressionsClickRate")
+            raw["ctr"] = round(ctr / 100, 4) if ctr is not None else None   # API gives a percent (4.5 = 4.5%)
+        c = cash.get(vid, {})
+        if c:
+            raw.update({"revenue": c.get("estimatedRevenue"), "rpm": c.get("rpm"), "monetized_playbacks": c.get("monetizedPlaybacks")})
+        if r.get("views"):
+            raw["subs_per_1k"] = round(1000 * (raw.get("subs") or 0) / r["views"], 2)
+        published = datetime.fromisoformat(raw["published"].replace("Z", "+00:00"))
+        dur = iso_duration_to_s(raw.get("duration") or "PT0S")
+        raw["duration_s"] = dur
+        if published < cutoff or deep_calls >= 30:          # keep within the free API quota
+            continue
+        try:
+            raw["traffic"] = traffic(vid)
+            deep_calls += 1
+            if dur >= RETENTION_MIN_S and (r.get("views") or 0) >= 50:
+                ret = retention(vid, dur)
+                deep_calls += 1
+                if ret:
+                    raw["retention"] = ret
+                    age_d = (datetime.now(timezone.utc) - published).days
+                    if vid not in logged and age_d >= 2:     # one log line per episode, once it has 48h of data
+                        log.insert(0, {"video": vid, "title": raw.get("title"), "logged_on": date.today().isoformat(), **ret})
+                        logged.add(vid)
+        except Exception as e:
+            notes.append(f"{vid}: {str(e)[:100]}")
+    db.insert("settings", {"key": "retention_log", "value": log[:100], "updated_at": datetime.now(timezone.utc).isoformat()},
+              upsert=True, on_conflict="key")
+    return notes
+
 def facebook(db):
     if not (config.FB_PAGE_ID and config.FB_PAGE_TOKEN):
         return []
@@ -69,7 +179,9 @@ def insights(db, rows):
     vids.sort(key=lambda r: -(r["views"] or 0))
     brief = lambda r: {"platform": r["platform"], "views": r["views"], "watch_min": r.get("watch_minutes"),
                        "title": r["raw"].get("title") or r["raw"].get("caption"), "duration": r["raw"].get("duration"),
-                       "avg_view_pct": r["raw"].get("avg_pct")}
+                       "avg_view_pct": r["raw"].get("avg_pct"), "ctr": r["raw"].get("ctr"),
+                       "subs_per_1k": r["raw"].get("subs_per_1k"),
+                       "top_traffic": max((r["raw"].get("traffic") or {"?": {"share": 0}}).items(), key=lambda t: t[1]["share"])[0]}
     out = llm.ask("You analyze our own channel numbers for Ten-Four Tapes. Say what is working for US and what to "
                   "do more or less of. Specific, evidence-based, no fluff.",
                   "Top:\n" + json.dumps([brief(r) for r in vids[:12]]) + "\nBottom:\n" + json.dumps([brief(r) for r in vids[-8:]]) +
@@ -184,6 +296,11 @@ def main(db):
         except Exception as e:
             errs.append(f"{name}: {e}")
             db.alert("analytics", f"{name} pull failed: {e}", "warn")
+    deep = []
+    try:
+        deep = deepen(db, rows)
+    except Exception as e:
+        errs.append(f"deep youtube: {e}")
     today = date.today().isoformat()
     for r in rows:
         r["captured_on"] = today
@@ -192,6 +309,11 @@ def main(db):
     rows = [{k: r.get(k) for k in keys} for r in rows]
     db.insert("metrics", rows, upsert=True, on_conflict="captured_on,platform,external_id")
     n = insights(db, rows)
+    from . import reports
+    try:
+        fired = reports.alerts(db, rows)
+    except Exception as e:
+        fired, errs = 0, errs + [f"alerts: {e}"]
     try:
         g = scorecard(db, rows)
         sc = f", scorecard graded {len(g)}"
@@ -201,4 +323,5 @@ def main(db):
             sc = ", scorecard waiting on SQL"
         else:
             raise
-    return f"saved {len(rows)} metric rows, {n} new insights{sc}" + (f"; errors: {errs}" if errs else "")
+    return (f"saved {len(rows)} metric rows, {n} new insights{sc}, {fired} alerts"
+            + (f"; notes: {deep[:3]}" if deep else "") + (f"; errors: {errs}" if errs else ""))

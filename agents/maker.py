@@ -72,7 +72,8 @@ Return JSON:
    "tags":[""],"cold_open_hook":"on-screen text, under 12 words","title_card":"",
    "narration_setup":"max 3 short sentences","check_ins":["max 4 brief lines"],
    "angle_labels":["Body Cam Officer 1"],"what_happened_next":"","comment_question":"",
-   "thumbnail_text":"2-4 words in big letters over the peak action frame: the stakes or the twist, true to the lead, not the case name or the title repeated, no gore words","blur_notes":"anything that must be blurred or cut (bodies, bystanders, IDs)"},
+   "thumbnail_text":"2-4 words in big letters over the peak action frame: the stakes or the twist, true to the lead, not the case name or the title repeated, no gore words","blur_notes":"anything that must be blurred or cut (bodies, bystanders, IDs)",
+   "analysis_tags":{"pillar":"Case File|Pursuit|Border|Update","title_formula":"Person + action + twist|Situation + realization|Place + incident + bodycam|Outcome tease|Number + stakes|Other","thumbnail_type":"weapon|crash|face|scene","case_type":"pursuit|shooting|standoff|rescue|death in story|other"}},
  "shorts":[{"part":1,"title":"<Case Name> Part 1","moment":"which moment to cut","on_screen_text":"",
    "intro_vo":"Part 1 only: 1-2 spoken sentences (max 24 words): place, who, why police were there","outcome_vo":"Part 3 only: how it ended (max 25 words) or \"\""}],
  "reels":[{"moment":"one single 25-30s action moment, different from the other reels","hook_text":"first 2s text","caption":"PLACE. STAKES of THIS moment (under 15 words) + one short question","hashtags":["#bodycam"],"intro_vo":"1-2 spoken sentences (max 24 words) the narrator reads over the opening seconds: place, who, why police were there","outcome_vo":"how it ended (max 25 words) or \"\""}]}
@@ -88,6 +89,29 @@ def scorecard_examples(db):
         return {}
     ex = {"A": [p for p in posts if p["grade"] == "A"][:6], "D": [p for p in posts if p["grade"] == "D"][:6]}
     return ex if ex["A"] or ex["D"] else {}
+
+TAG_CHOICES = {
+    "pillar": ("Case File", "Pursuit", "Border", "Update"),
+    "title_formula": ("Person + action + twist", "Situation + realization", "Place + incident + bodycam",
+                      "Outcome tease", "Number + stakes", "Other"),
+    "thumbnail_type": ("weapon", "crash", "face", "scene"),
+    "case_type": ("pursuit", "shooting", "standoff", "rescue", "death in story", "other"),
+}
+
+def analysis_tags(raw, lead):
+    """Tags the Analytics agent groups by in the monthly top-3 / bottom-3 comparison.
+    Agency source and narration are set here, not by the model; length is added after render."""
+    raw = raw if isinstance(raw, dict) else {}
+    tags = {}
+    for k, opts in TAG_CHOICES.items():
+        v = str(raw.get(k) or "").strip()
+        tags[k] = next((o for o in opts if o.lower() == v.lower()), opts[-1] if k in ("title_formula", "case_type") else None)
+    agency = (lead.get("agency_name") or "").lower()
+    tags["agency_source"] = ("CBP" if lead.get("source_type") == "dvids_public_domain" or "border" in agency or "cbp" in agency
+                             else "Florida sheriff" if (lead.get("state") or "").upper() in ("FL", "FLORIDA") and "sheriff" in agency
+                             else "Other")
+    tags["narration"] = "AI"
+    return tags
 
 def _sources(ep, facts):
     if not facts or not facts.get("sources") or "Sources:" in (ep.get("description") or ""):
@@ -133,6 +157,7 @@ def main(db):
         case = p.get("case_name") or lead["title"][:30]
         credit = p.get("credit") or f"Footage: {lead.get('agency_name')}"
         src_type = lead["source_type"]
+        ep["analysis_tags"] = analysis_tags(ep.get("analysis_tags"), lead)
         epi = db.insert("content", {
             "lead_id": lead["id"], "kind": "episode", "case_name": case, "title": ep.get("title"),
             "description": (ep.get("description") or "") + f"\n\n{credit}" + _sources(ep, facts), "tags": ep.get("tags") or [],

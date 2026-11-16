@@ -15,7 +15,8 @@ Supabase free org, GitHub Actions (one hourly job), Vercel Hobby, free Google + 
 | Maker | cloud | 2×/day | Turns obtained footage into plans: episode + 3 Shorts (Part 1/2/3) + standalone FB Reels, using the playbook |
 | Compliance | cloud | hourly | The gate: provenance proof, credit line, no minors, no death on camera, platform policy review |
 | Publisher | Mac | every 30 min | Renders with `mac/render.py`, uploads to YouTube + FB Reels (1 Short/day, 3 Reels/day, 2 episodes/week) |
-| Analytics | cloud | daily | Pulls our YouTube + Facebook numbers → "what works for us" into the playbook |
+| Analytics | cloud | daily | Pulls our YouTube + Facebook numbers (views, watch time, CTR + impressions when YouTube exposes them, traffic sources, retention drop/spike, subs per 1K, revenue after YPP) → "what works for us" into the playbook; fires breakout and ad-limit alerts |
+| Reports | cloud | Fri 8am / 1st Mon | Weekly scoreboard and monthly review (top 3 vs bottom 3 by tag) on the dashboard; run by the Overseer |
 | Overseer | cloud | hourly | Health checks, one retry on failure, jam detection, 8am ET daily report email |
 
 Hard rules baked into every agent: no spending (fee quotes go to you, never paid), no comment replies,

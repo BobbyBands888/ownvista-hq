@@ -171,6 +171,9 @@ header button{white-space:nowrap}
     <div class="card"><div class="kicker">Scorecard: every post graded at 48h</div>
       <p class="sub" style="margin:4px 0 8px">A = top 20% of that format, D = bottom 20%. The Maker copies the A's and avoids the D's.</p>
       <div id="scorecard"></div></div>
+    <div class="card"><div class="kicker">Reports: weekly scoreboard, monthly review, retention log</div>
+      <p class="sub" style="margin:4px 0 8px">Built Fridays 8am and the first Monday of the month. Alerts for breakout videos land in Needs you.</p>
+      <div id="reports"></div></div>
   </div>
 
   <!-- FOOTAGE -->
@@ -282,6 +285,15 @@ async function load(){
   const S = Object.fromEntries((settings.data||[]).filter(s=>!s.key.startsWith("case_facts:")&&s.key!=="portal_seen").map(s=>[s.key,s.value]));
   const C = content.data||[];
   window._content = C;
+
+  // ---- reports
+  const rep = (r, name) => r && r.text ? `<details ${name==="weekly"?"open":""} style="margin:0 0 10px"><summary style="cursor:pointer;font-weight:600">${name==="weekly"?"Weekly scoreboard":"Monthly review"} <span class="m">· ${ago(r.generated_at)}</span></summary>
+      <pre style="white-space:pre-wrap;font:inherit;font-size:13px;margin:8px 0 0">${esc(r.text)}</pre></details>` : "";
+  const rlog = (S.retention_log||[]).slice(0,6);
+  $("reports").innerHTML = (rep(S.report_weekly,"weekly") + rep(S.report_monthly,"monthly") +
+    (rlog.length ? `<div class="kicker" style="margin-top:6px">Retention log</div>` + rlog.map(l=>`<div class="row"><div class="main"><div class="t" style="font-weight:500">${esc(l.title)}</div>
+      <div class="m">0:30 kept ${l.retention_at_30s!=null?Math.round(l.retention_at_30s*100)+"%":"—"} · biggest drop at ${esc(l.biggest_drop?.second ?? "—")}s · biggest spike at ${esc(l.biggest_spike?.second ?? "—")}s</div></div></div>`).join("") : ""))
+    || `<div class="empty">The first weekly scoreboard is built this Friday at 8am.</div>`;
 
   // ---- agents + health
   const last = a => (runs.data||[]).find(x=>x.agent===a);

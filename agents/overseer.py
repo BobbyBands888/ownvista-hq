@@ -95,5 +95,12 @@ def make_main(retry):
             if not already:
                 daily_report(db, problems, jam)
                 sent = True
-        return f"{len(problems)} agent problems, {len(jam)} items need Bobby" + ("; report sent" if sent else "")
+        from . import reports
+        try:
+            made = reports.run_due(db)
+        except Exception as e:
+            made = []
+            db.alert("reports", f"weekly/monthly report failed: {str(e)[:200]}", "warn")
+        return (f"{len(problems)} agent problems, {len(jam)} items need Bobby" + ("; report sent" if sent else "")
+                + (f"; built {', '.join(made)}" if made else ""))
     return main
