@@ -35,15 +35,17 @@ STRONG = re.compile(r"\b(shoot[- ]?out|shootouts?|gun ?fight|fire ?fight|shot (?
 
 PROMPT = """These are {n} numbered frames (red labels 1..{n} in each frame's bottom-left corner, in time order) from a FINISHED police bodycam video
 that is about to be posted. For EACH numbered frame report:
-- "text": every word of text the EDITOR put on screen (badges, titles, hook text, captions, cards, labels,
-  "Part 1"), copied exactly as written, in reading order. "" if none. Ignore the camera's own timestamp /
+- "text": every word of text the EDITOR put on screen (badges, titles, hook text, cards, labels, "Part 1"),
+  copied exactly as written, in reading order. "" if none. Do NOT include subtitles of what people in the
+  footage are saying (lines of dialogue near the bottom); put those in "subs" instead. Ignore the camera's own timestamp /
   serial-number overlay, the small "Footage:" / agency credit line, and the red frame-number labels.
 - "body": true if a person who looks dead, dying, limp on the ground after force, or badly wounded is visible
   and NOT blurred out. When unsure, true.
 - "gore": true if blood or a wound is visible and NOT blurred out.
 - "child": true if a child's face is clearly visible and NOT blurred out.
 - "broken": true if the frame is black, frozen, garbled or a rendering error.
-Return {{"frames":[{{"n":1,"text":"","body":false,"gore":false,"child":false,"broken":false}}]}}"""
+- "subs": subtitle / dialogue text, if any ("" if none).
+Return {{"frames":[{{"n":1,"text":"","subs":"","body":false,"gore":false,"child":false,"broken":false}}]}}"""
 
 
 def _true(x):
@@ -207,7 +209,9 @@ def claim_problems(lines, lead, facts, ask=None, it=None):
             "lines, the case name when it only names the place + type of incident, a city that matches the agency's "
             "own name, and plain descriptions of what is visibly happening on screen (e.g. 'officer walks to the "
             "car', 'wet road') that make no claim about crime, outcome, weapons, injuries, people or numbers. "
-            "Flag only what could mislead a viewer about what happened.",
+            "Words people say in the footage (subtitled dialogue such as 'drop it now', 'tase him') are a record of "
+            "the audio, not our claims: never flag them. Flag only what WE assert (titles, badges, hooks, cards, "
+            "narration, captions) that could mislead a viewer about what happened.",
             "SOURCES:\n" + source_text(lead, facts, it)[:6000] + "\n\nVIDEO TEXT:\n" +
             json.dumps(dict(lines), ensure_ascii=False)[:6000] +
             '\n\nReturn JSON {"problems":[{"text":"the exact words","why":"what the sources say instead"}]}',
