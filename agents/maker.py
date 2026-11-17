@@ -225,13 +225,25 @@ def main(db):
                          "description": f"Full episode on the channel. {credit}", "script": s,
                          "source_type": src_type, "source_credit": credit, "source_urls": [lead.get("source_url")]})
         # standalone single-moment Reels (count from reel_count); rescues get the episode + Shorts only
+        want = reel_count(lead, facts)
         reels, seen = [], set()
-        for r in p.get("reels") or []:
-            key = (r.get("moment") or "").strip().lower()[:60]
-            if _standalone(r) and key not in seen:
-                seen.add(key)
-                reels.append(r)
-        for n, r in enumerate(reels[:reel_count(lead, facts)], 1):
+        def take(cands):
+            for r in cands or []:
+                key = (r.get("moment") or "").strip().lower()[:60]
+                if _standalone(r) and key not in seen:
+                    seen.add(key)
+                    reels.append(r)
+        take(p.get("reels"))
+        if len(reels) < want:
+            # the model sometimes returns fewer Reels than asked (Sebring came back with 2 of 4): one more try,
+            # keeping only moments we don't already have
+            try:
+                take(plan(lead, playbook, rejects, facts, graded).get("reels"))
+            except Exception as e:
+                db.alert("maker", f"Reel top-up failed for {case}: {str(e)[:150]}", "info")
+            if len(reels) < want:
+                db.alert("maker", f"{case}: planned {len(reels)} of {want} Reels", "info")
+        for n, r in enumerate(reels[:want], 1):
             r["reel_no"] = n
             rows.append({"lead_id": lead["id"], "kind": "reel", "parent_id": epi["id"], "part": None, "case_name": case,
                          "title": case, "description": (r.get("caption") or case) + f"\nFull episode on YouTube: Ten-Four Tapes\n{credit}"
