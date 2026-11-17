@@ -153,10 +153,16 @@ Watch for look-alike county names in other states. Use ONLY the documents. Never
 members or bystanders by name. Say if a minor (under 18) is the victim or the suspect."""
 
 
+def is_case(lead):
+    """A Case Scout lead (interview request). Older bodycam leads can also carry category case_story; those still get
+    the bodycam letter."""
+    return bool(lead) and lead.get("category") == "case_story" and "[case:" in (lead.get("notes") or "")
+
+
 def verify(lead, agency):
     """Confirm agency + state + identifiers before anything is sent. Returns the check (dict)."""
     from . import casefacts
-    if lead.get("category") == "case_story":
+    if is_case(lead):
         docs = casefacts.gather(lead, extra_queries=[f"{lead['title'][:80]} sentenced"])
         out = llm.ask(VERIFY_CASE_SYSTEM,
                       "LEAD:\n" + json.dumps({k: lead.get(k) for k in ("title", "agency_name", "state", "incident_date",
@@ -185,7 +191,7 @@ def verify(lead, agency):
 def ready_to_send(chk, agency, lead=None):
     """Agency and state confirmed, a specific date, and one more identifier (name, case number or exact place).
     Case stories: the holder and state confirmed, the case closed, no minor involved, and the defendant's name."""
-    if lead and lead.get("category") == "case_story":
+    if is_case(lead):
         if not chk.get("same_agency"):
             return False, f"interviews are held by {chk.get('agency') or 'another office'} ({chk.get('state') or '?'}), not {agency['name']}"
         if agency.get("state") and chk.get("state") and agency["state"].upper() != str(chk["state"]).upper():
@@ -341,7 +347,7 @@ def main(db):
             continue
         if chk.get("date") and not lead.get("incident_date"):
             db.update("leads", {"id": f"eq.{lead['id']}"}, {"incident_date": chk["date"]})
-        if lead.get("category") == "case_story":
+        if is_case(lead):
             subject, body = compose_case(lead, a, signature, chk)
         else:
             subject, body = compose(lead, a, signature, desc=chk.get("description"))

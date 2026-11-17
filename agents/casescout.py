@@ -72,11 +72,16 @@ def search():
     return items
 
 
-def case_key(name, county, state):
-    """Same case, many outlets: key on suspect last name + county + state."""
-    last = (name or "").strip().split()[-1] if (name or "").strip() else ""
-    parts = [re.sub(r"[^a-z]", "", x.lower()) for x in (last, (county or "").replace("County", ""), state or "")]
-    return "-".join(parts) if parts[0] else ""
+US = set("AL AK AZ AR CA CO CT DE DC FL GA HI ID IL IN IA KS KY LA ME MD MA MI MN MS MO MT NE NV NH NJ NM NY NC ND "
+         "OH OK OR PA RI SC SD TN TX UT VT VA WA WV WI WY".split())
+
+
+def case_key(name, county=None, state=None):
+    """Same case, many outlets: key on the defendant's legal last name only. The AI guesses county/state differently
+    from article to article (Caleb Flynn came back as OH, FL and Butler County), so those can't be in the key."""
+    name = re.sub(r"[\"“”'‘’][^\"“”'‘’]*[\"“”'‘’]", " ", name or "")      # drop nicknames: Duane "Keffe D" Davis
+    toks = [t for t in re.sub(r"[^A-Za-z\s-]", " ", name).split() if len(t) > 1 and t.lower() not in ("jr", "sr", "ii", "iii")]
+    return re.sub(r"[^a-z]", "", toks[-1].lower()) if toks else ""
 
 
 def score(items):
@@ -88,7 +93,7 @@ def score(items):
             "Articles:\n" + json.dumps([{"i": n, "title": x["title"], "summary": x["summary"][:450],
                                          "published": x["published"]} for n, x in enumerate(batch)]) +
             '\n\nReturn JSON {"cases":[{"i":0,"case_score":1-10,"keep":true|false,'
-            '"suspect_name":"full name as printed, or null","county":"county or city, or null","state":"2-letter or null",'
+            '"suspect_name":"the defendant\'s legal full name (first + last, no nickname; for two defendants, the first one), or null","county":"county or city, or null","state":"2-letter or null",'
             '"holder":"prosecutor office (or police agency) that holds the interview recordings, or null",'
             '"stage":"sentenced|convicted|pleaded|charged|other","interview_mentioned":true|false,'
             '"incident_date":"YYYY-MM-DD or null","minor_involved":true|false|null,'
@@ -142,7 +147,8 @@ def find(db, forced=False):
             best[key] = (sc, it, s)
     rows = []
     for key, (sc, it, s) in best.items():
-        keep = bool(s.get("keep")) and sc >= MIN_SCORE and s.get("minor_involved") is not True and s.get("holder")
+        keep = (bool(s.get("keep")) and sc >= MIN_SCORE and s.get("minor_involved") is not True and bool(s.get("holder"))
+                and str(s.get("state") or "").upper() in US)
         where = ", ".join(x for x in (s.get("county"), s.get("state")) if x)
         rows.append({
             "title": it["title"], "summary": ((s.get("hook") or "") + " — " + it["summary"])[:900],
