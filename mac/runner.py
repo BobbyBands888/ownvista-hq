@@ -216,16 +216,45 @@ def repair_links(links):
 PART = 1_900_000_000            # GitHub release assets max out at 2 GB: bigger files are stored in parts
 MEDIA_FILES = re.compile(r"\.(mp4|mov|m4v|avi|wmv|mkv|ts|mts|asf|mpg|wav|mp3|m4a)$", re.I)
 
+def _find_release(tag):
+    """The repo is public, so every release is a DRAFT: drafts are visible only to people with write access
+    (raw agency footage and unreviewed renders must never be public). A draft can't be looked up by tag, so list
+    them; a release found published is switched back to draft. Assets are fetched in full (lists cap them)."""
+    for page in range(1, 20):
+        r = _gh("GET", f"{GH_API}/releases", params={"per_page": 100, "page": page})
+        r.raise_for_status()
+        rows = r.json()
+        for rel in rows:
+            if rel.get("tag_name") != tag:
+                continue
+            if not rel.get("draft"):
+                p = _gh("PATCH", f"{GH_API}/releases/{rel['id']}", json={"draft": True})
+                p.raise_for_status()
+                rel = p.json()
+            assets = []
+            for ap in range(1, 50):
+                a = _gh("GET", f"{GH_API}/releases/{rel['id']}/assets", params={"per_page": 100, "page": ap})
+                a.raise_for_status()
+                assets += a.json()
+                if len(a.json()) < 100:
+                    break
+            rel["assets"] = assets
+            return rel
+        if len(rows) < 100:
+            return None
+    return None
+
+def _new_release(tag, name, body):
+    r = _gh("POST", f"{GH_API}/releases", json={"tag_name": tag, "name": name, "body": body, "draft": True})
+    r.raise_for_status()
+    return {**r.json(), "assets": []}
+
 def _mirror_release(lead_id, create=False):
     tag = f"footage-{lead_id}"
-    r = _gh("GET", f"{GH_API}/releases/tags/{tag}")
-    if r.status_code == 404 and create:
-        r = _gh("POST", f"{GH_API}/releases", json={"tag_name": tag, "name": f"Footage {lead_id}", "prerelease": True,
-                                                     "body": "Kept copy of agency footage for this lead. Managed by the publisher."})
-    if r.status_code == 404:
-        return None
-    r.raise_for_status()
-    return r.json()
+    rel = _find_release(tag)
+    if rel is None and create:
+        rel = _new_release(tag, f"Footage {lead_id}", "Kept copy of agency footage for this lead. Managed by the publisher.")
+    return rel
 
 def save_mirror(lead_id, folder):
     """Upload the case's footage files (zips unpacked first) to the footage-<lead_id> release."""
@@ -284,13 +313,8 @@ def _gh(method, url, **kw):
     return requests.request(method, url, headers=h, timeout=kw.pop("timeout", 120), **kw)
 
 def _release():
-    r = _gh("GET", f"{GH_API}/releases/tags/{RELEASE_TAG}")
-    if r.status_code == 404:
-        r = _gh("POST", f"{GH_API}/releases", json={"tag_name": RELEASE_TAG, "name": "Rendered videos (review copies)",
-                                                     "body": "Ten-Four Tapes renders for review. Managed by the publisher.",
-                                                     "prerelease": True})
-    r.raise_for_status()
-    return r.json()
+    return _find_release(RELEASE_TAG) or _new_release(RELEASE_TAG, "Rendered videos (review copies)",
+                                                      "Ten-Four Tapes renders for review. Managed by the publisher.")
 
 def store_render(path, ctype="video/mp4"):
     """Upload the finished video (or its thumbnail) to the repo's 'renders' release; returns the link Bobby watches."""
@@ -357,14 +381,19 @@ def _free_footage(folder):
 def render(db):
     items = db.select("content", {"status": "eq.scripted", "compliance_status": "eq.pass",
                                   "approval_status": "in.(approved,not_required)",
-                                  "order": "lead_id.asc,kind.desc,created_at.asc", "limit": 12})
+                                  "order": "lead_id.asc,kind.desc,created_at.asc", "limit": 40})
+    waiting = {k.split(":")[1] for k in (json.loads(FAILS.read_text()) if FAILS.exists() else {}) if k.startswith("vision_wait:")}
+    items = sorted(items, key=lambda it: str(it.get("lead_id")) in waiting)[:12]   # stable: case order kept
     # all of a case's videos in one run, so its footage is downloaded once
     fails = json.loads(FAILS.read_text()) if FAILS.exists() else {}
     done = 0
     prev = None
+    vision_down = set()
     for it in items:
         src = FOOTAGE / str(it["lead_id"])
-        if CLOUD and prev and prev != src:
+        if it["lead_id"] in vision_down:
+            continue                                # vision already failed for this case this run: don't burn ~10 min per item
+        if CLOUD and sys.platform != "darwin" and prev and prev != src:
             _free_footage(prev)                     # cloud runner disk is small: one case's footage at a time
         prev = src
         try:
@@ -448,6 +477,7 @@ def render(db):
             fails.pop(str(it["id"]), None)
             done += 1
         elif res.returncode == 4:
+            vision_down.add(it["lead_id"])
             # vision down (free-tier cap / provider error): keep it queued, say so once per case per day
             key = f"vision_wait:{it['lead_id']}:{_now():%Y-%m-%d}"
             if not fails.get(key):

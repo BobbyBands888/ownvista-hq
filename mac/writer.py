@@ -131,7 +131,7 @@ def write_vertical(job, log=print):
              '"outcome_vo":"' + ('' if plan["kind"] == "short" and part in (1, 2) else
                                  'how the case ended in max 25 spoken words, following the HOW IT ENDED wording rule; '
                                  '"" if there is no case file or no outcome') + '"'
-             + (',"caption":"PLACE. STAKES in under 15 words, about what this clip shows (e.g. '
+             + (',"caption":"PLACE. STAKES in under 10 words, about what this clip shows (e.g. '
              '\'Quemado, Texas. A man swinging tree branches has already hit a Border Patrol agent in the head.\')",'
              '"question":"one short question for the comments about what the viewer just saw",'
              '"hashtags":["3-4 tags like #bodycam #police"]' if plan["kind"] == "reel" else "") + "}")
