@@ -54,4 +54,5 @@ jobs:
           CF_ACCOUNT_ID: ${{ secrets.CF_ACCOUNT_ID }}
           CF_API_TOKEN: ${{ secrets.CF_API_TOKEN }}
           BREVO_API_KEY: ${{ secrets.BREVO_API_KEY }}
+          PYTHONUNBUFFERED: "1"
           DRY_RUN: ${{ vars.DRY_RUN || '0' }}
