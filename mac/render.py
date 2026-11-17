@@ -296,8 +296,9 @@ def build_episode(job, out):
     last_path, _ = job.src(pk["clips"][-1]["file"])
     obg = media.blurred_still(last_path, max(0, pk["clips"][-1]["end"] - 3), W, H, job.p("png"))
     if sc.get("what_happened_next"):
-        segs.append(seg_card(png_card(obg, W, H, job.p("png"), kicker="What happened next", body=sc["what_happened_next"]),
-                             job.p("mp4"), job.vo("What happened next. " + sc["what_happened_next"])))
+        kick = "The verdict" if sc.get("style") == "case_story" else "What happened next"
+        segs.append(seg_card(png_card(obg, W, H, job.p("png"), kicker=kick, body=sc["what_happened_next"]),
+                             job.p("mp4"), job.vo(kick + ". " + sc["what_happened_next"])))
     if sc.get("comment_question"):
         segs.append(seg_card(png_card(obg, W, H, job.p("png"), kicker="Tell us in the comments", body=sc["comment_question"]),
                              job.p("mp4"), job.vo(sc["comment_question"])))

@@ -464,6 +464,8 @@ def pick_reel(files, plan, cache):
         return cache[key]
     sc = plan.get("script") or {}
     taken = _taken(files, plan, cache)
+    # a case story's one Reel is an interview teaser: a calm room is fine, a hooking line in the first 2s is the action
+    talk = bool(TALK_RX.search(sc.get("moment") or ""))
     pick = None
     try:
         j = ask_llm("You cut 25-30 second Facebook Reels from police bodycam footage. " + RULES,
@@ -471,11 +473,22 @@ def pick_reel(files, plan, cache):
                     f"Hook text: {sc.get('hook_text', '')}\n" + redo(plan) +
                     (f"Windows other Reels of this case already use (do NOT overlap them, pick a different moment): "
                      f"{[(i, round(a), round(b)) for i, a, b in taken]}\n" if taken else "") +
-                    "Pick ONE continuous 25-30s window where visible action starts within the first 2 seconds. "
+                    ("Pick ONE continuous 25-30s window of the police interview that opens on a line that hooks "
+                     "(a lie, a denial, the detective putting evidence to them) and doesn't give away how the case ended. "
+                     if talk else
+                     "Pick ONE continuous 25-30s window where visible action starts within the first 2 seconds. ") +
                     'Return JSON {"file":0,"start":12.0,"end":40.0,"why":"..."}')
         pick = clamp(files, j, 24, 30)
     except Exception:
         pass
+    if pick and talk:
+        q = on_screen(files[pick["file"]], pick["start"], pick["end"])
+        if hits_aftermath(files[pick["file"]], pick["start"], pick["end"]) or (q and q[2]) or not _clear(pick, taken):
+            pick = None
+        else:
+            pick["parent"] = plan.get("parent_id")
+            cache[key] = pick
+            return pick
     if pick and (looks_bad(files[pick["file"]], pick["start"], pick["end"], min_action=1.5, max_dull=0.35)
                  or not _clear(pick, taken)):
         pick = None                             # nothing to see, or it reuses a sibling Reel's moment
@@ -581,14 +594,30 @@ def trim_open(f, c, min_len):
     return dict(c, start=float(t), end=float(end))
 
 
+TALK_RX = re.compile(r"interview|interrogation|911|dispatch|call", re.I)
+
+
 def clean_clip(f, c):
-    """Trim cruiser-interior / black stretches off a clip's ends and split it around any child/gore frames."""
+    """Trim cruiser-interior / black stretches off a clip's ends and split it around any child/gore frames.
+    Interview-room and 911 clips are talk: a still camera or a slate over 911 audio is the point there, so only the
+    child/gore/aftermath cuts apply to them."""
     v = vis(f)
     if not v:
         a = aftermath_from(f)
         if a is not None and c["end"] > a:
             return [dict(c, end=float(a))] if a - c["start"] >= 15 else []
         return [c]
+    if TALK_RX.search(c.get("label") or ""):
+        s, e = int(c["start"]), int(min(c["end"], len(v["bad"])))
+        out, cur = [], s
+        for t in range(s, e):
+            if v["bad"][t]:
+                if t - 3 - cur >= 15:
+                    out.append(dict(c, start=float(cur), end=float(t - 3)))
+                cur = t + 4
+        if e - cur >= 15:
+            out.append(dict(c, start=float(cur), end=float(e)))
+        return out
     s, e = int(c["start"]), int(min(c["end"], len(v["act"])))
     while s < e - 15 and v["dull"][s] and not v["bad"][s]:
         s += 1
@@ -643,25 +672,38 @@ def pick_episode(files, plan, cache):
         return cache[key]
     sc = plan.get("script") or {}
     total = sum(f["duration"] for f in files)
-    target = min(total, 14 * 60)
+    case = sc.get("style") == "case_story"
+    # case stories (911 + bodycam + interview + verdict) run 15-25 min; the interview is the longest part
+    target = min(total, 22 * 60 if case else 14 * 60)
+    max_clip = 480 if case else 360
+    order = ("Clips run in this order: the 911 call (label '911 Call'), then the bodycam of the response or arrest, "
+             "then the police interview (label 'Interview Room'; the longest part, about half the episode: keep the "
+             "suspect's own account, the lies, the evidence put to them and the moment the story changes; cut long "
+             "silences, breaks and paperwork). Each clip 20s-8min. " if case else
+             "Clips run in story order; each clip 20s-6min. ")
     result = None
     try:
         j = ask_llm("You edit long-form YouTube episodes from police bodycam footage, like EWU, Code Blue Cam and "
-                    "Dr Insanity. " + RULES,
+                    "Dr Insanity" + (", and case-story interrogation episodes like JCS - Criminal Psychology" if case else "")
+                    + ". " + RULES,
                     describe(files) + f"\n\nEpisode: {plan.get('title')} ({sc.get('style', 'action')} style)\n"
                     f"Angle labels available: {sc.get('angle_labels') or ['Body Cam Officer 1']}\n" + redo(plan) +
                     f"Build the episode from about {target / 60:.0f} minutes of footage (less if the footage is thin; "
-                    "cut dead air and stretches where the camera shows nothing but a cruiser interior). Clips run in "
-                    "story order; each clip 20s-6min. Label each clip with which camera it "
+                    "cut dead air and stretches where the camera shows nothing but a cruiser interior). " + order +
+                    "Label each clip with which camera it "
                     "is (e.g. Body Cam Officer 1, Dash Cam, Interview Room, 911 Call). Also pick a 6-12s cold open: the "
-                    "most gripping VISIBLE moment, from later in the story. "
+                    "most gripping VISIBLE moment, from later in the story" +
+                    (" (in a case story, the interview moment where the story cracks)" if case else "") + ". "
                     'Return JSON {"cold_open":{"file":0,"start":300,"end":310},'
                     '"clips":[{"file":0,"start":0,"end":120,"label":"Body Cam Officer 1"}]}')
-        clips = [c for c in (clamp(files, x, 15, 360) for x in j.get("clips", [])) if c]
+        clips = [c for c in (clamp(files, x, 15, max_clip) for x in j.get("clips", [])) if c]
         clips = [x for c in clips for x in clean_clip(files[c["file"]], c)]
         cold = clamp(files, j.get("cold_open") or {}, 5, 12)
-        if cold and looks_bad(files[cold["file"]], cold["start"], cold["end"], min_action=2.0, max_dull=0.2):
+        if cold and (hits_aftermath(files[cold["file"]], cold["start"], cold["end"]) if case else
+                     looks_bad(files[cold["file"]], cold["start"], cold["end"], min_action=2.0, max_dull=0.2)):
             cold = None
+        elif cold and case and (on_screen(files[cold["file"]], cold["start"], cold["end"]) or (0, 0, False))[2]:
+            cold = None                     # interview cold opens are calm by nature; still never a child/gore frame
         if sum(c["end"] - c["start"] for c in clips) < min(360, total * 0.4):
             clips = []                      # AI cut was far too thin for the footage we have — use the fallback
         if clips:
