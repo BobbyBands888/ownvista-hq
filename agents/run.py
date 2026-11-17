@@ -1,15 +1,15 @@
 """Entry point.
   python -m agents.run tick        -> runs whichever agents are due this hour (GitHub Actions calls this hourly)
-  python -m agents.run <agent>     -> runs one agent now (research|scout|outreach|tracker|casefacts|maker|compliance|analytics|overseer)
+  python -m agents.run <agent>     -> runs one agent now (research|scout|outreach|portal_filer|tracker|casefacts|maker|compliance|analytics|overseer)
 """
 import sys
 from datetime import datetime, timezone
-from . import research, scout, outreach, tracker, casefacts, maker, compliance, analytics, overseer
+from . import research, scout, outreach, portal_filer, tracker, casefacts, maker, compliance, analytics, overseer
 from .lib.runner import run_agent
 
 AGENTS = {
     "research": research.main, "analytics": analytics.main, "scout": scout.main, "tracker": tracker.main,
-    "outreach": outreach.main, "casefacts": casefacts.main, "maker": maker.main, "compliance": compliance.main,
+    "outreach": outreach.main, "portal_filer": portal_filer.main, "casefacts": casefacts.main, "maker": maker.main, "compliance": compliance.main,
 }
 RETRY = {name: (lambda n=name: run_agent(n, AGENTS[n])) for name in AGENTS}
 AGENTS["overseer"] = overseer.make_main(RETRY)
@@ -36,6 +36,9 @@ def due(now):
     # outreach: weekdays during business hours ET (13-22 UTC), 3h apart; its own daily cap still applies
     if now.weekday() < 5 and 13 <= now.hour <= 22 and age("outreach") >= 3:
         plan.append("outreach")
+    # portal filer: queues letters for portal-only agencies; Bobby files them from the dashboard
+    if age("portal_filer") >= 6:
+        plan.append("portal_filer")
     if "casefacts" in plan and "maker" in plan:   # case files first so Maker can use them this tick
         plan.remove("casefacts")
         plan.insert(plan.index("maker"), "casefacts")

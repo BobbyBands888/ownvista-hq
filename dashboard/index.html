@@ -168,6 +168,9 @@ header button{white-space:nowrap}
     <div class="stats" id="stats"></div>
     <div class="card"><div class="kicker">Approve these <span class="n" id="n-approve"></span></div><div id="approvals" style="display:grid;gap:12px"></div></div>
     <div class="card"><div class="kicker">Needs you <span class="n" id="n-alerts"></span></div><div id="alerts"></div></div>
+    <div class="card"><div class="kicker">File on portal <span class="n" id="n-portal"></span></div>
+      <p class="m" style="margin:-4px 0 10px">These agencies only take requests on their website. Open the portal, paste the subject and letter, submit, then paste the tracking number and click Filed. Use your Gmail on the portal account so replies get tracked.</p>
+      <div id="portal"></div></div>
   </div>
 
   <!-- CONTENT -->
@@ -191,7 +194,7 @@ header button{white-space:nowrap}
       <div class="card"><div class="kicker">Top leads</div><div id="leads"></div></div>
       <div class="card"><div class="kicker">Records requests</div><div id="reqs"></div></div>
     </div>
-    <div class="card"><div class="kicker">Agencies missing a records contact</div><p class="m" style="margin:-4px 0 10px">Paste an email or portal link and Outreach will use it.</p><div id="agencies"></div></div>
+    <div class="card"><div class="kicker">Agencies missing a records contact</div><p class="m" style="margin:-4px 0 10px">Paste an email and Outreach sends to it. Paste a portal link and the request shows up under File on portal.</p><div id="agencies"></div></div>
   </div>
 
   <!-- AGENTS -->
@@ -230,7 +233,7 @@ const toast = msg => { const t=$("toast"); t.textContent=msg; t.classList.add("o
 
 const AGENTS = {
   research:["Research","Studies top bodycam channels"], scout:["Scout","Finds footage leads"],
-  outreach:["Outreach","Sends records requests"], tracker:["Records Tracker","Reads agency replies"],
+  outreach:["Outreach","Sends records requests"], portal_filer:["Portal Filer","Queues portal-only requests for you"], tracker:["Records Tracker","Reads agency replies"],
   casefacts:["Case Desk","Who, why and how it ended"], maker:["Maker","Writes episode, Shorts and Reels plans"],
   compliance:["Compliance","Safety and platform-policy gate"], analytics:["Analytics","Pulls our YouTube and Facebook numbers"],
   overseer:["Overseer","Health checks and daily report"], mac_runner:["Mac Renderer","Renders and posts from your Mac"],
@@ -395,10 +398,26 @@ async function load(){
   // ---- footage
   $("leads").innerHTML=(leads.data||[]).map(l=>`<div class="row"><span class="chip ${l.action_score>=8?"gold":""}" title="action score">${l.action_score??"–"}/10</span><div class="main"><div class="t">${esc(l.title)}</div>
     <div class="m">${esc(l.agency_name||"")}${l.state?" · "+esc(l.state):""} · ${esc(l.status)} · <a href="${esc(l.source_url)}" target="_blank" rel="noopener">source</a></div></div></div>`).join("")||`<div class="empty">No leads yet.</div>`;
-  const RS = {fee_quoted:["Fee quoted","gold"],clarify:["They asked a question","gold"],fulfilled:["Footage received","green"],denied:["Denied","red"],sent:["Sent",""],acknowledged:["Acknowledged","blue"],closed:["Closed",""],draft:["Draft",""]};
+  const RS = {fee_quoted:["Fee quoted","gold"],clarify:["They asked a question","gold"],fulfilled:["Footage received","green"],denied:["Denied","red"],sent:["Sent",""],acknowledged:["Acknowledged","blue"],closed:["Closed",""],draft:["Draft",""],to_file:["To file on portal","gold"]};
   $("reqs").innerHTML=(reqs.data||[]).map(r=>{const [l,t]=RS[r.status]||[r.status,""];
     return `<div class="row"><div class="main"><div style="margin-bottom:4px"><span class="chip ${t}">${esc(l)}</span></div><div class="t">${esc(r.subject?.replace("Public Records Request – Body Camera Video – ",""))}</div>
-    <div class="m">${esc(r.to_email)} · sent ${ago(r.sent_at)}${r.fee_quote?" · fee: "+esc(r.fee_quote):""}</div></div></div>`;}).join("")||`<div class="empty">No requests sent yet.</div>`;
+    <div class="m">${esc(r.to_email||"portal")} · ${r.sent_at?"sent "+ago(r.sent_at):"not filed yet"}${r.fee_quote?" · fee: "+esc(r.fee_quote):""}</div></div></div>`;}).join("")||`<div class="empty">No requests sent yet.</div>`;
+  // ---- portal-only requests waiting for Bobby to file
+  const pq=(await sb.from("records_requests").select("id,subject,body,notes,agency_id,created_at").eq("status","to_file").order("created_at")).data||[];
+  const agName=pq.length?Object.fromEntries(((await sb.from("agencies").select("id,name,state").in("id",pq.map(r=>r.agency_id))).data||[]).map(a=>[a.id,a.name+(a.state?" · "+a.state:"")])):{};
+  $("n-portal").textContent=pq.length||"";
+  $("portal").innerHTML=pq.map(r=>{const url=((r.notes||"").match(/portal:\s*(\S+)/)||[])[1]||"";
+    return `<div class="row"><div class="main"><div class="t">${esc(agName[r.agency_id]||"Agency")}</div>
+      <div class="m">${esc(r.subject)}</div>
+      ${url?`<a class="watch m" href="${esc(url)}" target="_blank" rel="noopener">Open portal ↗</a>`:""}
+      <details><summary>Letter</summary><div class="code" style="white-space:pre-wrap">${esc(r.body)}</div></details>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px">
+        <button class="sm" data-copy="${esc(r.subject)}">Copy subject</button>
+        <button class="sm" data-copy="${esc(r.body)}">Copy letter</button></div>
+      <div class="grid2" style="gap:8px;margin-top:8px"><input placeholder="Tracking number (e.g. P012345-111726)" data-pref="${r.id}"></div></div>
+      <div class="actions"><button class="sm primary" data-pfiled="${r.id}">Filed</button><button class="sm" data-pskip="${r.id}">Skip</button></div></div>`;}).join("")
+    ||`<div class="empty">Nothing to file.</div>`;
+
   $("agencies").innerHTML=(agencies.data||[]).map(a=>`<div class="row"><div class="main"><div class="t">${esc(a.name)}${a.state?" · "+esc(a.state):""}</div>
     ${a.notes?`<div class="m">${esc(a.notes)}</div>`:""}
     <div class="grid2" style="gap:8px;margin-top:8px"><input placeholder="Records email" data-agemail="${a.id}"><input placeholder="Or portal link" data-agportal="${a.id}"></div></div>
@@ -439,9 +458,23 @@ document.addEventListener("click", async e=>{
                   await sb.from("content").update({compliance_status:"pending"}).eq("lead_id",d.nominors); toast("Sent back to safety check"); }
   if(d.agsave){ const em=document.querySelector(`[data-agemail="${d.agsave}"]`).value.trim(), po=document.querySelector(`[data-agportal="${d.agsave}"]`).value.trim();
                 if(em||po){ await sb.from("agencies").update({records_email:em||null,portal_url:po||null}).eq("id",d.agsave); toast("Saved"); } }
+  if(d.pfiled){ const ref=(document.querySelector(`[data-pref="${d.pfiled}"]`)?.value||"").trim();
+                const {data:r}=await sb.from("records_requests").select("lead_id,agency_id,notes").eq("id",d.pfiled).single();
+                const now=new Date().toISOString();
+                await sb.from("records_requests").update({status:"sent",sent_at:now,last_activity_at:now,
+                  notes:((r?.notes||"")+"\nFiled on portal "+now.slice(0,10)+(ref?" · ref "+ref:"")).trim()}).eq("id",d.pfiled);
+                if(r?.lead_id) await sb.from("leads").update({status:"requested"}).eq("id",r.lead_id);
+                if(r?.agency_id) await sb.from("agencies").update({last_request_at:now}).eq("id",r.agency_id);
+                toast("Marked filed. The tracker will watch for replies."); }
+  if(d.pskip){ const why=await ask("Skip this request?","Optional: why (wrong agency, not worth it...).","",{ok:"Skip"});
+               if(why===null) return;
+               const {data:r}=await sb.from("records_requests").select("lead_id,notes").eq("id",d.pskip).single();
+               await sb.from("records_requests").update({status:"closed",notes:((r?.notes||"")+"\nSkipped: "+(why.trim()||"no reason")).trim()}).eq("id",d.pskip);
+               if(r?.lead_id) await sb.from("leads").update({status:"skipped"}).eq("id",r.lead_id);
+               toast("Skipped"); }
   if(d.set){ if(d.set==="approval_required_until" && !await ask("Turn off approvals?","Videos that pass the safety check will post automatically.","",{input:false,ok:"Turn off"})) return;
              await sb.from("settings").update({value:JSON.parse(d.val==="true"||d.val==="false"?d.val:JSON.stringify(d.val)),updated_at:new Date().toISOString()}).eq("key",d.set); }
-  if(d.approve||d.reject||d.recut||d.resolve||d.nominors||d.agsave||d.set) load();
+  if(d.approve||d.reject||d.recut||d.resolve||d.nominors||d.agsave||d.pfiled||d.pskip||d.set) load();
 });
 $("refresh").onclick=()=>{ load(); toast("Refreshed"); };
 $("send").onclick=async()=>{const {error}=await sb.auth.signInWithOtp({email:$("email").value.trim(),options:{emailRedirectTo:location.origin}});$("lmsg").textContent=error?error.message:"Check your email for the link.";};
