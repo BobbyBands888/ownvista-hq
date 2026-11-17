@@ -146,6 +146,10 @@ def match_portal(open_reqs, sender, subject, text):
         '"title":"short case title (the incident, not the email)","category":"enforcement|case_story|rescue|other"}',
         max_tokens=600, temperature=0.1)
 
+def _date_or_none(d):
+    """The AI sometimes writes partial dates like '2025-08-XX'; the database only takes real ones."""
+    return d if isinstance(d, str) and re.fullmatch(r"\d{4}-\d{2}-\d{2}", d) else None
+
 def adopt(db, t, m, sender, subject, text, c):
     """An agency email about a request we have no record of (sent by hand, or filed on a portal). Start tracking
     it so its later emails match, and if it already delivers footage, hand that footage to the agents."""
@@ -157,7 +161,7 @@ def adopt(db, t, m, sender, subject, text, c):
     agency = c.get("agency_name") or re.sub(r"\s*<.*", "", sender).strip('" ') or "Unknown agency"
     title = c.get("title") or _strip_re(subject)[:120] or f"Records request — {agency}"
     lead = db.insert("leads", {
-        "title": title, "agency_name": agency, "state": c.get("state"), "incident_date": c.get("incident_date"),
+        "title": title, "agency_name": agency, "state": c.get("state"), "incident_date": _date_or_none(c.get("incident_date")),
         "summary": c.get("summary"), "source_url": f"gmail:{t}", "source_type": "records_request",
         "action_score": 7, "category": c.get("category") or "enforcement", "involves_minor": None,
         "status": "requested", "notes": "Picked up from an agency email (request not sent by Outreach)"},
@@ -173,7 +177,7 @@ def adopt(db, t, m, sender, subject, text, c):
     if got == "denied":
         db.alert_once("tracker", f"Agency said no: {title} ({agency}): {c.get('summary') or ''}", "info",
                       key=f"Agency said no: {title}")
-    return got
+    return got, req
 
 def portal_mail(db):
     """Agency replies that land outside a tracked thread (portals, new threads, requests sent by hand). Match each
@@ -221,7 +225,9 @@ def portal_mail(db):
             apply_reply(db, req, c, text, _ts(m["internalDate"]), via=ref, extra_links=_share_links(m))
             matched += 1
         elif c.get("kind") == "update":
-            adopt(db, t, m, sender, subject, text, c)
+            _, new = adopt(db, t, m, sender, subject, text, c)
+            open_reqs.append(new)              # later emails in this same run (same reference number) match it
+            by_id[new["id"]] = new
             adopted += 1
         else:
             db.alert_once("tracker", f"Records email we couldn't match to a request — from {sender[:60]}: "
@@ -294,7 +300,7 @@ def shared_footage(db):
         agency = pick.get("agency_name") or (re.search(r"Axon - ([^\n]+)", text) or [None, "Unknown agency"])[1]
         lead = db.insert("leads", {
             "title": pick.get("title") or req.get("subject") or agency, "agency_name": agency, "state": pick.get("state"),
-            "incident_date": pick.get("incident_date"), "summary": pick.get("summary") or (req.get("body") or "")[:600],
+            "incident_date": _date_or_none(pick.get("incident_date")), "summary": pick.get("summary") or (req.get("body") or "")[:600],
             "source_url": f"gmail:{t}", "source_type": "records_request", "action_score": 7,
             "category": pick.get("category") or "enforcement", "involves_minor": None, "status": "obtained",
             "notes": "Footage delivered by the agency" + (f"; links expire {pick['links_expire']}" if pick.get("links_expire") else "")},
