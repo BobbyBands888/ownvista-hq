@@ -171,7 +171,10 @@ def look(folder, files, log=print):
         f["vision"] = sorted(got.values(), key=lambda v: v["t"])
         f["vision_step"] = step
         f["vision_v"] = VISION_V
-        f["vision_ok"] = ok and len(f["vision"]) >= len(times) * 0.8
+        # A file stuck on one unreadable sheet (a few frames the fallback model garbles) used to block the whole
+        # case forever (Sebring, Nov 17: 93/102 frames, every run). 90% read is enough even with errors;
+        # every render is still checked frame by frame before approval.
+        f["vision_ok"] = len(f["vision"]) >= len(times) * (0.8 if ok else 0.9)
         log(f"vision {f['path']}: {len(f['vision'])}/{len(times)} frames read")
     return files
 
