@@ -7,7 +7,8 @@ from .lib import config
 
 # agent -> max hours between successful runs before it's considered down
 EXPECTED = {"research": 26, "scout": 4, "outreach": 74, "tracker": 3, "casefacts": 7, "maker": 13,
-            "compliance": 2, "analytics": 26, "mac_runner": 6}
+            "compliance": 2, "analytics": 26, "publisher": 6}
+STUCK_H = {"publisher": 5}      # a publisher run renders for up to ~5h; other agents finish within minutes
 ET = ZoneInfo("America/New_York")
 DASH = "https://levelingclips.com"
 
@@ -22,7 +23,7 @@ def health(db, retry):
     for agent, hrs in EXPECTED.items():
         runs = db.select("agent_runs", {"agent": f"eq.{agent}", "order": "started_at.desc", "limit": 3})
         for r in runs:
-            if r["status"] == "running" and _now() - _p(r["started_at"]) > timedelta(hours=1):
+            if r["status"] == "running" and _now() - _p(r["started_at"]) > timedelta(hours=STUCK_H.get(agent, 1)):
                 db.update("agent_runs", {"id": f"eq.{r['id']}"}, {"status": "error", "error": "timed out / killed"})
                 r["status"] = "error"
         ok = [r for r in runs if r["status"] == "ok"]
@@ -33,8 +34,13 @@ def health(db, retry):
         elif runs and runs[0]["status"] == "error" and agent in retry:
             retry[agent]()  # one immediate retry
         if last_ok is None or _now() - last_ok > timedelta(hours=hrs):
-            if agent == "mac_runner":
-                problems.append("mac_runner: no check-in — is the Mac awake with the runner installed?")
+            if agent == "publisher":
+                problems.append("publisher: no run in 6h — is the Mac awake and online with the GitHub runner on?")
+                day = (_now() - timedelta(hours=24)).isoformat()
+                if not db.select("alerts", {"agent": "eq.overseer", "message": "like.Publisher hasn*",
+                                            "created_at": f"gte.{day}", "select": "id"}):   # once a day, not every tick
+                    db.alert("overseer", "Publisher hasn't run in 6h: nothing renders or posts. Is the Mac awake and online?",
+                             "urgent")
             elif runs or last_ok:
                 problems.append(f"{agent}: no successful run in {hrs}h")
     return problems
@@ -90,7 +96,7 @@ def make_main(retry):
         jam = jams(db)
         now_et = datetime.now(ET)
         sent = False
-        if now_et.hour == 8:
+        if 7 <= now_et.hour <= 11:       # ticks don't land on a fixed minute; first one after 7am ET sends it
             already = db.select("agent_runs", {"agent": "eq.overseer", "summary": "like.*report sent*",
                                                "started_at": f"gte.{(_now() - timedelta(hours=20)).isoformat()}"})
             if not already:
