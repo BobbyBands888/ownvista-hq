@@ -28,11 +28,24 @@ def run_agent(name, fn):
         db.update("agent_runs", {"id": f"eq.{row['id']}"},
                   {"status": "ok", "summary": str(summary)[:2000], "finished_at": datetime.now(timezone.utc)})
         print(f"[{name}] ok: {summary}")
+        _clear_errors(db, name)
         return True
     except Exception as e:
         tb = traceback.format_exc()
         print(tb)
         db.update("agent_runs", {"id": f"eq.{row['id']}"},
                   {"status": "error", "error": tb[-2000:], "finished_at": datetime.now(timezone.utc)})
-        db.alert(name, f"{type(e).__name__}: {e}", "warn")
+        msg = f"{type(e).__name__}: {e}"
+        db.alert_once(name, msg, "warn", key=msg[:80])
         return False
+
+
+def _clear_errors(db, name):
+    """The agent ran fine: its earlier crash alerts are out of date, so take them off 'Needs you'."""
+    import re
+    try:
+        for a in db.select("alerts", {"agent": f"eq.{name}", "resolved": "is.false", "select": "id,message", "limit": 100}):
+            if re.match(r"^\w+(Error|Exception|Timeout)\w*: ", a.get("message") or ""):
+                db.update("alerts", {"id": f"eq.{a['id']}"}, {"resolved": True})
+    except Exception:
+        pass

@@ -54,8 +54,8 @@ def download_footage(db):
             except Exception:
                 continue
         if not any(dest.iterdir()):
-            db.alert("mac_runner", f"Couldn't auto-download footage for '{r['subject'][:60]}' — portal link needs a "
-                     f"manual download into {dest}", "warn")
+            db.alert_once("mac_runner", f"Couldn't auto-download footage for '{r['subject'][:60]}' — portal link needs a "
+                          f"manual download into {dest}", "warn", key=f"Couldn't auto-download footage for '{r['subject'][:60]}'")
     return got
 
 UA = {"User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 14_0) AppleWebKit/537.36 Chrome/130 Safari/537.36"}
@@ -170,6 +170,7 @@ def ensure_footage(db, it):
                 or [f"{u.scheme}://{u.netloc}" for u in map(urlparse, links) if u.scheme]
             links = [urljoin(hosts[0] + "/", l) if l.startswith("/") and hosts else l for l in links]
             links = [l for l in links if not l.startswith("/")]
+            errs = []
             for url in links:
                 if re.search(r"\.(png|jpe?g|gif|svg|ico)(\?|$)", url, re.I):
                     continue
@@ -178,7 +179,34 @@ def ensure_footage(db, it):
                 try:
                     _fetch(url, dest)
                 except Exception as e:
-                    db.alert("publisher", f"Footage download for {it.get('case_name')}: {e}", "warn")
+                    errs.append(str(e)[:200])
+            if not any(p for p in dest.iterdir() if not p.name.startswith(".")) and r.get("gmail_thread_id"):
+                # stored links were the wrong ones (e.g. the Evidence.com landing page): re-read the agency's own
+                # email for the real /axon/download/ button and try that
+                try:
+                    from agents.lib.google import get_thread, message_links
+                    fresh = [l for m in get_thread(r["gmail_thread_id"]).get("messages", []) for l in message_links(m)
+                             if "/axon/download/" in l or MEDIA_RX.search(l)]
+                    for url in dict.fromkeys(fresh):
+                        if url in links:
+                            continue
+                        try:
+                            if _fetch(url, dest):
+                                db.update("records_requests", {"id": f"eq.{r['id']}"},
+                                          {"download_links": [url] + [l for l in links if l != url][:9]})
+                                break
+                        except Exception as e:
+                            errs.append(str(e)[:200])
+                except Exception as e:
+                    errs.append(f"re-reading the email: {str(e)[:120]}")
+            if errs and not any(p for p in dest.iterdir() if not p.name.startswith(".")):
+                first = next((l for l in links if "evidence.com" in l), links[0] if links else "")
+                db.alert_once("publisher", f"Footage download for {it.get('case_name')} needs you: the agency's share "
+                              f"page has no direct file ({errs[0][:140]}). Open {first[:200]} and download it; the "
+                              "agents keep retrying on their own.", "warn",
+                              key=f"Footage download for {it.get('case_name')}")
+            elif any(p for p in dest.iterdir() if not p.name.startswith(".")):
+                db.resolve_alerts("publisher", f"Footage download for {it.get('case_name')}")
         if CLOUD and any(p for p in dest.iterdir() if not p.name.startswith(".")):
             try:
                 n = save_mirror(it["lead_id"], dest)
@@ -577,6 +605,7 @@ def render(db):
                 upd["publish_note"] += f" · Auto-check passed ({ac['read']}/{ac['sampled']} frames read)"
             db.update("content", {"id": f"eq.{it['id']}"}, upd)
             fails.pop(str(it["id"]), None)
+            db.resolve_alerts("mac_runner", f"Waiting to render {it['case_name']}")
             done += 1
         elif res.returncode == 4:
             vision_down.add(it["lead_id"])
