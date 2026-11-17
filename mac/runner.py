@@ -216,16 +216,45 @@ def repair_links(links):
 PART = 1_900_000_000            # GitHub release assets max out at 2 GB: bigger files are stored in parts
 MEDIA_FILES = re.compile(r"\.(mp4|mov|m4v|avi|wmv|mkv|ts|mts|asf|mpg|wav|mp3|m4a)$", re.I)
 
+def _find_release(tag):
+    """The repo is public, so every release is a DRAFT: drafts are visible only to people with write access
+    (raw agency footage and unreviewed renders must never be public). A draft can't be looked up by tag, so list
+    them; a release found published is switched back to draft. Assets are fetched in full (lists cap them)."""
+    for page in range(1, 20):
+        r = _gh("GET", f"{GH_API}/releases", params={"per_page": 100, "page": page})
+        r.raise_for_status()
+        rows = r.json()
+        for rel in rows:
+            if rel.get("tag_name") != tag:
+                continue
+            if not rel.get("draft"):
+                p = _gh("PATCH", f"{GH_API}/releases/{rel['id']}", json={"draft": True})
+                p.raise_for_status()
+                rel = p.json()
+            assets = []
+            for ap in range(1, 50):
+                a = _gh("GET", f"{GH_API}/releases/{rel['id']}/assets", params={"per_page": 100, "page": ap})
+                a.raise_for_status()
+                assets += a.json()
+                if len(a.json()) < 100:
+                    break
+            rel["assets"] = assets
+            return rel
+        if len(rows) < 100:
+            return None
+    return None
+
+def _new_release(tag, name, body):
+    r = _gh("POST", f"{GH_API}/releases", json={"tag_name": tag, "name": name, "body": body, "draft": True})
+    r.raise_for_status()
+    return {**r.json(), "assets": []}
+
 def _mirror_release(lead_id, create=False):
     tag = f"footage-{lead_id}"
-    r = _gh("GET", f"{GH_API}/releases/tags/{tag}")
-    if r.status_code == 404 and create:
-        r = _gh("POST", f"{GH_API}/releases", json={"tag_name": tag, "name": f"Footage {lead_id}", "prerelease": True,
-                                                     "body": "Kept copy of agency footage for this lead. Managed by the publisher."})
-    if r.status_code == 404:
-        return None
-    r.raise_for_status()
-    return r.json()
+    rel = _find_release(tag)
+    if rel is None and create:
+        rel = _new_release(tag, f"Footage {lead_id}", "Kept copy of agency footage for this lead. Managed by the publisher.")
+    return rel
 
 def save_mirror(lead_id, folder):
     """Upload the case's footage files (zips unpacked first) to the footage-<lead_id> release."""
@@ -284,13 +313,8 @@ def _gh(method, url, **kw):
     return requests.request(method, url, headers=h, timeout=kw.pop("timeout", 120), **kw)
 
 def _release():
-    r = _gh("GET", f"{GH_API}/releases/tags/{RELEASE_TAG}")
-    if r.status_code == 404:
-        r = _gh("POST", f"{GH_API}/releases", json={"tag_name": RELEASE_TAG, "name": "Rendered videos (review copies)",
-                                                     "body": "Ten-Four Tapes renders for review. Managed by the publisher.",
-                                                     "prerelease": True})
-    r.raise_for_status()
-    return r.json()
+    return _find_release(RELEASE_TAG) or _new_release(RELEASE_TAG, "Rendered videos (review copies)",
+                                                      "Ten-Four Tapes renders for review. Managed by the publisher.")
 
 def store_render(path, ctype="video/mp4"):
     """Upload the finished video (or its thumbnail) to the repo's 'renders' release; returns the link Bobby watches."""
