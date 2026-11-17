@@ -118,17 +118,66 @@ def page_text(raw, limit=6000):
     return re.sub(r"\s+", " ", t).strip()[:limit]
 
 
-def ddg(q, n=6):
-    try:
-        r = requests.get("https://html.duckduckgo.com/html/", params={"q": q}, headers=UA, timeout=15)
-        urls = re.findall(r'class="result__a"[^>]+href="([^"]+)"', r.text)
-        out = []
-        for u in urls:
-            m = re.search(r"uddg=([^&]+)", u)
-            out.append(unquote(m.group(1)) if m else u)
-        return [u for u in out if u.startswith("http") and "duckduckgo.com" not in u][:n]
-    except Exception:
+def _ddg_html(q, n):
+    r = requests.get("https://html.duckduckgo.com/html/", params={"q": q}, headers=UA, timeout=15)
+    if r.status_code != 200:
+        return []                                   # 202 = DuckDuckGo's bot page (common from cloud servers)
+    out = []
+    for u in re.findall(r'class="result__a"[^>]+href="([^"]+)"', r.text):
+        m = re.search(r"uddg=([^&]+)", u)
+        out.append(unquote(m.group(1)) if m else u)
+    return out
+
+
+def _ddg_lite(q, n):
+    r = requests.post("https://lite.duckduckgo.com/lite/", data={"q": q}, headers=UA, timeout=15)
+    if r.status_code != 200:
         return []
+    out = []
+    for u in re.findall(r'<a[^>]+href="([^"]+)"[^>]*class=.result-link', r.text) + \
+            re.findall(r"<a[^>]+class=.result-link[^>]*href=\"([^\"]+)\"", r.text):
+        m = re.search(r"uddg=([^&]+)", u)
+        out.append(unquote(m.group(1)) if m else u)
+    return out
+
+
+def _tavily(q, n, db=None):
+    """Tavily free tier (1,000 searches/month, shared with Ten-Four Outreach): capped per day."""
+    import os
+    key = os.environ.get("TAVILY_API_KEY")
+    if not key:
+        return []
+    cap = 15
+    used = {}
+    if db is not None:
+        try:
+            cap = int(db.setting("gs_tavily_daily", 15) or 15)
+            used = db.setting("gs_tavily_used", {}) or {}
+        except Exception:
+            pass
+    day = now().strftime("%Y-%m-%d")
+    if used.get(day, 0) >= cap:
+        return []
+    r = requests.post("https://api.tavily.com/search", json={"api_key": key, "query": q, "max_results": n}, timeout=30)
+    if db is not None:
+        try:
+            db.insert("settings", {"key": "gs_tavily_used", "value": {day: used.get(day, 0) + 1}},
+                      upsert=True, on_conflict="key")
+        except Exception:
+            pass
+    return [x.get("url", "") for x in (r.json().get("results") or [])] if r.status_code < 300 else []
+
+
+def ddg(q, n=6, db=None):
+    """Web search: DuckDuckGo first (free, no key), Tavily when DuckDuckGo blocks the server."""
+    for fn in (_ddg_html, _ddg_lite, lambda q, n: _tavily(q, n, db)):
+        try:
+            out = [u for u in fn(q, n) if u.startswith("http") and "duckduckgo.com" not in u]
+        except Exception:
+            out = []
+        if out:
+            return out[:n]
+    return []
 
 
 def gnews(q, n=10):

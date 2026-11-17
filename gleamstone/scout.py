@@ -105,7 +105,8 @@ def lease_news(db):
 
 
 # ---------------- map lane (OpenStreetMap, free) ----------------
-OVERPASS = ["https://overpass-api.de/api/interpreter", "https://overpass.private.coffee/api/interpreter",
+OVERPASS = ["https://overpass-api.de/api/interpreter", "https://lz4.overpass-api.de/api/interpreter",
+            "https://z.overpass-api.de/api/interpreter", "https://overpass.private.coffee/api/interpreter",
             "https://maps.mail.ru/osm/tools/overpass/api/interpreter", "https://overpass.kumi.systems/api/interpreter"]
 MAP_KINDS = [  # (osm filter, category, base fit)
     ('["shop"="car"]', "dealership", 7),
@@ -132,34 +133,56 @@ CHAINS = ("planet fitness", "cvs", "walgreens", "mass general", "beth israel", "
 
 
 def _overpass(q, deadline):
+    """Public Overpass servers are often busy (429/504), especially for cloud servers: try each mirror, starting
+    at a different one each call, and wait a little between rounds."""
+    import random
     import time
     last = ""
-    for url in OVERPASS:
-        if time.time() > deadline:
-            raise RuntimeError("OpenStreetMap: out of time this run")
-        try:
-            r = requests.post(url, data={"data": q}, headers=c.UA, timeout=45)
-            if r.status_code < 300 and r.text.lstrip().startswith("{"):
-                return r.json().get("elements", [])
-            last = f"{url.split('/')[2]} {r.status_code}"
-        except Exception as e:
-            last = f"{url.split('/')[2]} {type(e).__name__}"
-    raise RuntimeError(f"OpenStreetMap lookup failed ({last})")
+    order = OVERPASS[:]
+    random.shuffle(order)
+    for rnd in range(2):
+        for url in order:
+            if time.time() > deadline:
+                raise RuntimeError(f"OpenStreetMap: out of time this run ({last})")
+            try:
+                r = requests.post(url, data={"data": q}, headers=c.UA, timeout=60)
+                if r.status_code < 300 and r.text.lstrip().startswith("{"):
+                    return r.json().get("elements", [])
+                last = f"{url.split('/')[2]} {r.status_code}"
+            except Exception as e:
+                last = f"{url.split('/')[2]} {type(e).__name__}"
+        time.sleep(20)
+    raise RuntimeError(f"OpenStreetMap servers busy ({last})")
+
+
+def _boxes(h, miles, n=2):
+    """Split the service circle's bounding box into n x n tiles: small queries finish where one big one times out."""
+    import math
+    dlat = miles / 69.0
+    dlon = miles / (69.0 * math.cos(math.radians(h[0])))
+    s, w = h[0] - dlat, h[1] - dlon
+    out = []
+    for i in range(n):
+        for j in range(n):
+            out.append((s + 2 * dlat * i / n, w + 2 * dlon * j / n, s + 2 * dlat * (i + 1) / n, w + 2 * dlon * (j + 1) / n))
+    return out
 
 
 def map_lane(db):
-    """One small query per kind of business, so one slow kind doesn't sink the run."""
+    """One small query per kind of business and map tile, so one slow piece doesn't sink the run. Whatever comes
+    back is used; the rest is tried again next run."""
     h, rad = c.home(db), c.radius(db)
-    meters = int(rad * 1609)
     import time
-    deadline = time.time() + 8 * 60            # never hold up the hourly run for more than ~8 minutes
-    elements, fails = [], []
+    deadline = time.time() + 9 * 60            # never hold up the hourly run for more than ~9 minutes
+    elements, fails, done = [], [], 0
     for f, _, _ in MAP_KINDS:
-        q = f'[out:json][timeout:40];nwr{f}["name"](around:{meters},{h[0]},{h[1]});out center tags;'
-        try:
-            elements += _overpass(q, deadline)
-        except Exception as e:
-            fails.append(str(e))
+        for b in _boxes(h, rad):
+            q = f'[out:json][timeout:50];nwr{f}["name"]({b[0]:.4f},{b[1]:.4f},{b[2]:.4f},{b[3]:.4f});out center tags;'
+            try:
+                elements += _overpass(q, deadline)
+                done += 1
+            except Exception as e:
+                fails.append(str(e))
     if not elements and fails:
         raise RuntimeError(fails[-1])
     data = {"elements": elements}
@@ -171,7 +194,7 @@ def map_lane(db):
             continue
         lat = el.get("lat") or el.get("center", {}).get("lat")
         lon = el.get("lon") or el.get("center", {}).get("lon")
-        if lat is None:
+        if lat is None or c.miles(h, (lat, lon)) > rad:
             continue
         cat, fit = _classify(tg)
         town = c.match_town(tg.get("addr:city") or "") or min(c.TOWNS, key=lambda t: c.miles((lat, lon), c.TOWNS[t]))
@@ -184,7 +207,8 @@ def map_lane(db):
                      "source": "map", "source_url": f"https://www.openstreetmap.org/{el['type']}/{el['id']}",
                      "fit_score": fit + (1 if email else 0)})
     rows.sort(key=lambda r: (-r["fit_score"], r["distance_mi"]))
-    return _add(db, rows, limit=int(db.setting("gs_map_batch", 150) or 150)), len(rows)
+    total = len(MAP_KINDS) * 4
+    return _add(db, rows, limit=int(db.setting("gs_map_batch", 150) or 150)), len(rows), f"{done}/{total}"
 
 
 def main(db):
@@ -193,5 +217,5 @@ def main(db):
 
 
 def main_map(db):
-    n, seen = map_lane(db)
-    return f"map: {seen} businesses in range, {n} new prospects"
+    n, seen, parts = map_lane(db)
+    return f"map: {seen} businesses in range, {n} new prospects (map pieces loaded {parts})"

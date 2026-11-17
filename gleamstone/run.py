@@ -24,14 +24,15 @@ def _last_runs():
     last = {}
     for r in rows:
         if r["status"] in ("ok", "error"):
-            last.setdefault(r["agent"], datetime.fromisoformat(r["started_at"].replace("Z", "+00:00")))
+            last.setdefault(r["agent"], (datetime.fromisoformat(r["started_at"].replace("Z", "+00:00")), r["status"]))
     return last
 
 
 def due(now):
     last = _last_runs()
-    age = lambda n: (now - last["gs_" + n]).total_seconds() / 3600 if "gs_" + n in last else 1e9
-    return [n for n in ORDER if age(n) >= EVERY_H[n] - 0.25]
+    age = lambda n: (now - last["gs_" + n][0]).total_seconds() / 3600 if "gs_" + n in last else 1e9
+    every = lambda n: min(EVERY_H[n], 6) if last.get("gs_" + n, (None, ""))[1] == "error" else EVERY_H[n]
+    return [n for n in ORDER if age(n) >= every(n) - 0.25]
 
 
 def main():

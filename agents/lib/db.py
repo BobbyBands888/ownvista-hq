@@ -47,3 +47,26 @@ class DB:
 
     def alert(self, agent, message, level="info"):
         return self.insert("alerts", {"agent": agent, "message": message[:1000], "level": level})
+
+    def alert_once(self, agent, message, level="info", key=None):
+        """Alert only if no open (unresolved) alert from this agent already starts with `key` (default: the
+        whole message). Stops the same problem filling 'Needs you' on every run."""
+        key = (key or message)[:200]
+        try:
+            open_ = self.select("alerts", {"agent": f"eq.{agent}", "resolved": "is.false",
+                                           "select": "message", "order": "created_at.desc", "limit": 300})
+            if any((a.get("message") or "").startswith(key) for a in open_):
+                return []
+        except Exception:
+            pass
+        return self.alert(agent, message, level)
+
+    def resolve_alerts(self, agent, contains):
+        """Mark open alerts from `agent` whose text contains `contains` as done."""
+        try:
+            for a in self.select("alerts", {"agent": f"eq.{agent}", "resolved": "is.false",
+                                            "select": "id,message", "limit": 500}):
+                if contains in (a.get("message") or ""):
+                    self.update("alerts", {"id": f"eq.{a['id']}"}, {"resolved": True})
+        except Exception:
+            pass
