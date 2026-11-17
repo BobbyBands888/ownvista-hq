@@ -357,14 +357,19 @@ def _free_footage(folder):
 def render(db):
     items = db.select("content", {"status": "eq.scripted", "compliance_status": "eq.pass",
                                   "approval_status": "in.(approved,not_required)",
-                                  "order": "lead_id.asc,kind.desc,created_at.asc", "limit": 12})
+                                  "order": "lead_id.asc,kind.desc,created_at.asc", "limit": 40})
+    waiting = {k.split(":")[1] for k in (json.loads(FAILS.read_text()) if FAILS.exists() else {}) if k.startswith("vision_wait:")}
+    items = sorted(items, key=lambda it: str(it.get("lead_id")) in waiting)[:12]   # stable: case order kept
     # all of a case's videos in one run, so its footage is downloaded once
     fails = json.loads(FAILS.read_text()) if FAILS.exists() else {}
     done = 0
     prev = None
+    vision_down = set()
     for it in items:
         src = FOOTAGE / str(it["lead_id"])
-        if CLOUD and prev and prev != src:
+        if it["lead_id"] in vision_down:
+            continue                                # vision already failed for this case this run: don't burn ~10 min per item
+        if CLOUD and sys.platform != "darwin" and prev and prev != src:
             _free_footage(prev)                     # cloud runner disk is small: one case's footage at a time
         prev = src
         try:
@@ -448,6 +453,7 @@ def render(db):
             fails.pop(str(it["id"]), None)
             done += 1
         elif res.returncode == 4:
+            vision_down.add(it["lead_id"])
             # vision down (free-tier cap / provider error): keep it queued, say so once per case per day
             key = f"vision_wait:{it['lead_id']}:{_now():%Y-%m-%d}"
             if not fails.get(key):
