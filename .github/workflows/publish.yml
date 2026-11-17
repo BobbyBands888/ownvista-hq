@@ -10,9 +10,9 @@ concurrency:
   cancel-in-progress: false
 jobs:
   publish:
-    # Free: GitHub doesn't bill minutes on a self-hosted runner (Bobby's Mac). Set the repo variable
-    # HQ_RUNNER=ubuntu-latest to go back to GitHub's machines (2,000 free min/month; HQ needs more than that).
-    runs-on: ${{ vars.HQ_RUNNER || 'self-hosted' }}
+    # Public repo: GitHub's standard runners are free with no minute limit. HQ_RUNNER=self-hosted runs it on
+    # Bobby's Mac instead (also free).
+    runs-on: ${{ vars.HQ_RUNNER || 'ubuntu-latest' }}
     timeout-minutes: 300
     steps:
       - name: Where HQ keeps its files (outside the checkout, so footage and caches survive between runs on the Mac)
