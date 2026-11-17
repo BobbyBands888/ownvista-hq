@@ -6,6 +6,7 @@ from datetime import date
 from .lib import llm
 from .lib.runner import RULES
 from . import casefacts
+from .maker import is_fatal as maker_fatal
 
 def provenance_ok(db, item, lead):
     st = item.get("source_type")
@@ -46,8 +47,9 @@ def main(db):
     streak_needed = int(db.setting("auto_post_after_approvals", 10))
     earned = {}
     for kind in ("reel", "short", "episode"):
+        # only decisions on FINISHED videos count (a plan approval says nothing about what the render shows)
         recent = db.select("content", {"select": "approval_status", "kind": f"eq.{kind}",
-                                       "approval_status": "in.(approved,rejected)",
+                                       "approval_status": "in.(approved,rejected)", "media_path": "not.is.null",
                                        "order": "created_at.desc", "limit": streak_needed})
         earned[kind] = len(recent) >= streak_needed and all(r["approval_status"] == "approved" for r in recent)
     passed = failed = 0
@@ -91,9 +93,13 @@ def main(db):
             db.update("content", {"id": f"eq.{it['id']}"}, {"compliance_status": "fail", "compliance_notes": notes})
             failed += 1
         else:
+            auto = (not need_approval or earned.get(it["kind"])) and it["kind"] != "episode" and not maker_fatal(facts)
             db.update("content", {"id": f"eq.{it['id']}"}, {
                 "compliance_status": "pass", "compliance_notes": notes,
-                "approval_status": "pending" if need_approval and not earned.get(it["kind"]) else "not_required"})
+                "approval_status": "not_required" if auto else "pending"})
+            if auto and need_approval:
+                db.alert("compliance", f"Auto-posting (earned) for {it['kind']} '{it.get('title') or it['case_name']}' — "
+                         "no one reviews this video before it posts", "warn")
             passed += 1
     if failed:
         db.alert("compliance", f"{failed} item(s) blocked — see Content queue for reasons", "info")
