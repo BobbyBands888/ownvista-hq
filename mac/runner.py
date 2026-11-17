@@ -531,20 +531,50 @@ def reel_to_youtube(db, it, cap, ep_yt):
         db.alert("publisher", f"Reel posted to Facebook but not YouTube ('{it['title']}'): {str(e)[:200]}", "info")
         return None
 
+_FB_TOKEN = None
+
+def fb_token_info(tok, page_id):
+    """What the stored FB token actually is (never prints the token). (#200 'no permission to post videos on this
+    target' is what Facebook says when a person's token is used where the Page's own token is needed.)"""
+    me = requests.get(FB + "me", params={"fields": "id,name", "access_token": tok}, timeout=30).json()
+    if "error" in me:
+        return {"ok": False, "kind": "invalid", "detail": me["error"].get("message", "")[:200]}
+    if str(me.get("id")) == str(page_id):
+        return {"ok": True, "kind": "page", "detail": f"Page token for {me.get('name')} ({me.get('id')})"}
+    return {"ok": False, "kind": "user", "detail": f"Token belongs to {me.get('name')} ({me.get('id')}), not Page {page_id}"}
+
+def fb_page_token():
+    """The Page's own token. If the secret holds a personal token instead, swap it for the Page token it can get."""
+    global _FB_TOKEN
+    if _FB_TOKEN:
+        return _FB_TOKEN
+    tok, page = (config.FB_PAGE_TOKEN or "").strip(), (config.FB_PAGE_ID or "").strip()
+    info = fb_token_info(tok, page)
+    if info["kind"] == "user":
+        r = requests.get(FB + page, params={"fields": "access_token", "access_token": tok}, timeout=30).json()
+        if r.get("access_token"):
+            tok = r["access_token"]
+        else:
+            raise RuntimeError(f"FB token problem: {info['detail']}, and it can't get the Page's token: {r}")
+    elif info["kind"] == "invalid":
+        raise RuntimeError(f"FB token problem: {info['detail']}")
+    _FB_TOKEN = tok
+    return tok
+
 def facebook_reel(path, caption):
-    tok = config.FB_PAGE_TOKEN
-    start = requests.post(FB + f"{config.FB_PAGE_ID}/video_reels",
+    tok = fb_page_token()
+    start = requests.post(FB + f"{config.FB_PAGE_ID.strip()}/video_reels",
                           params={"upload_phase": "start", "access_token": tok}, timeout=60).json()
     vid = start.get("video_id")
     if not vid:
-        raise RuntimeError(f"FB start failed: {start}")
+        raise RuntimeError(f"FB start failed ({fb_token_info(tok, config.FB_PAGE_ID.strip())['detail']}): {start}")
     size = os.path.getsize(path)
     with open(path, "rb") as f:
         up = requests.post(start["upload_url"], data=f, timeout=1800,
                            headers={"Authorization": f"OAuth {tok}", "offset": "0", "file_size": str(size)})
     if up.status_code >= 300:
         raise RuntimeError(f"FB upload {up.status_code}: {up.text[:300]}")
-    fin = requests.post(FB + f"{config.FB_PAGE_ID}/video_reels", params={
+    fin = requests.post(FB + f"{config.FB_PAGE_ID.strip()}/video_reels", params={
         "upload_phase": "finish", "video_id": vid, "video_state": "PUBLISHED",
         "description": caption[:2000], "access_token": tok}, timeout=60).json()
     if not fin.get("success"):
