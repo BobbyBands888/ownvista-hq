@@ -647,11 +647,40 @@ def publish(db):
             db.alert("publisher", f"Post failed for {it['title']}: {e}", "warn")
     return f"posted {len(out)}" + (f": {out}" if out else "")
 
+KEEP_DAYS = 14   # agency links usually expire 7-14 days after delivery
+
+def keep_copies(db):
+    """Keep a copy of each newly delivered footage package as soon as it arrives, not only when something from it
+    renders: Highlands (17 files) was delivered Nov 6, rendered from once, and was never kept, so it would have been
+    lost when its link expired. One package per run (disk and time on the runner)."""
+    since = (_now() - timedelta(days=KEEP_DAYS)).isoformat()
+    reqs = db.select("records_requests", {"status": "eq.fulfilled", "download_links": "not.is.null",
+                                          "last_activity_at": f"gte.{since}", "select": "lead_id,subject",
+                                          "order": "last_activity_at.asc"})
+    failed = []
+    for r in reqs:
+        if not r.get("lead_id"):
+            continue
+        try:
+            rel = _mirror_release(r["lead_id"])
+        except Exception:
+            continue
+        if rel and rel.get("assets"):
+            continue
+        dest = FOOTAGE / str(r["lead_id"])
+        ok = ensure_footage(db, {"lead_id": r["lead_id"], "case_name": (r.get("subject") or "")[:80]})
+        _free_footage(dest)
+        if ok:
+            return f"kept {r['lead_id']}"
+        failed.append(str(r["lead_id"])[:8])        # expired link etc.: try the next package instead of stopping
+    return f"couldn't fetch {', '.join(failed)}" if failed else "nothing new to keep"
+
 def main(db):
     d = 0 if CLOUD else download_footage(db)
     r = render(db)
     p = publish(db)
-    return f"downloaded {d} files, rendered {r}, {p}"
+    k = keep_copies(db) if CLOUD else "-"
+    return f"downloaded {d} files, rendered {r}, {p}; footage copies: {k}"
 
 if __name__ == "__main__":
     ok = run_agent("publisher" if CLOUD else "mac_runner", main)
