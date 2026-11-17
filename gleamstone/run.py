@@ -43,6 +43,7 @@ def main():
         print(f"Gleamstone tables not set up yet (run supabase/gleamstone.sql): {e}")
         sys.exit(0)
     names = due(datetime.now(timezone.utc)) if arg == "tick" else [arg]
+    print(f"Gleamstone plan: {', '.join(names) or 'nothing due'}", flush=True)
     ok = True
     for n in names:
         if n not in AGENTS:

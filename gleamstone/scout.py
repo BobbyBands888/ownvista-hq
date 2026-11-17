@@ -105,7 +105,8 @@ def lease_news(db):
 
 
 # ---------------- map lane (OpenStreetMap, free) ----------------
-OVERPASS = ["https://overpass-api.de/api/interpreter", "https://overpass.kumi.systems/api/interpreter"]
+OVERPASS = ["https://overpass-api.de/api/interpreter", "https://overpass.private.coffee/api/interpreter",
+            "https://maps.mail.ru/osm/tools/overpass/api/interpreter", "https://overpass.kumi.systems/api/interpreter"]
 MAP_KINDS = [  # (osm filter, category, base fit)
     ('["shop"="car"]', "dealership", 7),
     ('["amenity"="dentist"]', "medical", 7),
@@ -130,22 +131,33 @@ def _classify(tg):
 CHAINS = ("planet fitness", "cvs", "walgreens", "mass general", "beth israel", "brigham", "minuteclinic")
 
 
-def map_lane(db):
-    h, rad = c.home(db), c.radius(db)
-    meters = int(rad * 1609)
-    parts = "".join(f'nwr{f}["name"](around:{meters},{h[0]},{h[1]});' for f, _, _ in MAP_KINDS)
-    q = f"[out:json][timeout:120];({parts});out center tags;"
-    data = None
+def _overpass(q):
+    last = ""
     for url in OVERPASS:
         try:
-            r = requests.post(url, data={"data": q}, headers=c.UA, timeout=150)
-            if r.status_code < 300:
-                data = r.json()
-                break
-        except Exception:
-            continue
-    if not data:
-        raise RuntimeError("OpenStreetMap lookup failed on both servers")
+            r = requests.post(url, data={"data": q}, headers=c.UA, timeout=90)
+            if r.status_code < 300 and r.text.lstrip().startswith("{"):
+                return r.json().get("elements", [])
+            last = f"{url.split('/')[2]} {r.status_code}"
+        except Exception as e:
+            last = f"{url.split('/')[2]} {type(e).__name__}"
+    raise RuntimeError(f"OpenStreetMap lookup failed ({last})")
+
+
+def map_lane(db):
+    """One small query per kind of business, so one slow kind doesn't sink the run."""
+    h, rad = c.home(db), c.radius(db)
+    meters = int(rad * 1609)
+    elements, fails = [], []
+    for f, _, _ in MAP_KINDS:
+        q = f'[out:json][timeout:60];nwr{f}["name"](around:{meters},{h[0]},{h[1]});out center tags;'
+        try:
+            elements += _overpass(q)
+        except Exception as e:
+            fails.append(str(e))
+    if not elements and fails:
+        raise RuntimeError(fails[-1])
+    data = {"elements": elements}
     rows = []
     for el in data.get("elements", []):
         tg = el.get("tags", {})
