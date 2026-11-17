@@ -22,7 +22,8 @@ from .lib.runner import RULES
 AGENCY_RX = re.compile(r"sheriff|police|\bpd\b|state attorney|district attorney|prosecutor|highway patrol|"
                        r"state police|public safety|marshal|department of corrections|constable|trooper", re.I)
 YT_QUERIES = ["bodycam", "body worn camera video", "critical incident video", "officer involved shooting video",
-              "pursuit dash cam video", "deputy body camera arrest"]
+              "pursuit dash cam video", "deputy body camera arrest", "DUI arrest body camera",
+              "sovereign citizen traffic stop bodycam", "interrogation video released"]
 # Agencies known to post their own bodycam/dashcam releases on YouTube. Resolved to channel IDs once and kept in
 # settings["scout_channels"]; channels found by the search pass are added there automatically.
 SEED_HANDLES = ["LAPDHQ", "LVMPD", "PhoenixPolice", "SanDiegoPolice", "SeattlePD", "DenverPolice", "FortWorthPD",
@@ -51,7 +52,10 @@ FOOTAGE_RX = re.compile(r"body ?cam|body[- ]worn|\bbwc\b|dash ?cam|critical inci
 NEWS_QUERIES = ["bodycam video released", "body camera footage released sheriff",
                 "police release body camera video arrest", "911 call and bodycam released",
                 "sheriff releases body camera video", "dash cam video released chase",
-                "deputies body camera footage shows", "police release video of arrest"]
+                "deputies body camera footage shows", "police release video of arrest",
+                # the genres the biggest bodycam channels live on: DUI stops, sovereign citizens, meltdowns, interrogations
+                "DUI arrest bodycam video", "sovereign citizen arrest bodycam", "bodycam shows woman arrested after crash",
+                "bodycam video shows man refuses", "interrogation video released police", "shoplifting arrest bodycam"]
 LOOKBACK_DAYS = 7
 
 def _now():
@@ -330,8 +334,13 @@ def score(db, leads):
         res = llm.ask(
             "You screen footage leads for Ten-Four Tapes. Bobby only wants real action on screen "
             "(arrests, fights, chases, shootouts, dramatic rescues, strong case stories with 911 + interrogation). "
-            "Our audience wants ENFORCEMENT action (chases, fights, arrests, shots fired, use of force): "
-            "rescues and routine calls score 6 at most unless officers face real danger on camera. "
+            "Our audience wants ENFORCEMENT action (chases, fights, arrests, shots fired, use of force) AND the "
+            "character-driven stops the biggest bodycam channels live on: DUI stops where the driver argues or "
+            "melts down, sovereign citizens, entitled or absurd arrests, someone who crashes and lies, a funny or "
+            "bizarre arrest, and released interrogations of a known case (category case_story). Score those as "
+            "enforcement when the conflict or the absurdity is on camera; a calm, routine stop with no conflict "
+            "still scores 5 at most. Never score on someone's looks or body, or frame a lead around them. "
+            "Rescues and other routine calls score 6 at most unless officers face real danger on camera. "
             "Our winners all had ONE clear enforcement moment (e.g. a smuggling stop that turns into a foot chase, "
             "a narco sub boarding), a named place, and obvious stakes (drugs, guns, a fleeing felon, lives at risk). "
             "Fill moment/place/stakes only from the lead text; leave a field empty if the text doesn't say it. "
