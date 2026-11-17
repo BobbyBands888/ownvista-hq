@@ -131,11 +131,14 @@ def _classify(tg):
 CHAINS = ("planet fitness", "cvs", "walgreens", "mass general", "beth israel", "brigham", "minuteclinic")
 
 
-def _overpass(q):
+def _overpass(q, deadline):
+    import time
     last = ""
     for url in OVERPASS:
+        if time.time() > deadline:
+            raise RuntimeError("OpenStreetMap: out of time this run")
         try:
-            r = requests.post(url, data={"data": q}, headers=c.UA, timeout=90)
+            r = requests.post(url, data={"data": q}, headers=c.UA, timeout=45)
             if r.status_code < 300 and r.text.lstrip().startswith("{"):
                 return r.json().get("elements", [])
             last = f"{url.split('/')[2]} {r.status_code}"
@@ -148,11 +151,13 @@ def map_lane(db):
     """One small query per kind of business, so one slow kind doesn't sink the run."""
     h, rad = c.home(db), c.radius(db)
     meters = int(rad * 1609)
+    import time
+    deadline = time.time() + 8 * 60            # never hold up the hourly run for more than ~8 minutes
     elements, fails = [], []
     for f, _, _ in MAP_KINDS:
-        q = f'[out:json][timeout:60];nwr{f}["name"](around:{meters},{h[0]},{h[1]});out center tags;'
+        q = f'[out:json][timeout:40];nwr{f}["name"](around:{meters},{h[0]},{h[1]});out center tags;'
         try:
-            elements += _overpass(q)
+            elements += _overpass(q, deadline)
         except Exception as e:
             fails.append(str(e))
     if not elements and fails:
