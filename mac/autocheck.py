@@ -37,7 +37,7 @@ PROMPT = """These are {n} numbered frames (red labels 1..{n} in each frame's bot
 that is about to be posted. For EACH numbered frame report:
 - "text": every word of text the EDITOR put on screen (badges, titles, hook text, captions, cards, labels,
   "Part 1"), copied exactly as written, in reading order. "" if none. Ignore the camera's own timestamp /
-  serial-number overlay and the small "Footage:" credit line.
+  serial-number overlay, the small "Footage:" / agency credit line, and the red frame-number labels.
 - "body": true if a person who looks dead, dying, limp on the ground after force, or badly wounded is visible
   and NOT blurred out. When unsure, true.
 - "gore": true if blood or a wound is visible and NOT blurred out.
@@ -157,9 +157,23 @@ def spoken_and_written(it, script):
     return {k: str(v) for k, v in parts.items() if v}
 
 
-def source_text(lead, facts):
-    return " ".join([lead.get("title") or "", lead.get("summary") or "", lead.get("notes") or "",
-                     json.dumps(facts or {}, default=str)])
+def source_text(lead, facts, it=None):
+    """Everything we know from sources: lead text, agency (its name carries the city), date, credit, case file."""
+    it = it or {}
+    return " ".join(str(x) for x in [lead.get("title"), lead.get("summary"), lead.get("notes"), lead.get("agency_name"),
+                                     lead.get("state"), lead.get("incident_date"), it.get("source_credit"),
+                                     json.dumps(facts or {}, default=str)] if x)
+
+
+# Our own branding and calls to action: never a factual claim (Pole Crash, Nov 17: "FOLLOW FOR MORE CASES" was flagged)
+BOILER = re.compile(r"ten[- ]?four tapes|follow for (?:more(?: cases)?|part \w+)|full episode on (?:our|the) channel|"
+                    r"watch the full episode|how it ended|part \d+|footage:[^|]*|\((?:official release|"
+                    r"public domain|public records request)\)", re.I)
+
+
+def clean_text(t):
+    """On-screen text minus our branding, calls to action and credit markers."""
+    return re.sub(r"\s+", " ", BOILER.sub(" ", t or "")).strip(" -|,.")
 
 
 def strong_word_problems(lines, sources):
@@ -179,7 +193,7 @@ def strong_word_problems(lines, sources):
     return list(dict.fromkeys(out))
 
 
-def claim_problems(lines, lead, facts, ask=None):
+def claim_problems(lines, lead, facts, ask=None, it=None):
     """LLM pass: any claim in what's shown/said that the sources don't back up. Fails closed (an error = a problem)."""
     from agents.lib import llm
     ask = ask or llm.ask
@@ -188,10 +202,13 @@ def claim_problems(lines, lead, facts, ask=None):
             "You fact-check a police bodycam video before it is posted. The SOURCES are the only facts we have. "
             "List every statement in the VIDEO TEXT that the sources do not support: an outcome (arrest, charges, "
             "conviction, death, injury), a weapon, shots fired, a 'shootout', drugs, amounts, names, ages, places, "
-            "dates, or any dramatic detail that isn't in the sources. Questions and generic hype ('watch what "
-            "happens', 'follow for part 2') are fine. Charges stated as convictions are a problem. Be strict but "
-            "don't flag wording that only restates the sources.",
-            "SOURCES:\n" + source_text(lead, facts)[:6000] + "\n\nVIDEO TEXT:\n" +
+            "dates, or any dramatic detail that isn't in the sources. Charges stated as convictions are a problem. "
+            "NOT problems: questions, generic hype ('watch what happens'), our branding and calls to action, credit "
+            "lines, the case name when it only names the place + type of incident, a city that matches the agency's "
+            "own name, and plain descriptions of what is visibly happening on screen (e.g. 'officer walks to the "
+            "car', 'wet road') that make no claim about crime, outcome, weapons, injuries, people or numbers. "
+            "Flag only what could mislead a viewer about what happened.",
+            "SOURCES:\n" + source_text(lead, facts, it)[:6000] + "\n\nVIDEO TEXT:\n" +
             json.dumps(dict(lines), ensure_ascii=False)[:6000] +
             '\n\nReturn JSON {"problems":[{"text":"the exact words","why":"what the sources say instead"}]}',
             max_tokens=900, temperature=0.1)
@@ -225,11 +242,12 @@ def check(path, it, lead, facts, script=None, log=print, see=None, ask=None):
         if key and key not in seen:
             seen.add(key)
             on_screen.append({"t": f["t"], "text": f["text"]})
-    lines = [(f"on-screen text at {o['t']:.0f}s", o["text"]) for o in on_screen]
+    lines = [(f"on-screen text at {o['t']:.0f}s", clean_text(o["text"])) for o in on_screen]
+    lines = [(k, v) for k, v in lines if v]
     lines += list(spoken_and_written(it, script).items())
-    src = source_text(lead, facts)
+    src = source_text(lead, facts, it)
     problems += strong_word_problems(lines, src)
-    problems += claim_problems(lines, lead, facts, ask=ask)
+    problems += claim_problems(lines, lead, facts, ask=ask, it=it)
     problems = list(dict.fromkeys(problems))
     return {"verdict": "hold" if problems else "pass", "problems": problems[:12], "read": read,
             "sampled": sampled, "on_screen": on_screen[:40], "_sheets": sheets}
