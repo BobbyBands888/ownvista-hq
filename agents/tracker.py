@@ -72,7 +72,8 @@ def followups(db):
     maxf = int(db.setting("max_followups", 3))
     cutoff = (_now() - timedelta(days=days)).isoformat()
     stale = db.select("records_requests", {"status": "in.(sent,acknowledged)", "last_activity_at": f"lt.{cutoff}",
-                                           "followups": f"lt.{maxf}", "limit": 10})
+                                           "followups": f"lt.{maxf}", "to_email": "not.is.null",   # portal filings: no inbox to nudge
+                                           "limit": 10})
     n = 0
     for r in stale:
         body = ("Hello,\n\nFollowing up on my public records request below. Could you share the current status "

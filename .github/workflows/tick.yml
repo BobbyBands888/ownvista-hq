@@ -5,7 +5,7 @@ on:
   workflow_dispatch:
     inputs:
       agent:
-        description: "Run one agent now (research, scout, outreach, tracker, maker, compliance, analytics, overseer) or 'tick'. Gleamstone: gs:scout, gs:map, gs:enrich, gs:writer, gs:sender, gs:brief, gs:recruit"
+        description: "Run one agent now (research, scout, outreach, portal_filer, tracker, maker, compliance, analytics, overseer) or 'tick'. Gleamstone: gs:scout, gs:map, gs:enrich, gs:writer, gs:sender, gs:brief, gs:recruit"
         default: "tick"
 permissions:
   contents: read

@@ -276,7 +276,8 @@ def main(db):
     cap = int(db.setting("outreach_daily_cap", 10))
     signature = db.setting("signature_name", "Bobby Cipro")
     today = _now().replace(hour=0, minute=0, second=0, microsecond=0).isoformat()
-    sent_today = db.select("records_requests", {"select": "agency_id", "sent_at": f"gte.{today}"})
+    sent_today = db.select("records_requests", {"select": "agency_id", "sent_at": f"gte.{today}",
+                                                "to_email": "not.is.null"})   # portal filings don't use the email cap
     budget = cap - len(sent_today)
     per_agency = {}
     for s in sent_today:
