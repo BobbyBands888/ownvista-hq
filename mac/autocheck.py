@@ -45,7 +45,9 @@ that is about to be posted. For EACH numbered frame report:
 - "child": true if a child's face is clearly visible and NOT blurred out.
 - "broken": true if the frame is black, frozen, garbled or a rendering error.
 - "subs": subtitle / dialogue text, if any ("" if none).
-Return {{"frames":[{{"n":1,"text":"","subs":"","body":false,"gore":false,"child":false,"broken":false}}]}}"""
+- "action": 0 if nothing is happening in the footage (empty scene, a parked car's interior, the same still shot),
+  1 calm (talking, walking, driving), 2 tense or active (chase, confrontation, arrest), ignoring the text overlays.
+Return {{"frames":[{{"n":1,"text":"","subs":"","action":1,"body":false,"gore":false,"child":false,"broken":false}}]}}"""
 
 
 def _true(x):
@@ -87,6 +89,11 @@ def sheet(path, times, vertical):
     buf = io.BytesIO()
     img.save(buf, "JPEG", quality=78)
     return buf.getvalue()
+
+
+def _action(x):
+    m = re.search(r"\d", str(x if x is not None else 1))
+    return min(3, int(m[0])) if m else 1
 
 
 def _frames(j, n):
@@ -132,7 +139,8 @@ def read_video(path, kind, log=print, see=None):
             for n, fr in _frames(j, len(chunk)).items():
                 got.append({"t": chunk[n], "text": str(fr.get("text") or "").strip()[:200],
                             "body": _true(fr.get("body")), "gore": _true(fr.get("gore")),
-                            "child": _true(fr.get("child")), "broken": _true(fr.get("broken"))})
+                            "child": _true(fr.get("child")), "broken": _true(fr.get("broken")),
+                            "action": _action(fr.get("action"))})
             fails = 0
         except Exception as e:
             fails += 1
@@ -239,6 +247,12 @@ def check(path, it, lead, facts, script=None, log=print, see=None, ask=None):
     broken = bad("broken")
     if len(broken) > max(2, 0.15 * max(read, 1)):
         problems.append(f"{len(broken)} black/broken frames (e.g. {', '.join(f'{t:.0f}s' for t in broken[:4])})")
+    # Sebring Reel 83c05b1d, Nov 17: 30s of a parked cruiser's back seat under a "POINTS GUN" hook
+    if it.get("kind") in ("reel", "short") and read:
+        dead = [f for f in frames if f.get("action", 1) == 0 and f["t"] > 3]
+        body_frames = [f for f in frames if f["t"] > 3] or frames
+        if len(dead) >= 0.5 * len(body_frames):
+            problems.append(f"nothing happening on screen in {len(dead)}/{len(body_frames)} frames (static or empty shot)")
     # what's on screen, de-duplicated in order of appearance
     seen, on_screen = set(), []
     for f in frames:
