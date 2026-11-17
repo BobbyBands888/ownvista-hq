@@ -16,6 +16,7 @@ from urllib.parse import quote_plus, urljoin, urlparse
 import feedparser
 import requests
 from .lib import config, llm
+from . import casescout
 from .lib.google import yt_get
 from .lib.runner import RULES
 
@@ -453,6 +454,14 @@ def main(db):
         r.pop("_src", None)
         r.pop("_cid", None)
     direct = take_direct(rows)
+    # big closed cases whose police interviews can be requested (once a day, own scoring; see casescout.py)
+    case_note = ""
+    try:
+        case_rows, case_note = casescout.find(db, forced=len(sys.argv) > 1 and sys.argv[1] == "scout")
+        rows += case_rows
+    except Exception as e:
+        errors.append(f"cases: {e}")
+        db.alert("scout", f"case scout failed: {e}", "warn")
     if rows:
         db.insert("leads", rows, upsert=True, on_conflict="source_url")
     # agency-hosted files: record them the way a fulfilled request is recorded so the publisher fetches them
@@ -479,4 +488,5 @@ def main(db):
     return ((f"watching {STATS['channels']} agency channels; " if STATS.get("channels") else "") + (f"{STATS['reuploads']} re-upload items ignored, " if STATS.get("reuploads") else "")
             + (f"{STATS['dropped']} old re-upload leads skipped; " if STATS.get("dropped") else "") + f"{len(raw)} found ({', '.join(f'{k} {v}/{kept_src.get(k, 0)} kept' for k, v in src.items())}), {len(fresh)} new, {kept} kept, {len(direct)} agency-hosted (no request)"
             + (f"; top: " + "; ".join(f"{r['action_score']} {r['title'][:50]}" for r in top) if top else "")
+            + (f"; {case_note}" if case_note else "")
             + (f"; errors: {errors}" if errors else ""))

@@ -12,7 +12,11 @@ FORMAT = """Ten-Four Tapes format:
 - Every case gets a short, unique CASE NAME (e.g. "Backyard Shootout", "Bee Swarm") used on the Reel badge,
   the caption first line, and the YouTube title.
 - EPISODE (YouTube long-form). Two styles:
-  a) case_story: cold-open hook + title card, 911 call, interrogation/interview, bodycam, reveal, verdict.
+  a) case_story (JCS / EWU style, 15-25 min): cold-open hook (the most telling moment of the interview, e.g. the
+     lie or the moment the story changes) + title card, then in order: the 911 call, the bodycam of the response or
+     arrest, the police interview/interrogation (the longest part: let the suspect talk; narrator check-ins point out
+     the lie, the evidence, the turn), and the verdict/sentence. Check-ins: up to 6. Facebook gets ONE teaser Reel
+     from the interview (a lie or a tense exchange, no outcome given away); no other Reels.
   b) action: multi-bodycam high-action episode, no interview needed.
   Both: narrated setup kept SHORT (viewers should not just listen to the narrator), raw bodycam with original audio
   boosted (muted only while narrator talks), brief narrator check-ins, "what happened next" outro, one comment
@@ -63,6 +67,8 @@ def reel_count(lead, facts=None):
     fatal cases 1; rescues none (160-700 views on our page)."""
     if lead.get("category") == "rescue":
         return 0
+    if lead.get("category") == "case_story":
+        return 1                    # one interview teaser; long-form doesn't belong on FB (Boone 13-min: 402 views)
     if is_fatal(facts):
         return 1
     strong = (lead.get("action_score") or 0) >= STRONG
@@ -78,6 +84,9 @@ def plan(lead, playbook, rejects=(), facts=None, graded=None):
     n_reels = reel_count(lead, facts)
     fatal_note = (" Someone died in this case: the one Reel must END BEFORE any shot, strike or injury — the"
                   " confrontation or the chase, never the outcome." if is_fatal(facts) else "")
+    if lead.get("category") == "case_story":
+        fatal_note = (" This is a case story: episode style must be case_story, and the one Reel is a teaser cut from the"
+                      " police interview (a lie or a tense exchange), never the crime or its aftermath.")
     return llm.ask(
         "You are the head of production for Ten-Four Tapes. Write production plans that follow the format exactly "
         "and apply the playbook. Accuracy matters: only state facts present in the lead.\n" + RULES + "\n" + FORMAT,

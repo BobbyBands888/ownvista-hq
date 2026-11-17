@@ -25,21 +25,28 @@ STATUTES = {
 }
 EMAIL_RX = re.compile(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}")
 RECORDS_HINT = re.compile(r"record|foia|pra|custodian|publicinfo|openrecords|pio|media", re.I)
+# prosecutors' offices often sit on .org/.net domains (sao9.org, mcao.org) as well as .gov
+PROSECUTOR_DOM = re.compile(r"(^|[.-])(sao\d*|da|mcao|cao)[.-]|attorney|prosecutor", re.I)
+OFFICIAL_LINK = re.compile(r"\.gov|\.us/|\.us$|sheriff|police|county|city|state\.|sao\d|attorney|prosecutor", re.I)
+
+
+def _official_domain(dom):
+    dom = dom.lower()
+    return dom.endswith((".gov", ".us")) or "sheriff" in dom or "police" in dom or bool(PROSECUTOR_DOM.search(dom))
 
 def _now():
     return datetime.now(timezone.utc)
 
 def _official_email_on(link):
     """Return a records-type address only if it is literally printed on an official-looking page."""
-    if not re.search(r"\.gov|\.us/|\.us$|sheriff|police|county|city|state\.", link, re.I):
+    if not OFFICIAL_LINK.search(link):
         return None
     try:
         page = requests.get(link, headers={"User-Agent": "Mozilla/5.0"}, timeout=20).text
     except Exception:
         return None
     for e in EMAIL_RX.findall(page):
-        dom = e.split("@")[1].lower()
-        if (dom.endswith(".gov") or dom.endswith(".us") or "sheriff" in dom or "police" in dom) and RECORDS_HINT.search(e):
+        if _official_domain(e.split("@")[1]) and RECORDS_HINT.search(e):
             return e.lower()
     return None
 
@@ -83,7 +90,7 @@ def _groq_web_lookup(agency):
                 e = (em.group(1) if em.re.groups else em.group(0)).lower().rstrip(".")
                 dom = e.split("@")[1]
                 host = re.sub(r"^www\.", "", re.sub(r"^https?://", "", src).split("/")[0].lower())
-                official = dom.endswith((".gov", ".us")) or "sheriff" in dom or "police" in dom
+                official = _official_domain(dom)
                 if official and (dom == host or dom.endswith("." + host) or host.endswith("." + dom) or host.endswith(dom)):
                     return e, src
             last_note += f" [{model}: {text[:150]}]"
@@ -120,15 +127,14 @@ def find_records_email(agency):
         if m:
             from urllib.parse import unquote
             link = unquote(m.group(1))
-        if not re.search(r"\.gov|\.us/|\.us$|sheriff|police|county|city", link, re.I):
+        if not OFFICIAL_LINK.search(link):
             continue
         try:
             page = requests.get(link, headers={"User-Agent": "Mozilla/5.0"}, timeout=20).text
         except Exception:
             continue
         for e in EMAIL_RX.findall(page):
-            dom = e.split("@")[1].lower()
-            if (dom.endswith(".gov") or dom.endswith(".us") or "sheriff" in dom or "police" in dom) and RECORDS_HINT.search(e):
+            if _official_domain(e.split("@")[1]) and RECORDS_HINT.search(e):
                 return e.lower(), link
     return None, None
 
@@ -138,9 +144,32 @@ clerk. Use ONLY the documents; cite nothing you can't see. Watch for look-alike 
 "Springfield" story may be in a different state than assumed — the news outlet's own city/state is a strong clue.
 Only include a suspect's full name if a document prints it. Never include minors, victims or bystanders."""
 
+VERIFY_CASE_SYSTEM = """You check a closed criminal case before a public records request for the suspect's recorded
+police interviews is sent. From the documents, decide which office holds those recordings now: the prosecutor's office
+that tried the case (State Attorney / District Attorney / County Attorney), or the police agency that ran the
+interview if no prosecutor is named. Give the US state, the defendant's full name and court case number if printed,
+the date of the crime, and whether the case is closed (sentenced, convicted with the trial over, or pleaded guilty).
+Watch for look-alike county names in other states. Use ONLY the documents. Never include minors, victims' family
+members or bystanders by name. Say if a minor (under 18) is the victim or the suspect."""
+
+
 def verify(lead, agency):
     """Confirm agency + state + identifiers before anything is sent. Returns the check (dict)."""
     from . import casefacts
+    if lead.get("category") == "case_story":
+        docs = casefacts.gather(lead, extra_queries=[f"{lead['title'][:80]} sentenced"])
+        out = llm.ask(VERIFY_CASE_SYSTEM,
+                      "LEAD:\n" + json.dumps({k: lead.get(k) for k in ("title", "agency_name", "state", "incident_date",
+                                                                        "summary", "notes")}) +
+                      f"\nWE WERE ABOUT TO SEND TO: {agency['name']} ({agency.get('state') or '?'})\n\nDOCUMENTS:\n" +
+                      json.dumps([{k: d[k] for k in ("i", "title", "url", "text")} for d in docs])[:20000] +
+                      '\n\nReturn JSON {"agency":"office that holds the interview recordings","state":"2-letter",'
+                      '"same_agency":true|false,"date":"YYYY-MM-DD of the crime or null","full_name":"defendant full name or null",'
+                      '"case_number":"court case number or null","closed":true|false,"minor_involved":true|false,'
+                      '"location":"city/county, state or null","description":"2-3 neutral sentences for the records clerk: '
+                      'the case, the defendant, the crime date, the outcome (e.g. convicted of ... on ..., sentenced on ...)",'
+                      '"why":"one line"}', max_tokens=700, temperature=0.1)
+        return out if isinstance(out, dict) else {}
     docs = casefacts.gather(lead)
     out = llm.ask(VERIFY_SYSTEM,
                   "LEAD:\n" + json.dumps({k: lead.get(k) for k in ("title", "agency_name", "state", "incident_date", "summary")}) +
@@ -153,8 +182,21 @@ def verify(lead, agency):
                   'and the name/case number if known","why":"one line"}', max_tokens=700, temperature=0.1)
     return out if isinstance(out, dict) else {}
 
-def ready_to_send(chk, agency):
-    """Agency and state confirmed, a specific date, and one more identifier (name, case number or exact place)."""
+def ready_to_send(chk, agency, lead=None):
+    """Agency and state confirmed, a specific date, and one more identifier (name, case number or exact place).
+    Case stories: the holder and state confirmed, the case closed, no minor involved, and the defendant's name."""
+    if lead and lead.get("category") == "case_story":
+        if not chk.get("same_agency"):
+            return False, f"interviews are held by {chk.get('agency') or 'another office'} ({chk.get('state') or '?'}), not {agency['name']}"
+        if agency.get("state") and chk.get("state") and agency["state"].upper() != str(chk["state"]).upper():
+            return False, f"state mismatch: case in {chk['state']}, office listed in {agency['state']}"
+        if chk.get("minor_involved") is not False:
+            return False, "a minor may be involved (or it couldn't be ruled out)"
+        if not chk.get("closed"):
+            return False, "case not closed yet (interviews usually aren't released until sentencing)"
+        if not chk.get("full_name"):
+            return False, "no defendant name to identify the case"
+        return True, ""
     if not chk.get("same_agency"):
         return False, f"footage is from {chk.get('agency') or 'another agency'} ({chk.get('state') or '?'}), not {agency['name']}"
     if agency.get("state") and chk.get("state") and agency["state"].upper() != str(chk["state"]).upper():
@@ -164,6 +206,35 @@ def ready_to_send(chk, agency):
     if not (chk.get("full_name") or chk.get("case_number") or chk.get("location")):
         return False, "no name, case number or exact location to identify it"
     return True, ""
+
+def compose_case(lead, agency, signature, chk):
+    """Closed case -> the suspect's recorded police interviews + the 911 call, in the version already released or
+    played in court. No fees authorized: if there's a charge, we walk away."""
+    statute = STATUTES.get((agency.get("state") or lead.get("state") or "").upper(), "your state's public records law")
+    who = chk.get("full_name") or ""
+    ref = f" (Case No. {chk['case_number']})" if chk.get("case_number") else ""
+    subject = f"Public Records Request – Recorded Interviews – State v. {who}{ref}"[:150]
+    body = f"""Hello,
+
+Under {statute}, I am requesting copies of the following records from the closed case against {who}{ref}:
+
+{chk.get('description') or ''}
+
+Specifically:
+1. The video recordings of the police interviews/interrogations of {who}
+2. The 911 call audio for this incident
+
+If these recordings have already been released to the media or were played in open court, that released or redacted version is all I need. Please exclude any recording that shows the death itself, and any recording of a minor.
+
+Electronic delivery (a download link or file share) is preferred. I am not authorizing any fees. If there would be a charge, please tell me the amount before doing any work.
+
+Thank you for your help.
+
+{signature}
+Ten-Four Tapes
+"""
+    return subject, body
+
 
 def compose(lead, agency, signature, desc=None):
     statute = STATUTES.get((agency.get("state") or lead.get("state") or "").upper(),
@@ -254,7 +325,7 @@ def main(db):
         except Exception as e:
             db.alert("outreach", f"Couldn't verify '{lead['title'][:60]}' before sending: {str(e)[:150]}", "info")
             continue
-        ok, why = ready_to_send(chk, a)
+        ok, why = ready_to_send(chk, a, lead)
         if not ok:
             held += 1
             note = f"outreach check {_now():%Y-%m-%d}: not sent — {why}"
@@ -270,7 +341,10 @@ def main(db):
             continue
         if chk.get("date") and not lead.get("incident_date"):
             db.update("leads", {"id": f"eq.{lead['id']}"}, {"incident_date": chk["date"]})
-        subject, body = compose(lead, a, signature, desc=chk.get("description"))
+        if lead.get("category") == "case_story":
+            subject, body = compose_case(lead, a, signature, chk)
+        else:
+            subject, body = compose(lead, a, signature, desc=chk.get("description"))
         res = send_email(a["records_email"], subject, body)
         db.insert("records_requests", {"lead_id": lead["id"], "agency_id": a["id"], "to_email": a["records_email"],
                                        "subject": subject, "body": body, "sent_at": _now(),
