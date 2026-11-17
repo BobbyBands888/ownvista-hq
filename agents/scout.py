@@ -276,7 +276,12 @@ def from_watchlist(db):
     return leads
 
 DVIDS_QUERIES = ["body worn camera", "bodycam", "body camera", "dash cam", "military police response",
-                 "security forces response", "border patrol apprehension"]
+                 "security forces response", "border patrol apprehension",
+                 # our top Facebook Reels (drug sub 106K, Venezuela warning shots 47K, Black Hawk vs. smugglers 1.4K)
+                 # are all at-sea interdictions: Coast Guard / CBP Air and Marine boardings, chases and disabling fire
+                 "coast guard interdiction", "drug interdiction boarding", "semi-submersible", "narco sub",
+                 "warning shots", "disabling fire", "go-fast vessel", "law enforcement detachment boarding",
+                 "air and marine operations interdiction", "smuggling vessel"]
 
 def from_dvids():
     if not config.DVIDS_API_KEY:
