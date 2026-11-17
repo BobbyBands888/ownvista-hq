@@ -1,0 +1,26 @@
+name: Keep releases private
+# Raw agency footage and unreviewed renders live on releases. The repo is public, so every release must be a
+# DRAFT (visible only to people with write access). Fires the moment the repo goes public, daily, and by hand.
+on:
+  public:
+  schedule:
+    - cron: "23 5 * * *"
+  workflow_dispatch:
+permissions:
+  contents: write
+jobs:
+  drafts:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Make every release a draft
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+        run: |
+          for id in $(gh api "repos/$REPO/releases" --paginate -q '.[] | select(.draft == false) | .id'); do
+            gh api -X PATCH "repos/$REPO/releases/$id" -F draft=true > /dev/null && echo "release $id is now a draft"
+          done
+          left=$(gh api "repos/$REPO/releases" --paginate -q '.[] | select(.draft == false) | .id' | wc -l | tr -d ' ')
+          echo "published releases left: $left"
+          [ "$left" = "0" ]
