@@ -409,9 +409,50 @@ def run_autocheck(db, it, out):
     except Exception as e:
         ac = {"verdict": "hold", "problems": [f"auto-check couldn't run ({str(e)[:200]})"], "read": 0, "sampled": 0}
     ac["checked_at"] = _now().isoformat()
+    sheets = ac.pop("_sheets", None) or []
+    if sheets:                                  # the frames it looked at, for the dashboard / a remote frame check
+        try:
+            db.insert("settings", {"key": f"review_sheets:{it['id']}", "updated_at": _now().isoformat(),
+                                   "value": {"checked_at": ac["checked_at"], "sheets": [
+                                       {"times": s["times"], "jpg": autocheck.small_jpeg_b64(s["jpeg"])} for s in sheets]}},
+                      upsert=True, on_conflict="key")
+        except Exception as e:
+            print(f"review sheets not saved: {e}", flush=True)
     print(f"autocheck {it['case_name']} {it['kind']}{it.get('part') or ''}: {ac['verdict']} "
           f"({ac['read']}/{ac['sampled']} frames) {ac['problems'][:4]}", flush=True)
     return ac
+
+
+def recheck(db, limit=4):
+    """Renders waiting for review that were made before the auto-check existed: pull the stored file back down and
+    check it, so the review queue says what the machine saw (and keeps frames for a remote frame-by-frame check)."""
+    items = db.select("content", {"status": "eq.rendered", "approval_status": "eq.pending",
+                                  "media_path": "like.http*", "order": "created_at.asc", "limit": 40})
+    items = [it for it in items if not (isinstance(it.get("script"), dict) and it["script"].get("autocheck"))][:limit]
+    done = 0
+    for it in items:
+        try:
+            path = local_media(it)
+        except Exception as e:
+            print(f"recheck {it['case_name']}: download failed {e}", flush=True)
+            continue
+        if not path:
+            continue
+        try:
+            from agents import casefacts
+            it["case_facts"] = casefacts.get(db, it["lead_id"]) if it.get("lead_id") else None
+        except Exception:
+            it["case_facts"] = None
+        ac = run_autocheck(db, it, Path(path))
+        sc = it["script"] if isinstance(it.get("script"), dict) else {}
+        note = it.get("publish_note") or ""
+        note = (f"AUTO-CHECK HELD THIS: {'; '.join(ac['problems'][:4])} — " if ac["verdict"] != "pass"
+                else f"Auto-check passed ({ac['read']}/{ac['sampled']} frames read) — ") + note
+        db.update("content", {"id": f"eq.{it['id']}"}, {"script": {**sc, "autocheck": ac}, "publish_note": note[:1500]})
+        if CLOUD:
+            Path(path).unlink(missing_ok=True)
+        done += 1
+    return done
 
 
 def render(db):
@@ -799,9 +840,13 @@ def keep_copies(db):
 def main(db):
     d = 0 if CLOUD else download_footage(db)
     r = render(db)
+    try:
+        rc = recheck(db)
+    except Exception as e:
+        rc = f"error {e}"
     p = publish(db)
     k = keep_copies(db) if CLOUD else "-"
-    return f"downloaded {d} files, rendered {r}, {p}; footage copies: {k}"
+    return f"downloaded {d} files, rendered {r}, auto-checked {rc} older renders, {p}; footage copies: {k}"
 
 if __name__ == "__main__":
     ok = run_agent("publisher" if CLOUD else "mac_runner", main)

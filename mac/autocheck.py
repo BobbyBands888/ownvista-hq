@@ -115,7 +115,7 @@ def read_video(path, kind, log=print, see=None):
     vertical = info["h"] > info["w"]
     times = sample_times(info["duration"], kind)
     per = 8 if vertical else 9
-    got, fails = [], 0
+    got, fails, sheets = [], 0, []
     for k in range(0, len(times), per):
         chunk = times[k:k + per]
         if fails >= 4:
@@ -123,7 +123,9 @@ def read_video(path, kind, log=print, see=None):
         try:
             if k:
                 time.sleep(VISION_GAP)
-            j = see(PROMPT.format(n=len(chunk)), sheet(path, chunk, vertical),
+            img = sheet(path, chunk, vertical)
+            sheets.append({"times": chunk, "jpeg": img})
+            j = see(PROMPT.format(n=len(chunk)), img,
                     check=lambda r, c=len(chunk): len(_frames(r, c)) >= max(1, c // 2))
             for n, fr in _frames(j, len(chunk)).items():
                 got.append({"t": chunk[n], "text": str(fr.get("text") or "").strip()[:200],
@@ -134,7 +136,7 @@ def read_video(path, kind, log=print, see=None):
             fails += 1
             log(f"autocheck vision error: {str(e)[:200]}")
             time.sleep(15 * fails)
-    return sorted(got, key=lambda f: f["t"]), len(times), info["duration"]
+    return sorted(got, key=lambda f: f["t"]), len(times), info["duration"], sheets
 
 
 def _norm(s):
@@ -200,9 +202,9 @@ def claim_problems(lines, lead, facts, ask=None):
 
 
 def check(path, it, lead, facts, script=None, log=print, see=None, ask=None):
-    """-> {"verdict": "pass"|"hold", "problems": [...], "read": n, "sampled": n, "on_screen": [...]}"""
+    """-> {"verdict": "pass"|"hold", "problems": [...], "read": n, "sampled": n, "on_screen": [...], "_sheets": [...]}"""
     problems = []
-    frames, sampled, dur = read_video(path, it.get("kind"), log=log, see=see)
+    frames, sampled, dur, sheets = read_video(path, it.get("kind"), log=log, see=see)
     read = len(frames)
     if sampled and read < sampled * MIN_READ:
         problems.append(f"vision read only {read}/{sampled} frames, so the video wasn't fully checked")
@@ -230,4 +232,15 @@ def check(path, it, lead, facts, script=None, log=print, see=None, ask=None):
     problems += claim_problems(lines, lead, facts, ask=ask)
     problems = list(dict.fromkeys(problems))
     return {"verdict": "hold" if problems else "pass", "problems": problems[:12], "read": read,
-            "sampled": sampled, "on_screen": on_screen[:40]}
+            "sampled": sampled, "on_screen": on_screen[:40], "_sheets": sheets}
+
+
+def small_jpeg_b64(jpeg, scale=0.6, quality=60):
+    """A lighter copy of a contact sheet for the dashboard / remote review (stored in settings, not the video row)."""
+    import base64
+    from PIL import Image
+    im = Image.open(io.BytesIO(jpeg))
+    im = im.resize((int(im.width * scale), int(im.height * scale)))
+    buf = io.BytesIO()
+    im.save(buf, "JPEG", quality=quality)
+    return base64.b64encode(buf.getvalue()).decode()
