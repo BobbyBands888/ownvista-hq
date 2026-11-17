@@ -117,7 +117,7 @@ def ask(system, user, json_mode=True, max_tokens=2000, temperature=0.4):
 
 # ---------------- vision (what's on screen) ----------------
 # Free vision models change often, so try a list. GROQ_VISION_MODEL overrides the first choice.
-VISION_MODELS = ["qwen/qwen3.8-27b", "meta-llama/llama-4-scout-17b-16e-instruct", "meta-llama/llama-4-maverick-17b-128e-instruct"]
+VISION_MODELS = ["qwen/qwen3.8-27b"]   # Llama 4 Scout/Maverick were retired on Groq (404, Nov 2026)
 _dead_vision = set()
 
 
@@ -137,7 +137,16 @@ def _json_any(text):
             return {"frames": v}
         if isinstance(v, dict):
             return v
-    return None
+    # Cut-off or chatty replies (Cloudflare's vision model): keep every complete flat {...} frame object we can read
+    frames = []
+    for m in re.finditer(r"\{[^{}]*\}", text):
+        try:
+            o = json.loads(m.group(0))
+        except (json.JSONDecodeError, TypeError):
+            continue
+        if isinstance(o, dict) and "n" in o:
+            frames.append(o)
+    return {"frames": frames} if frames else None
 
 
 def see(prompt, jpeg, max_tokens=1500, check=None):

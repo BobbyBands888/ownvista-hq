@@ -220,10 +220,16 @@ def vis(f):
     act, dull, bad, screen = [0.0] * n, [0.0] * n, [0.0] * n, [0.0] * n
     after = aftermath_from(f)
     j = 0
+    # A second with no read frame nearby is unknown, and unknown counts as unsafe: since files may now pass with
+    # up to 10% of frames unread (PR #18), a gap must never borrow a neighbour's "no child / no gore" label.
+    gap = max(8.0, 1.6 * float(f.get("vision_step") or 5.0))
     for t in range(n):
         while j + 1 < len(fr) and abs(fr[j + 1]["t"] - t) <= abs(fr[j]["t"] - t):
             j += 1
         v = fr[j]
+        if abs(v["t"] - t) > gap:
+            act[t], dull[t], bad[t], screen[t] = 0.0, 1.0, 1.0, 0.0
+            continue
         act[t] = v["action"]
         dull[t] = 1.0 if v["view"] == "screen" or (v["action"] < 2 and (v["view"] in ("inside_car", "black")
                                                                          or v["action"] == 0)) else 0.0
