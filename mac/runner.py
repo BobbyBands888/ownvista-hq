@@ -19,6 +19,7 @@ import requests  # noqa: E402
 from agents.lib import config  # noqa: E402
 from agents.lib.google import access_token  # noqa: E402
 from agents.lib.runner import run_agent  # noqa: E402
+from agents import footage  # noqa: E402
 
 HOME = Path(os.environ.get("TENFOUR_HOME", Path.home() / "TenFourTapes"))
 FOOTAGE, QUEUE, OUT = HOME / "footage", HOME / "queue", HOME / "rendered"
@@ -378,6 +379,82 @@ def _free_footage(folder):
         print(f"cleanup: {e}", flush=True)
 
 
+def footage_seconds(folder):
+    """Total seconds of video in a case's footage folder (zips unpacked first; quick header reads, no vision)."""
+    sys.path.insert(0, str(REPO / "mac"))
+    import media
+    import picker
+    picker.unpack_zips(folder)
+    total = 0.0
+    for p in Path(folder).rglob("*"):
+        if p.suffix.lower() in media.VIDEO_EXT and not p.name.startswith("."):
+            try:
+                total += media.probe(p)["duration"]
+            except Exception:
+                pass
+    return total
+
+
+def run_autocheck(db, it, out):
+    """Read the finished video (see mac/autocheck.py). Never raises: a check that can't run is a hold."""
+    try:
+        sys.path.insert(0, str(REPO / "mac"))
+        import autocheck
+        lead = (db.select("leads", {"id": f"eq.{it['lead_id']}"}) or [{}])[0] if it.get("lead_id") else {}
+        side = Path(str(out) + ".script.json")
+        w = json.loads(side.read_text()) if side.exists() else {}
+        script = w.get("script") if w.get("written") else it.get("script")
+        ac = autocheck.check(out, it, lead, it.get("case_facts"), script=script,
+                             log=lambda m: print(m, flush=True))
+    except Exception as e:
+        ac = {"verdict": "hold", "problems": [f"auto-check couldn't run ({str(e)[:200]})"], "read": 0, "sampled": 0}
+    ac["checked_at"] = _now().isoformat()
+    sheets = ac.pop("_sheets", None) or []
+    if sheets:                                  # the frames it looked at, for the dashboard / a remote frame check
+        try:
+            db.insert("settings", {"key": f"review_sheets:{it['id']}", "updated_at": _now().isoformat(),
+                                   "value": {"checked_at": ac["checked_at"], "sheets": [
+                                       {"times": s["times"], "jpg": autocheck.small_jpeg_b64(s["jpeg"])} for s in sheets]}},
+                      upsert=True, on_conflict="key")
+        except Exception as e:
+            print(f"review sheets not saved: {e}", flush=True)
+    print(f"autocheck {it['case_name']} {it['kind']}{it.get('part') or ''}: {ac['verdict']} "
+          f"({ac['read']}/{ac['sampled']} frames) {ac['problems'][:4]}", flush=True)
+    return ac
+
+
+def recheck(db, limit=4):
+    """Renders waiting for review that were made before the auto-check existed: pull the stored file back down and
+    check it, so the review queue says what the machine saw (and keeps frames for a remote frame-by-frame check)."""
+    items = db.select("content", {"status": "eq.rendered", "approval_status": "eq.pending",
+                                  "media_path": "like.http*", "order": "created_at.asc", "limit": 40})
+    items = [it for it in items if not (isinstance(it.get("script"), dict) and it["script"].get("autocheck"))][:limit]
+    done = 0
+    for it in items:
+        try:
+            path = local_media(it)
+        except Exception as e:
+            print(f"recheck {it['case_name']}: download failed {e}", flush=True)
+            continue
+        if not path:
+            continue
+        try:
+            from agents import casefacts
+            it["case_facts"] = casefacts.get(db, it["lead_id"]) if it.get("lead_id") else None
+        except Exception:
+            it["case_facts"] = None
+        ac = run_autocheck(db, it, Path(path))
+        sc = it["script"] if isinstance(it.get("script"), dict) else {}
+        note = it.get("publish_note") or ""
+        note = (f"AUTO-CHECK HELD THIS: {'; '.join(ac['problems'][:4])} — " if ac["verdict"] != "pass"
+                else f"Auto-check passed ({ac['read']}/{ac['sampled']} frames read) — ") + note
+        db.update("content", {"id": f"eq.{it['id']}"}, {"script": {**sc, "autocheck": ac}, "publish_note": note[:1500]})
+        if CLOUD:
+            Path(path).unlink(missing_ok=True)
+        done += 1
+    return done
+
+
 def render(db):
     items = db.select("content", {"status": "eq.scripted", "compliance_status": "eq.pass",
                                   "approval_status": "in.(approved,not_required)",
@@ -389,6 +466,7 @@ def render(db):
     done = 0
     prev = None
     vision_down = set()
+    secs_of = {}
     for it in items:
         src = FOOTAGE / str(it["lead_id"])
         if it["lead_id"] in vision_down:
@@ -405,6 +483,15 @@ def render(db):
             print(f"no footage yet for {it['case_name']} {it['kind']}{it.get('part') or ''}", flush=True)
             db.alert("publisher", f"No footage on disk for {it['case_name']} yet (download not ready or failed)", "warn")
             continue
+        # trim the plan to what the footage can carry BEFORE any vision time is spent (28s clip != episode + 6 items)
+        if it["lead_id"] not in secs_of:
+            secs_of[it["lead_id"]] = footage_seconds(src)
+        ok, why = footage.fits(it, footage.budget(secs_of[it["lead_id"]]))
+        if not ok:
+            db.update("content", {"id": f"eq.{it['id']}"}, {"status": "failed",
+                      "publish_note": f"Skipped: only {secs_of[it['lead_id']]:.0f}s of footage; {why}"})
+            print(f"skip {it['case_name']} {it['kind']}{it.get('part') or ''}: {why}", flush=True)
+            continue
         QUEUE.mkdir(parents=True, exist_ok=True)
         OUT.mkdir(parents=True, exist_ok=True)
         plan_path = QUEUE / f"{it['id']}.json"
@@ -414,6 +501,9 @@ def render(db):
                                         "id": f"neq.{it['id']}", "select": "script"})
             it["sibling_cuts"] = [s["script"]["cut"] for s in sib
                                   if isinstance(s.get("script"), dict) and (s["script"].get("cut") or {}).get("path")]
+        if it["kind"] == "short" and it.get("parent_id"):
+            ep = db.select("content", {"id": f"eq.{it['parent_id']}", "select": "status,approval_status"})
+            it["episode_planned"] = bool(ep) and ep[0].get("status") != "failed" and ep[0].get("approval_status") != "rejected"
         try:                                        # who / why / how it ended, for the narrator lines
             from agents import casefacts
             it["case_facts"] = casefacts.get(db, it["lead_id"]) if it.get("lead_id") else None
@@ -430,6 +520,7 @@ def render(db):
         (HOME / "logs").mkdir(exist_ok=True)
         (HOME / "logs" / f"render_{str(it['id'])[:8]}.log").write_text(res.stdout[-20000:] + "\n" + res.stderr[-20000:])
         if res.returncode == 0 and out.exists():
+            ac = run_autocheck(db, it, out)          # before the file is moved/deleted
             link = store_render(out) if CLOUD else str(out)
             if CLOUD:
                 for big in OUT.glob("*.mp4"):           # stored on the release; free the runner disk
@@ -465,14 +556,25 @@ def render(db):
                 except Exception:
                     pass
                 side.unlink(missing_ok=True)
+            where = link if CLOUD else f"TenFourTapes/rendered/{out.name}"
             if it["approval_status"] == "approved":
                 # Approval window: the plan was OK'd, now Bobby OKs the exact video before it goes public.
                 check = (it.get("script") or {}).get("blur_notes") if isinstance(it.get("script"), dict) else None
-                where = link if CLOUD else f"TenFourTapes/rendered/{out.name}"
                 upd["approval_status"] = "pending"
                 upd["publish_note"] = (f"Video ready — watch it: {where} — then Approve to post it"
                                        + (f". Check: {check}" if check else ""))
                 _notify("Ten-Four Tapes", f"Ready to review: {out.name}")
+            # Post-render auto-check: anything doubtful waits for Bobby, even if it was cleared to auto-post
+            base = upd.get("script") or (it.get("script") if isinstance(it.get("script"), dict) else {}) or {}
+            upd["script"] = {**base, "autocheck": ac}
+            if ac["verdict"] != "pass":
+                upd["approval_status"] = "pending"
+                upd["publish_note"] = (f"AUTO-CHECK HELD THIS: {'; '.join(ac['problems'][:4])} — watch it: {where}"
+                                       " — fix it or Approve if it's fine")
+                db.alert("autocheck", f"Held {it['case_name']} {it['kind']}{it.get('part') or ''}: "
+                         + "; ".join(ac["problems"][:3]), "warn")
+            elif upd.get("approval_status") == "pending":
+                upd["publish_note"] += f" · Auto-check passed ({ac['read']}/{ac['sampled']} frames read)"
             db.update("content", {"id": f"eq.{it['id']}"}, upd)
             fails.pop(str(it["id"]), None)
             done += 1
@@ -738,9 +840,13 @@ def keep_copies(db):
 def main(db):
     d = 0 if CLOUD else download_footage(db)
     r = render(db)
+    try:
+        rc = recheck(db)
+    except Exception as e:
+        rc = f"error {e}"
     p = publish(db)
     k = keep_copies(db) if CLOUD else "-"
-    return f"downloaded {d} files, rendered {r}, {p}; footage copies: {k}"
+    return f"downloaded {d} files, rendered {r}, auto-checked {rc} older renders, {p}; footage copies: {k}"
 
 if __name__ == "__main__":
     ok = run_agent("publisher" if CLOUD else "mac_runner", main)
