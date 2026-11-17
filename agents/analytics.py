@@ -153,15 +153,37 @@ def deepen(db, rows):
               upsert=True, on_conflict="key")
     return notes
 
+def _fb_page_token():
+    """The Page's own token. The FB_PAGE_TOKEN secret has held Bobby's personal token since Nov 16; with that, every
+    Page call errors and the Facebook half of analytics went silently empty. Swap it like the publisher does."""
+    tok, page = (config.FB_PAGE_TOKEN or "").strip(), (config.FB_PAGE_ID or "").strip()
+    me = requests.get(FB + "me", params={"fields": "id", "access_token": tok}, timeout=30).json()
+    if "error" in me:
+        raise RuntimeError(f"Facebook token: {me['error'].get('message', '')[:200]}")
+    if str(me.get("id")) != page:
+        r = requests.get(FB + page, params={"fields": "access_token", "access_token": tok}, timeout=30).json()
+        if not r.get("access_token"):
+            raise RuntimeError(f"Facebook token is not the Page's and can't get the Page's token: {str(r)[:200]}")
+        tok = r["access_token"]
+    return tok
+
+
+def _fb_get(path, params):
+    j = requests.get(FB + path, params=params, timeout=30).json()
+    if isinstance(j, dict) and "error" in j:
+        raise RuntimeError(f"Facebook {path}: {j['error'].get('message', '')[:200]}")
+    return j
+
+
 def facebook(db):
     if not (config.FB_PAGE_ID and config.FB_PAGE_TOKEN):
         return []
-    tok = {"access_token": config.FB_PAGE_TOKEN}
+    pid = config.FB_PAGE_ID.strip()
+    tok = {"access_token": _fb_page_token()}
     rows = []
-    page = requests.get(FB + config.FB_PAGE_ID, params={**tok, "fields": "followers_count,fan_count"}, timeout=30).json()
+    page = _fb_get(pid, {**tok, "fields": "followers_count,fan_count"})
     rows.append({"platform": "facebook", "external_id": "page", "followers": page.get("followers_count"), "raw": page})
-    reels = requests.get(FB + f"{config.FB_PAGE_ID}/video_reels",
-                         params={**tok, "fields": "id,description,created_time", "limit": 50}, timeout=30).json().get("data", [])
+    reels = _fb_get(f"{pid}/video_reels", {**tok, "fields": "id,description,created_time", "limit": 50}).get("data", [])
     content_by_fb = {c["facebook_id"]: c["id"] for c in db.select("content", {"select": "id,facebook_id", "facebook_id": "not.is.null"})}
     for rl in reels:
         ins = requests.get(FB + f"{rl['id']}/video_insights", params=tok, timeout=30).json().get("data", [])
