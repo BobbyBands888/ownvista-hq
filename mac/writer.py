@@ -11,7 +11,9 @@ from agents import packaging
 
 RULES = """Rules: on-screen text and narration may only describe what the frames/transcript show for that moment,
 plus facts from FACTS. Never invent arrests, charges, injuries, names, motives or outcomes. No graphic or gory
-words. No clickbait the picture doesn't deliver. Plain, punchy, documentary tone (EWU / Code Blue Cam style)."""
+words. No clickbait the picture doesn't deliver. Plain, punchy, documentary tone (EWU / Code Blue Cam style).
+Never "shootout", "gunfight" or "exchange of gunfire" unless FACTS say the suspect fired too; when only officers
+fired, say "officer-involved shooting" or name what happened."""
 
 
 def _span(f, s, e, pad=0.0):
