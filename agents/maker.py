@@ -9,7 +9,7 @@ from . import casefacts
 from . import packaging
 
 FORMAT = """Ten-Four Tapes format:
-- Every case gets a short, unique CASE NAME (e.g. "Backyard Shootout", "Bee Swarm") used on the Reel badge,
+- Every case gets a short, unique CASE NAME (e.g. "Backyard Standoff", "Bee Swarm") used on the Reel badge,
   the caption first line, and the YouTube title.
 - EPISODE (YouTube long-form). Two styles:
   a) case_story (JCS / EWU style, 15-25 min): cold-open hook (the most telling moment of the interview, e.g. the

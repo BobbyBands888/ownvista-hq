@@ -332,6 +332,43 @@ def add_blurred_tails(files, clips):
     return out
 
 
+def safe_clips(files, clips):
+    """Last check on any episode cut, whatever made it: no clear clip may contain a child/gore frame or run past
+    the aftermath line; such a clip is split around those seconds (dropping pieces under 15s). Blurred tails are
+    the only footage allowed past the aftermath line, and only BLUR_TAIL seconds of it."""
+    out = []
+    for c in clips:
+        f = files[c["file"]]
+        a = aftermath_from(f)
+        if c.get("blur"):
+            if a is not None:
+                s = max(c["start"], float(a))
+                e = min(c["end"], s + BLUR_TAIL)
+                if e - s >= 5:
+                    out.append(dict(c, start=s, end=e))
+            continue
+        v = vis(f)
+        s, e = int(c["start"]), int(c["end"])
+        if a is not None:
+            e = min(e, a)
+        if not v:
+            if e - s >= 15:
+                out.append(dict(c, start=float(s), end=float(e)))
+            continue
+        e = min(e, len(v["bad"]))
+        cur = s
+        for t in range(s, e):
+            if v["bad"][t]:
+                if t - 3 - cur >= 15:
+                    out.append(dict(c, start=float(cur), end=float(t - 3)))
+                cur = t + 4
+        if e - cur >= 15:
+            out.append(dict(c, start=float(cur), end=float(e)))
+    if not out:
+        raise RuntimeError("NO SAFE CUT: nothing left after removing child/gore/aftermath footage")
+    return out
+
+
 def _cold_fallback(files, clips):
     """Best 9s window anywhere usable; else the first 9s of the first clip (never crashes on an empty pick)."""
     bw = best_windows(files, 9, 1)
@@ -668,8 +705,11 @@ def clean_clip(f, c):
 
 def pick_episode(files, plan, cache):
     key = f"episode:{plan['id']}"
-    if key in cache:
-        return cache[key]
+    if key in cache:                        # a cut saved before the safety net existed gets the net too
+        r = cache[key]
+        clear = [x for c in r["clips"] if not c.get("blur") for x in clean_clip(files[c["file"]], c)]
+        r["clips"] = add_blurred_tails(files, safe_clips(files, clear))
+        return r
     sc = plan.get("script") or {}
     total = sum(f["duration"] for f in files)
     case = sc.get("style") == "case_story"
@@ -708,9 +748,15 @@ def pick_episode(files, plan, cache):
             clips = []                      # AI cut was far too thin for the footage we have — use the fallback
         if clips:
             result = {"cold_open": cold or _cold_fallback(files, clips), "clips": clips}
-    except Exception:
-        pass
+        else:
+            print("episode cut: AI cut empty or too thin after the safety cut; using the fallback", flush=True)
+    except Exception as e:
+        print(f"episode cut: AI cut failed ({str(e)[:200]}); using the fallback", flush=True)
     if not result:
+        # Fallback: the active stretch of each file, run through the safety cut FIRST (slates, dead air, child/gore,
+        # aftermath), then filled in story order up to its share. (Before Nov 17 it hunted one window the length
+        # of the whole share; on a single 14-min file every such window held the aftermath, so it found nothing and
+        # rendered the raw file: 4:45 of CBP slates + an unblurred death. Las Cruces, rejected.)
         clips = []
         share = target / max(1, len(files))
         for i, f in enumerate(files[:8]):
@@ -722,18 +768,20 @@ def pick_episode(files, plan, cache):
                 active = sorted(set(active) | {t for t, a in enumerate(v["act"]) if a >= 2})
             s = max(0, (active[0] if active else 0) - 15)
             e = min(f["duration"], (active[-1] if active else f["duration"]) + 15)
-            if e - s > share:  # keep the best stretch of this file
-                bw = best_windows([f], int(share), 1)
-                if not bw:                  # nothing usable in this file (e.g. all aftermath): skip it
-                    continue
-                s = max(0, bw[0]["start"])
-                e = s + share
-            if e - s >= 15:
-                clips += clean_clip(f, {"file": i, "start": float(s), "end": float(e)})
+            left = share
+            for c in clean_clip(f, {"file": i, "start": float(s), "end": float(e)}):
+                if left < 15:
+                    break
+                c = dict(c, end=min(c["end"], c["start"] + left))
+                if c["end"] - c["start"] >= 15:
+                    clips.append(c)
+                    left -= c["end"] - c["start"]
         if not clips:
-            clips = [{"file": 0, "start": 0.0, "end": float(min(files[0]["duration"], target))}]
+            # never the raw file: no safe cut means no episode (the runner alerts and retries / waits for a re-cut)
+            raise RuntimeError("NO SAFE CUT: every stretch of this footage is slates, dead air, a child, gore or "
+                               "the aftermath")
         result = {"cold_open": _cold_fallback(files, clips), "clips": clips}
-    result["clips"] = add_blurred_tails(files, result["clips"])
+    result["clips"] = add_blurred_tails(files, safe_clips(files, result["clips"]))
     labels = (sc.get("angle_labels") or [])
     for n, c in enumerate(result["clips"]):
         if not c.get("label"):
