@@ -17,6 +17,7 @@ import feedparser
 import requests
 from .lib import config, llm
 from . import casescout
+from . import footage
 from .lib.google import yt_get
 from .lib.runner import RULES
 
@@ -301,10 +302,29 @@ def from_dvids():
             if it.get("url") in seen:
                 continue
             seen.add(it.get("url"))
+            try:
+                secs = float(it.get("duration") or 0) or None
+            except (TypeError, ValueError):
+                secs = None
             leads.append({"title": it.get("title", "")[:300], "agency_name": it.get("unit_name") or "DVIDS",
                           "summary": (it.get("description") or "")[:600], "source_url": it.get("url"),
-                          "source_type": "dvids_public_domain"})
+                          "source_type": "dvids_public_domain", "_len": secs})
     return leads
+
+def add_lengths(leads):
+    """Video length for YouTube leads (1 quota unit per 50 videos), so Maker plans only what the footage can carry.
+    DVIDS leads already carry it from search. Unknown stays unknown (the publisher re-checks real files)."""
+    ids = {}
+    for l in leads:
+        m = re.search(r"(?:v=|youtu\.be/)([\w-]{11})", l.get("source_url") or "")
+        if m and not l.get("_len"):
+            ids[m[1]] = l
+    keys = list(ids)
+    for i in range(0, len(keys), 50):
+        for v in yt_get("videos", {"part": "contentDetails", "id": ",".join(keys[i:i + 50])}).get("items", []):
+            secs = footage.iso_seconds(v.get("contentDetails", {}).get("duration"))
+            if secs and v.get("id") in ids:
+                ids[v["id"]]["_len"] = secs
 
 def from_news():
     leads = []
@@ -447,12 +467,24 @@ def main(db):
             dedupe.add(u)
             recent_titles.add(k)
             fresh.append(l)
+    try:
+        add_lengths(fresh[:90])
+    except Exception as e:
+        errors.append(f"lengths: {e}")
     rows = score(db, fresh[:90]) if fresh else []
     src = {k: f"{v}" for k, v in Counter(l["_src"] for l in raw).items()}
     kept_src = Counter(r["_src"] for r in rows if r["status"] != "skipped")
+    short = 0
     for r in rows:
         r.pop("_src", None)
         r.pop("_cid", None)
+        secs = r.pop("_len", None)
+        if secs:
+            r["notes"] = footage.tag(r.get("notes"), secs)
+            if secs < footage.REEL_MIN and r["status"] != "skipped":
+                r["status"] = "skipped"            # nothing to cut from a clip this short
+                r["notes"] = f"too short: {int(secs)}s of video — " + r["notes"]
+                short += 1
     direct = take_direct(rows)
     # big closed cases whose police interviews can be requested (once a day, own scoring; see casescout.py)
     case_note = ""
@@ -488,5 +520,6 @@ def main(db):
     return ((f"watching {STATS['channels']} agency channels; " if STATS.get("channels") else "") + (f"{STATS['reuploads']} re-upload items ignored, " if STATS.get("reuploads") else "")
             + (f"{STATS['dropped']} old re-upload leads skipped; " if STATS.get("dropped") else "") + f"{len(raw)} found ({', '.join(f'{k} {v}/{kept_src.get(k, 0)} kept' for k, v in src.items())}), {len(fresh)} new, {kept} kept, {len(direct)} agency-hosted (no request)"
             + (f"; top: " + "; ".join(f"{r['action_score']} {r['title'][:50]}" for r in top) if top else "")
+            + (f"; {short} skipped as too short (<{footage.REEL_MIN}s)" if short else "")
             + (f"; {case_note}" if case_note else "")
             + (f"; errors: {errors}" if errors else ""))

@@ -7,6 +7,7 @@ from .lib import llm
 from .lib.runner import RULES
 from . import casefacts
 from . import packaging
+from . import footage
 
 FORMAT = """Ten-Four Tapes format:
 - Every case gets a short, unique CASE NAME (e.g. "Backyard Standoff", "Bee Swarm") used on the Reel badge,
@@ -85,8 +86,8 @@ def _standalone(r):
     txt = " ".join(str(r.get(k) or "") for k in ("moment", "hook_text", "caption")).lower()
     return bool((r.get("moment") or "").strip()) and not PART_RE.search(txt)
 
-def plan(lead, playbook, rejects=(), facts=None, graded=None):
-    n_reels = reel_count(lead, facts)
+def plan(lead, playbook, rejects=(), facts=None, graded=None, max_reels=None):
+    n_reels = reel_count(lead, facts) if max_reels is None else min(reel_count(lead, facts), max_reels)
     fatal_note = (" Someone died in this case: the one Reel must END BEFORE any shot, strike or injury — the"
                   " confrontation or the chase, never the outcome." if is_fatal(facts) else "")
     if is_case(lead):
@@ -220,7 +221,14 @@ def main(db):
         # clear any half-made plan from a failed earlier run of this lead (never touches rendered/posted items)
         db.delete("content", {"lead_id": f"eq.{lead['id']}", "status": "eq.scripted"})
         facts = files.get(lead["id"])
-        p = plan(lead, playbook, rejects, facts, graded)
+        # plan only what the footage can carry (length known from Scout for YouTube / DVIDS leads)
+        secs = footage.seconds_from_notes(lead.get("notes"))
+        fit = footage.budget(secs)
+        if secs is not None and not fit["episode"] and not fit["shorts"] and not fit["reels"]:
+            db.update("leads", {"id": f"eq.{lead['id']}"}, {"status": "skipped",
+                      "notes": f"too short to make anything: {secs}s of video — " + (lead.get("notes") or "")})
+            continue
+        p = plan(lead, playbook, rejects, facts, graded, max_reels=fit["reels"])
         ep = p.get("episode", {})
         case = p.get("case_name") or lead["title"][:30]
         credit = p.get("credit") or f"Footage: {lead.get('agency_name')}"
@@ -231,15 +239,18 @@ def main(db):
             "lead_id": lead["id"], "kind": "episode", "case_name": case, "title": ep.get("title"),
             "description": (ep.get("description") or "") + f"\n\n{credit}" + _sources(ep, facts), "tags": ep.get("tags") or [],
             "script": ep, "source_type": src_type, "source_credit": credit, "source_urls": [lead.get("source_url")],
+            # too little footage for an episode: the row stays (Shorts/Reels hang off it) but is never rendered
+            **({} if fit["episode"] else {"status": "failed",
+                "publish_note": f"Skipped: only {secs}s of footage (an episode needs {footage.EPISODE_MIN // 60} min+)"}),
         })[0]
         rows = []
-        for s in p.get("shorts", [])[:3]:
+        for s in p.get("shorts", [])[:fit["shorts"]]:
             rows.append({"lead_id": lead["id"], "kind": "short", "parent_id": epi["id"], "part": s.get("part"),
                          "case_name": case, "title": s.get("title") or f"{case} Part {s.get('part')}",
                          "description": f"Full episode on the channel. {credit}", "script": s,
                          "source_type": src_type, "source_credit": credit, "source_urls": [lead.get("source_url")]})
         # standalone single-moment Reels (count from reel_count); rescues get the episode + Shorts only
-        want = reel_count(lead, facts)
+        want = min(reel_count(lead, facts), fit["reels"])
         reels, seen = [], set()
         def take(cands):
             for r in cands or []:
@@ -265,6 +276,10 @@ def main(db):
                          "script": r, "source_type": src_type, "source_credit": credit,
                          "source_urls": [lead.get("source_url")]})
         n_reel += sum(1 for r in rows if r["kind"] == "reel")
+        if secs is not None and (not fit["episode"] or fit["shorts"] < 3):
+            db.alert("maker", f"{case}: only {secs}s of footage, so planned "
+                     f"{'an episode, ' if fit['episode'] else 'no episode, '}{min(fit['shorts'], 3)} Shorts and "
+                     f"{sum(1 for r in rows if r['kind'] == 'reel')} Reels", "info")
         db.insert("content", rows)
         db.update("leads", {"id": f"eq.{lead['id']}"}, {"status": "used"})
         made += 1

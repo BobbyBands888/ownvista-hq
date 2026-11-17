@@ -39,7 +39,8 @@ def review(item, lead=None, facts=None):
         '"minor_present":true|false|null}', max_tokens=700, temperature=0.1)
 
 def main(db):
-    items = db.select("content", {"compliance_status": "eq.pending", "order": "created_at.asc", "limit": 25})
+    items = db.select("content", {"compliance_status": "eq.pending", "status": "neq.failed",
+                                  "order": "created_at.asc", "limit": 25})
     until = db.setting("approval_required_until", "2026-11-23")
     need_approval = date.today().isoformat() < str(until)
     # Earned autonomy: a format (reel / short / episode) posts on its own once Bobby's last N decisions on
@@ -52,6 +53,11 @@ def main(db):
                                        "approval_status": "in.(approved,rejected)", "media_path": "not.is.null",
                                        "order": "created_at.desc", "limit": streak_needed})
         earned[kind] = len(recent) >= streak_needed and all(r["approval_status"] == "approved" for r in recent)
+        # ...and the machine's own post-render auto-check passed the last N finished videos of that kind
+        checked = db.select("content", {"select": "ac:script->autocheck->>verdict", "kind": f"eq.{kind}",
+                                        "media_path": "not.is.null", "script->autocheck": "not.is.null",
+                                        "order": "created_at.desc", "limit": streak_needed})
+        earned[kind] = earned[kind] and len(checked) >= streak_needed and all(c.get("ac") == "pass" for c in checked)
     passed = failed = 0
     leads_cache = {}
     for it in items:
