@@ -51,6 +51,11 @@ PART_RE = re.compile(r"\bpart\s*(\d|one|two|three)\b|\bpt\.?\s*\d|continued|next
 FATAL_RE = re.compile(r"\b(died|dies|dead|death|killed|fatal|deceased|pronounced)\b", re.I)
 
 
+def is_case(lead):
+    """A Case Scout lead (interview episode). Older bodycam leads can also be labeled case_story."""
+    return lead.get("category") == "case_story" and "[case:" in (lead.get("notes") or "")
+
+
 def is_fatal(facts):
     """True when the case file says someone died. Fatal cases keep getting blocked as Reels (the big moment is the
     shooting), so they get one Reel from before anyone is hurt and go to the back of the queue."""
@@ -67,7 +72,7 @@ def reel_count(lead, facts=None):
     fatal cases 1; rescues none (160-700 views on our page)."""
     if lead.get("category") == "rescue":
         return 0
-    if lead.get("category") == "case_story":
+    if is_case(lead):
         return 1                    # one interview teaser; long-form doesn't belong on FB (Boone 13-min: 402 views)
     if is_fatal(facts):
         return 1
@@ -84,7 +89,7 @@ def plan(lead, playbook, rejects=(), facts=None, graded=None):
     n_reels = reel_count(lead, facts)
     fatal_note = (" Someone died in this case: the one Reel must END BEFORE any shot, strike or injury — the"
                   " confrontation or the chase, never the outcome." if is_fatal(facts) else "")
-    if lead.get("category") == "case_story":
+    if is_case(lead):
         fatal_note = (" This is a case story: episode style must be case_story, and the one Reel is a teaser cut from the"
                       " police interview (a lie or a tense exchange), never the crime or its aftermath.")
     return llm.ask(
