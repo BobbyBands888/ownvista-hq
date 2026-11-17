@@ -1,0 +1,600 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="theme-color" content="#eef1f0">
+<title>Gleamstone HQ</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 30 30'%3E%3Cpath d='M15 2 27 9.5v11L15 28 3 20.5v-11Z' fill='%231f6f62'/%3E%3Cpath d='M15 2 27 9.5 15 15 3 9.5Z' fill='%23c9a75a'/%3E%3C/svg%3E">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,700&family=Instrument+Sans:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<script src="config.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<style>
+/* Gleamstone brand: same palette and type as gleamstonecleaning.com */
+:root{
+  --ground:#eef1f0; --slab:#ffffff; --ink:#15302c; --ink-soft:#4b625e; --line:#d3dbd9;
+  --accent:#1f6f62; --accent-soft:#e3efec; --gleam:#c9a75a; --gleam-soft:#f6efdf; --accent-ink:#fff;
+  --red:#b4413a; --red-soft:#f8e7e5; --blue:#2f5f8a; --blue-soft:#e6eef6;
+  --display:"Bricolage Grotesque","Segoe UI",system-ui,sans-serif; --body:"Instrument Sans","Helvetica Neue",Arial,sans-serif;
+  --mono:"JetBrains Mono",ui-monospace,Menlo,monospace; --r:14px;
+}
+*{box-sizing:border-box}
+html,body{margin:0;background:var(--ground);color:var(--ink)}
+body{font:15px/1.55 var(--body);-webkit-font-smoothing:antialiased}
+a{color:var(--accent)}
+h1,h2,h3{font-family:var(--display);font-weight:700;letter-spacing:-.01em;margin:0}
+h1{font-size:28px}
+button{font:600 14px var(--body);border:1px solid var(--line);background:var(--slab);color:var(--ink);
+  padding:9px 15px;border-radius:10px;cursor:pointer;min-height:40px}
+button:hover{border-color:#b5c2bf}
+button.primary{background:var(--accent);color:var(--accent-ink);border-color:var(--accent)}
+button.primary:hover{filter:brightness(1.08)}
+button.danger{color:var(--red);border-color:#e3c3bf}
+button.ghost{background:transparent}
+button.sm{min-height:32px;padding:5px 11px;font-size:13px}
+input,textarea,select{background:var(--slab);border:1px solid var(--line);color:var(--ink);padding:9px 11px;border-radius:10px;
+  font:14px var(--body);width:100%}
+textarea{line-height:1.5;resize:vertical}
+input:focus,textarea:focus,select:focus{outline:2px solid var(--accent);outline-offset:-1px;border-color:transparent}
+label{font-size:12px;font-weight:600;color:var(--ink-soft);display:grid;gap:4px}
+
+/* workspace switch (shared across HQ) */
+.ws{display:flex;gap:4px;max-width:1100px;margin:0 auto;padding:8px 16px 0}
+.ws a{font:600 12px var(--body);letter-spacing:.04em;text-transform:uppercase;text-decoration:none;color:var(--ink-soft);
+  padding:5px 12px;border-radius:99px;border:1px solid transparent}
+.ws a.on{background:var(--ink);color:#fff}
+.ws a:not(.on):hover{border-color:var(--line)}
+
+header{position:sticky;top:0;z-index:10;background:rgba(238,241,240,.95);backdrop-filter:blur(8px);border-bottom:1px solid var(--line)}
+.bar{max-width:1100px;margin:0 auto;padding:10px 16px;display:flex;align-items:center;gap:12px}
+.mark{display:flex;align-items:center;gap:10px;font:700 21px var(--display);white-space:nowrap}
+.mark .hq{font:600 11px var(--mono);letter-spacing:.08em;color:var(--accent);background:var(--accent-soft);padding:3px 7px;border-radius:6px}
+.bar .sp{flex:1}
+.health{font-size:13px;color:var(--ink-soft);display:flex;align-items:center;gap:6px;white-space:nowrap}
+.dot{width:9px;height:9px;border-radius:50%;background:#b5c2bf;display:inline-block;flex:none}
+.dot.ok{background:var(--accent)}.dot.error{background:var(--red)}.dot.running{background:var(--blue)}
+nav{max-width:1100px;margin:0 auto;padding:0 8px;display:flex;gap:2px;overflow-x:auto;scrollbar-width:none}
+nav::-webkit-scrollbar{display:none}
+nav button{background:none;border:0;border-bottom:3px solid transparent;border-radius:0;color:var(--ink-soft);padding:9px 12px;min-height:42px;white-space:nowrap}
+nav button.on{color:var(--ink);border-bottom-color:var(--gleam)}
+nav .count{background:var(--gleam);color:var(--ink);border-radius:99px;font-size:11px;padding:1px 7px;margin-left:6px}
+
+main{max-width:1100px;margin:0 auto;padding:22px 16px 80px}
+.page{display:none;gap:16px}.page.on{display:grid}
+.sub{color:var(--ink-soft);margin:4px 0 0}
+.card{background:var(--slab);border:1px solid var(--line);border-radius:var(--r);padding:18px;min-width:0}
+.kicker{display:flex;align-items:center;gap:8px;font:700 17px var(--display);margin:0 0 12px}
+.kicker .n{color:var(--ink-soft);font:500 14px var(--body)}
+.kicker .sp{flex:1}
+.grid2{display:grid;gap:16px;grid-template-columns:repeat(auto-fit,minmax(320px,1fr))}
+.form{display:grid;gap:10px;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));align-items:end}
+
+.stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:10px}
+.stat{background:var(--slab);border:1px solid var(--line);border-radius:12px;padding:12px 14px}
+.stat .v{font:700 28px/1.1 var(--display)}
+.stat .l{color:var(--ink-soft);font-size:12px;margin-top:2px}
+.stat.hot{border-color:var(--gleam);background:var(--gleam-soft)}
+
+.chip{display:inline-flex;align-items:center;gap:5px;font-size:12px;font-weight:600;padding:2px 9px;border-radius:99px;
+  background:#eef1f0;color:var(--ink-soft);white-space:nowrap}
+.chip.green{background:var(--accent-soft);color:var(--accent)}.chip.gold{background:var(--gleam-soft);color:#7a5f1d}
+.chip.red{background:var(--red-soft);color:var(--red)}.chip.blue{background:var(--blue-soft);color:var(--blue)}
+.mono{font-family:var(--mono);font-size:12px}
+
+.draft{display:grid;gap:10px;border:1px solid var(--line);border-left:4px solid var(--gleam);border-radius:12px;padding:14px;background:#fbfcfc}
+.draft .to{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.draft .t{font:700 16px var(--display)}
+.foot{white-space:pre-wrap;font-size:13px;color:var(--ink-soft);border-top:1px dashed var(--line);padding-top:8px}
+.actions{display:flex;gap:8px;flex-wrap:wrap}
+.row{display:flex;gap:12px;align-items:flex-start;padding:12px 0;border-top:1px solid var(--line)}
+.row:first-child{border-top:0;padding-top:0}
+.row .main{flex:1;min-width:0}
+.t{font-weight:600}
+.m{color:var(--ink-soft);font-size:13px;margin-top:3px;word-break:break-word}
+.empty{color:var(--ink-soft);font-size:14px;padding:6px 0}
+details{margin-top:6px}summary{cursor:pointer;color:var(--ink-soft);font-size:13px}
+pre.body{white-space:pre-wrap;font:13px/1.5 var(--body);background:var(--ground);border-radius:8px;padding:10px;margin:6px 0 0}
+.filters{display:flex;gap:8px;flex-wrap:wrap}
+.filters button{min-height:34px;padding:5px 13px;border-radius:99px;font-size:13px}
+.filters button.on{background:var(--ink);color:#fff;border-color:var(--ink)}
+.price{font:700 40px/1 var(--display);color:var(--accent)}
+.setup{border:1px solid var(--gleam);background:var(--gleam-soft)}
+.setup ol{margin:6px 0 0;padding-left:20px}.setup li{margin:4px 0}
+.agents{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:10px}
+.agent{background:var(--slab);border:1px solid var(--line);border-radius:12px;padding:12px 14px}
+.agent .n{font-weight:700;display:flex;align-items:center;gap:8px}
+.agent .d{color:var(--ink-soft);font-size:12px;margin-top:2px}
+.agent .s{font-size:13px;margin-top:8px}
+.agent.err{border-color:#e3c3bf}
+.setting{display:grid;gap:8px;padding:14px 0;border-top:1px solid var(--line)}
+.setting:first-child{border-top:0;padding-top:0}
+.setting .line{display:flex;gap:12px;align-items:center;justify-content:space-between;flex-wrap:wrap}
+
+#login{max-width:400px;margin:14vh auto;padding:28px 22px}
+#login .mark{margin-bottom:16px}
+dialog{background:var(--slab);color:var(--ink);border:1px solid var(--line);border-radius:16px;padding:20px;width:min(520px,94vw)}
+dialog::backdrop{background:rgba(21,48,44,.45)}
+dialog h3{margin:0 0 6px}
+dialog p{color:var(--ink-soft);margin:0 0 12px;font-size:14px}
+dialog .actions{justify-content:flex-end;margin-top:14px}
+.toast{position:fixed;left:50%;bottom:20px;transform:translateX(-50%);background:var(--ink);color:#fff;font-weight:600;
+  padding:10px 16px;border-radius:10px;opacity:0;transition:opacity .2s;pointer-events:none;z-index:50}
+.toast.on{opacity:1}
+@media (max-width:560px){h1{font-size:23px}.health .txt{display:none}.stat .v{font-size:23px}.mark{font-size:18px}
+  .row{flex-wrap:wrap}.row>.actions{width:100%}}
+</style>
+</head>
+<body>
+<header>
+  <div class="ws"><a href="/?ws=tenfour">Ten-Four Tapes</a><a class="on" href="/gleamstone">Gleamstone</a></div>
+  <div class="bar">
+    <div class="mark"><svg width="28" height="28" viewBox="0 0 30 30" aria-hidden="true"><path d="M15 2 27 9.5v11L15 28 3 20.5v-11Z" fill="var(--accent)"/><path d="M15 2 27 9.5 15 15 3 9.5Z" fill="var(--gleam)" opacity=".85"/><path d="M15 15v13" stroke="#fff" stroke-width="1.2" opacity=".5"/></svg>Gleamstone <span class="hq">HQ</span></div>
+    <div class="sp"></div>
+    <div class="health" id="health" hidden></div>
+    <button class="sm" id="logreply" hidden>Log a reply</button>
+    <button class="ghost sm" id="out" hidden>Sign out</button>
+  </div>
+  <nav id="tabs" hidden>
+    <button data-tab="today" class="on">Today<span class="count" id="c-today" hidden></span></button>
+    <button data-tab="prospects">Prospects</button>
+    <button data-tab="outreach">Outreach</button>
+    <button data-tab="quotes">Quotes</button>
+    <button data-tab="cleaners">Cleaners</button>
+    <button data-tab="agents">Agents<span class="count" id="c-agents" hidden></span></button>
+    <button data-tab="settings">Settings</button>
+  </nav>
+</header>
+
+<section id="login" class="card" hidden>
+  <div class="mark"><svg width="28" height="28" viewBox="0 0 30 30" aria-hidden="true"><path d="M15 2 27 9.5v11L15 28 3 20.5v-11Z" fill="var(--accent)"/><path d="M15 2 27 9.5 15 15 3 9.5Z" fill="var(--gleam)" opacity=".85"/></svg>Gleamstone <span class="hq">HQ</span></div>
+  <p class="sub" style="margin-bottom:14px">Enter your email and we'll send you a sign-in link.</p>
+  <input id="email" type="email" placeholder="you@example.com" autocomplete="email">
+  <p><button id="send" class="primary" style="width:100%;margin-top:10px">Send sign-in link</button></p>
+  <p id="lmsg" class="m"></p>
+</section>
+
+<main id="app" hidden>
+  <!-- TODAY -->
+  <div class="page on" id="p-today">
+    <div><h1 id="hello">Today</h1><p class="sub" id="hello-sub"></p></div>
+    <div class="card setup" id="setup" hidden></div>
+    <div class="stats" id="stats"></div>
+    <div class="card"><div class="kicker">Approve these <span class="n" id="n-approve"></span></div>
+      <p class="m" style="margin:-6px 0 12px">Edit anything before you approve. Approving an intro also approves its two short follow-ups (day 4 and day 9). They stop as soon as you log a reply.</p>
+      <div id="approvals" style="display:grid;gap:12px"></div></div>
+    <div class="card"><div class="kicker">Needs you <span class="n" id="n-alerts"></span></div><div id="alerts"></div></div>
+    <div class="card"><div class="kicker">This morning's brief</div><pre class="body" id="brief" style="background:none;padding:0"></pre></div>
+  </div>
+
+  <!-- PROSPECTS -->
+  <div class="page" id="p-prospects">
+    <div><h1>Prospects</h1><p class="sub">Businesses within your service radius that could use a cleaner, newest signals first.</p></div>
+    <div class="filters" id="pfilters"></div>
+    <input id="psearch" placeholder="Search by name or town">
+    <div class="card" id="plist"></div>
+    <div class="card"><div class="kicker">Add a prospect</div>
+      <div class="form">
+        <label>Business name<input id="np-name"></label>
+        <label>Town<input id="np-town" placeholder="Woburn"></label>
+        <label>Type<select id="np-cat"><option>office</option><option>medical</option><option>dealership</option><option>showroom</option><option>retail</option><option>gym</option><option>warehouse</option><option>other</option></select></label>
+        <label>Email<input id="np-email" type="email"></label>
+        <label style="grid-column:1/-1">Why now / notes<input id="np-signal" placeholder="Just signed a lease at 300 Trade Center"></label>
+        <button class="primary" id="np-save">Add prospect</button>
+      </div></div>
+  </div>
+
+  <!-- OUTREACH -->
+  <div class="page" id="p-outreach">
+    <div><h1>Outreach</h1><p class="sub">Every email from bobby@gleamstonecleaning.com: sent, scheduled, and replies you've logged.</p></div>
+    <div class="stats" id="ostats"></div>
+    <div class="filters" id="ofilters"></div>
+    <div class="card" id="olist"></div>
+  </div>
+
+  <!-- QUOTES -->
+  <div class="page" id="p-quotes">
+    <div><h1>Quotes</h1><p class="sub">Flat monthly price from square footage and schedule. Rates are in Settings.</p></div>
+    <div class="grid2">
+      <div class="card"><div class="kicker">Build a quote</div>
+        <div class="form">
+          <label style="grid-column:1/-1">Business<select id="q-prospect"></select></label>
+          <label>Type<select id="q-type"><option>office</option><option>medical</option><option>dealership</option><option>showroom</option><option>retail</option><option>gym</option><option>warehouse</option><option>other</option></select></label>
+          <label>Square feet<input id="q-sqft" type="number" min="0" step="100" value="3000"></label>
+          <label>Visits per week<select id="q-visits"><option>1</option><option>2</option><option selected>3</option><option>4</option><option>5</option><option>6</option><option>7</option></select></label>
+          <label>Restrooms<input id="q-rest" type="number" min="0" value="2"></label>
+          <label style="grid-column:1/-1">Add-ons or notes (shown on the quote)<input id="q-notes" placeholder="Interior glass monthly"></label>
+        </div></div>
+      <div class="card"><div class="kicker">Price</div>
+        <div class="price" id="q-monthly">$0</div><div class="m" id="q-break"></div>
+        <div class="actions" style="margin-top:14px"><button class="primary" id="q-save">Save quote</button><button id="q-email">Save + draft quote email</button></div>
+        <p class="m" id="q-hint"></p></div>
+    </div>
+    <div class="card"><div class="kicker">Saved quotes</div><div id="qlist"></div></div>
+  </div>
+
+  <!-- CLEANERS -->
+  <div class="page" id="p-cleaners">
+    <div><h1>Cleaners</h1><p class="sub">People lined up to do the work, so you're ready when the first account signs.</p></div>
+    <div class="card"><div class="kicker">Job post <span class="sp"></span><button class="sm" id="copyjob">Copy</button></div>
+      <pre class="body" id="job"></pre><p class="m">Post it where you choose (Indeed, Craigslist, local Facebook groups). Applicants email bobby@gleamstonecleaning.com. Nothing is posted for you.</p></div>
+    <div class="card"><div class="kicker">Add a cleaner</div>
+      <div class="form">
+        <label>Name<input id="nc-name"></label><label>Email<input id="nc-email" type="email"></label>
+        <label>Phone<input id="nc-phone"></label><label>Towns they can reach<input id="nc-towns"></label>
+        <label>Availability<input id="nc-avail" placeholder="Mon–Fri after 6pm"></label>
+        <label>Has a car<select id="nc-car"><option value="">?</option><option value="true">Yes</option><option value="false">No</option></select></label>
+        <label style="grid-column:1/-1">Experience / notes<input id="nc-notes"></label>
+        <button class="primary" id="nc-save">Add cleaner</button>
+      </div></div>
+    <div class="card"><div class="kicker">Your bench</div><div id="clist"></div></div>
+  </div>
+
+  <!-- AGENTS -->
+  <div class="page" id="p-agents">
+    <div><h1>Agents</h1><p class="sub">The Gleamstone team, when each last ran, and what it did.</p></div>
+    <div class="agents" id="agents"></div>
+  </div>
+
+  <!-- SETTINGS -->
+  <div class="page" id="p-settings">
+    <div><h1>Settings</h1></div>
+    <div class="card" id="controls"></div>
+  </div>
+</main>
+
+<dialog id="dlg"><form method="dialog">
+  <h3 id="dlg-t"></h3><p id="dlg-p"></p>
+  <div id="dlg-extra"></div>
+  <textarea id="dlg-in" rows="5"></textarea>
+  <div class="actions"><button value="cancel" class="ghost">Cancel</button><button value="ok" class="primary" id="dlg-ok">Save</button></div>
+</form></dialog>
+<div class="toast" id="toast"></div>
+
+<script>
+try{ localStorage.setItem("hq_ws","gleamstone"); }catch{}
+const sb = supabase.createClient(window.HQ.SUPABASE_URL, window.HQ.SUPABASE_ANON_KEY);
+const $ = id => document.getElementById(id);
+const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+const ago = t => { if(!t) return "never"; const m=(Date.now()-new Date(t))/6e4; return m<1?"just now":m<60?`${m|0}m ago`:m<1440?`${(m/60)|0}h ago`:`${(m/1440)|0}d ago`; };
+const inDays = t => { const d=(new Date(t)-Date.now())/864e5; return d<=0?"due now":d<1?"later today":`in ${Math.ceil(d)} days`; };
+const num = v => (v===null||v===undefined) ? "–" : Number(v).toLocaleString();
+const money = v => "$"+Math.round(v).toLocaleString();
+const toast = msg => { const t=$("toast"); t.textContent=msg; t.classList.add("on"); setTimeout(()=>t.classList.remove("on"),1800); };
+const stripFoot = b => (b||"").split("\n\nBobby\nGleamstone Commercial Cleaning")[0].trimEnd();
+
+const AGENTS = {
+  gs_scout:["Prospect Scout","Leases, openings and moves in range · every 6h"],
+  gs_map:["Map Scout","Dealerships, medical, gyms, offices · weekly"],
+  gs_enrich:["Contact Finder","Finds real emails on their own sites · every 2h"],
+  gs_writer:["Writer","Drafts intros and answers to replies · every 2h"],
+  gs_sender:["Sender","Sends approved email, weekdays 8–5 · hourly"],
+  gs_recruit:["Recruiter","Writes the cleaner job post · weekly"],
+  gs_brief:["Brief","Morning summary at 8am"],
+};
+const PST = {new:["New",""],no_email:["No email",""],drafted:["Draft ready","gold"],contacted:["Emailed","blue"],
+  replied:["Replied","gold"],interested:["Interested","green"],quoted:["Quoted","green"],won:["Client","green"],
+  lost:["Not now",""],do_not_contact:["Do not contact","red"]};
+const KIND = e => e.kind==="intro"?"First email":e.kind==="followup"?`Follow-up ${e.step}`:e.kind==="reply"?"Answer to their reply":e.kind==="quote"?"Quote":e.kind==="inbound"?"Their reply":e.kind;
+
+let TAB = (()=>{ try{ return localStorage.getItem("gs_tab")||"today"; }catch{ return "today"; } })();
+let PF="ready", OF="queued", PQ="";
+let D = {};   // last load
+
+function show(tab){
+  TAB=tab; try{ localStorage.setItem("gs_tab",tab); }catch{}
+  document.querySelectorAll("nav button").forEach(b=>b.classList.toggle("on",b.dataset.tab===tab));
+  document.querySelectorAll(".page").forEach(p=>p.classList.toggle("on",p.id==="p-"+tab));
+  window.scrollTo({top:0});
+}
+const setCount = (id,n) => { const e=$(id); e.hidden=!n; e.textContent=n; };
+
+function ask(title, text, def="", {input=true, ok="Save", extra=""}={}){
+  return new Promise(res=>{
+    $("dlg-t").textContent=title; $("dlg-p").textContent=text; $("dlg-in").value=def; $("dlg-in").hidden=!input;
+    $("dlg-ok").textContent=ok; $("dlg-extra").innerHTML=extra;
+    const d=$("dlg"); d.returnValue=""; d.showModal(); if(input) setTimeout(()=>$("dlg-in").focus(),50);
+    d.onclose=()=>res(d.returnValue==="ok" ? (input ? $("dlg-in").value : true) : null);
+  });
+}
+const S = k => D.S ? D.S[k] : undefined;
+async function setSetting(key, value){
+  const {error} = await sb.from("settings").upsert({key, value, updated_at:new Date().toISOString()});
+  if(error) toast("Couldn't save: "+error.message); else toast("Saved");
+}
+
+// ---------- pricing ----------
+// Hours-based: how long a visit takes (sq ft ÷ how fast a cleaner covers that kind of space, plus restrooms) × hourly rate.
+const RATE_DEFAULTS={hourly:45,min_visit:85,restroom_min:15,disc3:5,disc5:10,office:2500,medical:1800,dealership:3500,showroom:3500,retail:2500,gym:2000,warehouse:5000,other:2500};
+const RATE_LABELS={hourly:"$ per cleaning hour",min_visit:"minimum visit $",restroom_min:"minutes per restroom",disc3:"3×/wk % off",disc5:"5×/wk % off"};
+function priceQuote({type,sqft,visits,rest}){
+  const R = Object.assign({}, RATE_DEFAULTS, S("gs_rates")||{});
+  const speed = Number(R[type] ?? R.other) || 2500;
+  const hours = sqft/speed + rest*Number(R.restroom_min)/60;
+  const perVisit = Math.max(Number(R.min_visit), hours*Number(R.hourly));
+  const disc = visits>=5 ? Number(R.disc5) : visits>=3 ? Number(R.disc3) : 0;
+  const monthly = Math.round(perVisit*visits*4.33*(1-disc/100)/5)*5;
+  return {speed, hours, perVisit, disc, monthly, min:Number(R.min_visit), hourly:Number(R.hourly)};
+}
+function renderPrice(){
+  const q = {type:$("q-type").value, sqft:Number($("q-sqft").value)||0, visits:Number($("q-visits").value), rest:Number($("q-rest").value)||0};
+  const p = priceQuote(q);
+  $("q-monthly").textContent = money(p.monthly)+"/mo";
+  $("q-break").innerHTML = `${money(p.perVisit)} per visit × ${q.visits}/week × 4.33 weeks${p.disc?` − ${p.disc}% for ${q.visits}× a week`:""}<br>
+    About ${p.hours.toFixed(1)} cleaning hours a visit (${q.sqft.toLocaleString()} sq ft at ${p.speed.toLocaleString()} sq ft/hr + ${q.rest} restroom${q.rest===1?"":"s"}) × $${p.hourly}/hr${p.hours*p.hourly<p.min?` → $${p.min} minimum visit`:""}`;
+  $("q-hint").textContent = q.sqft ? `That's $${(p.monthly/q.sqft).toFixed(2)} per sq ft per month.` : "";
+  return {...q, ...p};
+}
+
+async function load(){
+  const [runs, alerts, drafts, prospects, emails, quotes, cleaners, settings] = await Promise.all([
+    sb.from("agent_runs").select("*").like("agent","gs_%").order("started_at",{ascending:false}).limit(200),
+    sb.from("alerts").select("*").eq("resolved",false).like("agent","gs_%").order("created_at",{ascending:false}).limit(40),
+    sb.from("gs_emails").select("*").eq("approval_status","pending").eq("status","draft").eq("direction","out").order("created_at",{ascending:true}).limit(40),
+    sb.from("gs_prospects").select("*").order("created_at",{ascending:false}).limit(1500),
+    sb.from("gs_emails").select("*").order("created_at",{ascending:false}).limit(300),
+    sb.from("gs_quotes").select("*").order("created_at",{ascending:false}).limit(50),
+    sb.from("gs_cleaners").select("*").order("created_at",{ascending:false}).limit(100),
+    sb.from("settings").select("key,value").like("key","gs_%"),
+  ]);
+  const notReady = prospects.error && /gs_prospects|relation|schema cache/i.test(prospects.error.message||"");
+  D = {runs:runs.data||[], alerts:alerts.data||[], drafts:drafts.data||[], P:prospects.data||[], E:emails.data||[],
+       Q:quotes.data||[], C:cleaners.data||[], S:Object.fromEntries((settings.data||[]).map(s=>[s.key,s.value])), notReady};
+  const byId = Object.fromEntries(D.P.map(p=>[p.id,p]));
+  D.byId = byId;
+
+  // ---- setup checklist
+  const sender = D.runs.find(r=>r.agent==="gs_sender");
+  const steps = [];
+  if(notReady) steps.push("Run the Gleamstone setup SQL in Supabase (Bobby has it as one copy-paste block).");
+  if(!notReady && !String(S("gs_mailing_address")||"").trim()) steps.push(`Add your business mailing address in <a href="#" data-goto="settings">Settings</a>. Every cold email needs one by law, so nothing sends until it's there.`);
+  if(sender && /Brevo/.test(sender.summary||"")) steps.push("Finish the Brevo setup so emails can go out from bobby@gleamstonecleaning.com.");
+  $("setup").hidden = !steps.length;
+  $("setup").innerHTML = `<div class="kicker">Finish setup</div><ol>${steps.map(s=>`<li>${s}</li>`).join("")}</ol>`;
+
+  // ---- health
+  const last = a => D.runs.find(x=>x.agent===a);
+  const broken = Object.keys(AGENTS).filter(a=>last(a)?.status==="error");
+  $("health").hidden=false;
+  $("health").innerHTML = broken.length ? `<span class="dot error"></span><span class="txt">${broken.length} agent${broken.length>1?"s":""} erroring</span>`
+    : `<span class="dot ok"></span><span class="txt">All agents OK</span>`;
+  setCount("c-agents", broken.length);
+  $("agents").innerHTML = Object.entries(AGENTS).map(([a,[name,desc]])=>{ const r=last(a);
+    return `<div class="agent ${r?.status==="error"?"err":""}"><div class="n"><span class="dot ${r?.status||""}"></span>${name}</div><div class="d">${desc}</div>
+      <div class="s">${r?`<span class="m" style="margin:0">${ago(r.started_at)}</span> · ${esc(r.status==="error"?"Error: "+(r.error||"").split("\n").filter(Boolean).pop():r.summary)}`:`<span class="m">Not run yet</span>`}</div></div>`;}).join("");
+
+  // ---- today
+  const week = Date.now()-7*864e5, dayStart=new Date(); dayStart.setHours(0,0,0,0);
+  const sent = D.E.filter(e=>e.status==="sent");
+  const hot = D.P.filter(p=>["replied","interested","quoted"].includes(p.status));
+  const ready = D.P.filter(p=>p.status==="new" && p.email);
+  const hr=new Date().getHours();
+  $("hello").textContent=(hr<12?"Good morning":hr<18?"Good afternoon":"Good evening")+", Bobby";
+  $("hello-sub").textContent = D.drafts.length||D.alerts.length ? `${D.drafts.length} email${D.drafts.length===1?"":"s"} to approve · ${D.alerts.length} thing${D.alerts.length===1?"":"s"} to look at`
+    : "You're caught up. The agents are finding and writing.";
+  setCount("c-today", D.drafts.length + D.alerts.length);
+  const stat=(v,l,h)=>`<div class="stat ${h?"hot":""}"><div class="v">${num(v)}</div><div class="l">${l}</div></div>`;
+  $("stats").innerHTML = stat(D.drafts.length,"to approve",D.drafts.length>0) + stat(sent.filter(e=>new Date(e.sent_at)>week).length,"sent this week") +
+    stat(hot.length,"replied or interested",hot.length>0) + stat(ready.length,"ready to email") + stat(D.P.filter(p=>p.status==="won").length,"clients");
+  $("n-approve").textContent = D.drafts.length?`(${D.drafts.length})`:"";
+  $("n-alerts").textContent = D.alerts.length?`(${D.alerts.length})`:"";
+  const foot = `Bobby\nGleamstone Commercial Cleaning\ngleamstonecleaning.com${S("gs_mailing_address")?"\n"+S("gs_mailing_address"):"\n[mailing address — add in Settings]"}\n\nIf you'd rather not hear from me, reply "no thanks" and I won't email again.`;
+  $("approvals").innerHTML = D.drafts.map(e=>{ const p=byId[e.prospect_id]||{};
+    return `<div class="draft" data-draft="${e.id}">
+      <div class="to"><span class="chip gold">${esc(KIND(e))}</span><span class="t">${esc(p.name||e.to_email)}</span><span class="m" style="margin:0">${esc(p.town||"")}${p.distance_mi?` · ${p.distance_mi} mi`:""} · to ${esc(e.to_email)}</span></div>
+      ${p.signal?`<div class="m" style="margin:0">Why now: ${esc(p.signal)}${p.source_url?` · <a href="${esc(p.source_url)}" target="_blank" rel="noopener">source</a>`:""}</div>`:""}
+      ${e.note&&e.kind==="reply"?`<div class="m" style="margin:0">${esc(e.note)}</div>`:""}
+      <input value="${esc(e.subject)}" data-subj="${e.id}">
+      <textarea rows="7" data-body="${e.id}">${esc(stripFoot(e.body))}</textarea>
+      <div class="foot">${esc(foot)}</div>
+      ${e.email_source||p.email_source?`<div class="m" style="margin:0">Address found on: ${esc(p.email_source)}</div>`:""}
+      <div class="actions"><button class="primary" data-approve="${e.id}">Approve</button><button data-saveedit="${e.id}">Save edit</button>
+        <button class="danger" data-reject="${e.id}">Skip</button>${e.prospect_id?`<button class="danger ghost" data-dnc="${e.prospect_id}">Never email them</button>`:""}</div>
+    </div>`;}).join("") || `<div class="empty">Nothing waiting for your approval.</div>`;
+  $("alerts").innerHTML = D.alerts.map(a=>{ const tone=a.level==="urgent"?"red":a.level==="warn"?"gold":"";
+    return `<div class="row"><div class="main"><div style="display:flex;gap:8px;align-items:center;margin-bottom:4px"><span class="chip ${tone}">${esc(a.level==="info"?"FYI":a.level)}</span>
+      <span class="m" style="margin:0">${esc((AGENTS[a.agent]||[a.agent])[0])} · ${ago(a.created_at)}</span></div><div class="t" style="font-weight:500">${esc(a.message)}</div></div>
+      <button class="sm" data-resolve="${a.id}">Done</button></div>`;}).join("") || `<div class="empty">Nothing needs you right now.</div>`;
+  $("brief").textContent = (S("gs_brief")||{}).text || "The first brief is built at 8am.";
+
+  renderProspects(); renderOutreach(); renderQuotes(); renderCleaners(); renderSettings();
+}
+
+function renderProspects(){
+  const G = {ready:p=>p.status==="new"&&p.email, all:()=>true, hot:p=>["replied","interested","quoted"].includes(p.status),
+    contacted:p=>["drafted","contacted"].includes(p.status), noemail:p=>p.status==="no_email"||(!p.email&&p.status==="new"),
+    clients:p=>p.status==="won", dnc:p=>["do_not_contact","lost"].includes(p.status)};
+  const L = {ready:"Ready to email",hot:"Hot",contacted:"In progress",noemail:"Need an email",clients:"Clients",dnc:"Not now / never",all:"All"};
+  $("pfilters").innerHTML = Object.keys(L).map(k=>`<button data-pf="${k}" class="${PF===k?"on":""}">${L[k]} · ${D.P.filter(G[k]).length}</button>`).join("");
+  const q = PQ.toLowerCase();
+  const rows = D.P.filter(G[PF]).filter(p=>!q || (p.name+" "+(p.town||"")).toLowerCase().includes(q))
+    .sort((a,b)=>(b.signal_date||"").localeCompare(a.signal_date||"") || (b.fit_score||0)-(a.fit_score||0)).slice(0,150);
+  $("plist").innerHTML = D.notReady ? `<div class="empty">Waiting on the Gleamstone setup SQL.</div>` : rows.map(p=>{ const [st,tone]=PST[p.status]||[p.status,""];
+    return `<div class="row"><div class="main">
+      <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap"><span class="t">${esc(p.name)}</span><span class="chip ${tone}">${st}</span><span class="chip">${esc(p.category||"")}</span>
+        ${p.fit_score?`<span class="chip" title="fit score">fit ${p.fit_score}/10</span>`:""}</div>
+      <div class="m">${esc(p.town||"")}${p.distance_mi?` · ${p.distance_mi} mi`:""}${p.address?` · ${esc(p.address)}`:""}${p.website?` · <a href="${esc(p.website)}" target="_blank" rel="noopener">site</a>`:""}${p.source_url?` · <a href="${esc(p.source_url)}" target="_blank" rel="noopener">${p.source==="map"?"map":"source"}</a>`:""}</div>
+      ${p.signal?`<div class="m">Why now: ${esc(p.signal)}${p.signal_date?` (${esc(p.signal_date)})`:""}</div>`:""}
+      ${p.email?`<div class="m mono">${esc(p.email)}</div>`:`<div style="display:flex;gap:8px;margin-top:6px;max-width:420px"><input placeholder="Add an email" data-pemail="${p.id}"><button class="sm" data-pemailsave="${p.id}">Save</button></div>`}
+      ${p.notes?`<div class="m">${esc(p.notes)}</div>`:""}
+      </div><div class="actions">
+        <button class="sm" data-reply="${p.id}">Log reply</button><button class="sm" data-quote="${p.id}">Quote</button>
+        <select class="sm" data-pstatus="${p.id}" style="width:auto;min-height:32px;padding:4px 8px">${Object.entries(PST).map(([k,[l]])=>`<option value="${k}" ${k===p.status?"selected":""}>${l}</option>`).join("")}</select>
+      </div></div>`;}).join("") || `<div class="empty">${PF==="ready"?"No prospects with an email yet. The scouts run every few hours.":"Nothing here."}</div>`;
+}
+
+function renderOutreach(){
+  const sent=D.E.filter(e=>e.status==="sent"), dayStart=new Date(); dayStart.setHours(0,0,0,0);
+  const sched=D.E.filter(e=>e.status==="draft"&&e.approval_status==="approved");
+  const stat=(v,l)=>`<div class="stat"><div class="v">${num(v)}</div><div class="l">${l}</div></div>`;
+  $("ostats").innerHTML = stat(sent.filter(e=>new Date(e.sent_at)>=dayStart).length,`sent today (cap ${S("gs_daily_cap")??15})`) +
+    stat(sent.length,"sent total") + stat(sched.length,"approved, waiting to send") + stat(D.E.filter(e=>e.direction==="in").length,"replies logged");
+  const G={queued:e=>e.status==="draft"&&e.approval_status==="approved", sent:e=>e.status==="sent", replies:e=>e.direction==="in",
+    problems:e=>["failed","bounced"].includes(e.status), cancelled:e=>e.status==="cancelled"||e.approval_status==="rejected"};
+  const L={queued:"Scheduled",sent:"Sent",replies:"Replies",problems:"Problems",cancelled:"Stopped / skipped"};
+  $("ofilters").innerHTML = Object.keys(L).map(k=>`<button data-of="${k}" class="${OF===k?"on":""}">${L[k]} · ${D.E.filter(G[k]).length}</button>`).join("");
+  $("olist").innerHTML = D.E.filter(G[OF]).slice(0,120).map(e=>{ const p=D.byId[e.prospect_id]||{};
+    const when = e.status==="sent"?`sent ${ago(e.sent_at)}`:e.direction==="in"?`logged ${ago(e.created_at)}`:e.send_after?`sends ${inDays(e.send_after)}`:e.status==="draft"?"sends next window":e.status;
+    return `<div class="row"><div class="main"><div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap"><span class="chip ${e.direction==="in"?"gold":""}">${esc(KIND(e))}</span><span class="t">${esc(p.name||e.to_email)}</span><span class="m" style="margin:0">${esc(when)}</span></div>
+      <div class="m">${esc(e.subject||"")}${e.note&&!/^in-reply-to/.test(e.note)?` · ${esc(e.note)}`:""}</div>
+      <details><summary>Read</summary><pre class="body">${esc(e.body||"")}</pre></details></div>
+      ${e.status==="draft"&&e.approval_status==="approved"?`<button class="sm danger" data-cancel="${e.id}">Stop</button>`:""}</div>`;}).join("") || `<div class="empty">Nothing here yet.</div>`;
+}
+
+function renderQuotes(){
+  const sel=$("q-prospect"), cur=sel.value;
+  const opts = D.P.filter(p=>!["do_not_contact"].includes(p.status)).sort((a,b)=>{const r=s=>["interested","replied","quoted","won"].includes(s)?0:1; return r(a.status)-r(b.status)||a.name.localeCompare(b.name);}).slice(0,400);
+  sel.innerHTML = `<option value="">— Not in the list (just price it) —</option>` + opts.map(p=>`<option value="${p.id}">${esc(p.name)}${p.town?" · "+esc(p.town):""}</option>`).join("");
+  if(cur) sel.value=cur;
+  renderPrice();
+  const QS={draft:"Draft",sent:"Sent",accepted:"Accepted",declined:"Declined"};
+  $("qlist").innerHTML = D.Q.map(q=>`<div class="row"><div class="main"><div class="t">${esc(q.business_name||"Quote")} · ${money(q.monthly)}/mo</div>
+    <div class="m">${num(q.sqft)} sq ft · ${q.visits_per_week}×/week · ${esc(q.space_type)} · ${q.restrooms} restrooms · ${money(q.per_visit)}/visit · ${ago(q.created_at)}${q.notes?" · "+esc(q.notes):""}</div></div>
+    <select data-qstatus="${q.id}" style="width:auto;min-height:32px;padding:4px 8px">${Object.entries(QS).map(([k,l])=>`<option value="${k}" ${k===q.status?"selected":""}>${l}</option>`).join("")}</select></div>`).join("")
+    || `<div class="empty">No quotes saved yet.</div>`;
+}
+
+function renderCleaners(){
+  const job=S("gs_job_post");
+  $("job").textContent = job ? `${job.title}\n\n${job.body}` : "The Recruiter writes the first job post on its first run.";
+  const CS={lead:"Lead",contacted:"Emailed",interview:"Interview",ready:"Ready",active:"Working",passed:"Passed"};
+  $("clist").innerHTML = D.C.map(c=>`<div class="row"><div class="main"><div class="t">${esc(c.name)}</div>
+    <div class="m">${[c.email,c.phone,c.towns,c.availability,c.has_car===true?"has a car":c.has_car===false?"no car":""].filter(Boolean).map(esc).join(" · ")}</div>
+    ${c.notes?`<div class="m">${esc(c.notes)}</div>`:""}</div>
+    <select data-cstatus="${c.id}" style="width:auto;min-height:32px;padding:4px 8px">${Object.entries(CS).map(([k,l])=>`<option value="${k}" ${k===c.status?"selected":""}>${l}</option>`).join("")}</select></div>`).join("")
+    || `<div class="empty">No cleaners yet. Post the job and add people as they email in.</div>`;
+}
+
+function renderSettings(){
+  const appr = S("gs_approvals")!==false, paused = S("gs_sending_paused")===true;
+  const R = Object.assign({}, RATE_DEFAULTS, S("gs_rates")||{});
+  $("controls").innerHTML = `
+    <div class="setting"><div class="line"><div><div class="t">Business mailing address</div><div class="m">Required in every cold email (CAN-SPAM). A PO box or virtual mailbox works.</div></div></div>
+      <div style="display:flex;gap:8px"><input id="s-addr" value="${esc(S("gs_mailing_address")||"")}" placeholder="Street or PO Box, Town, MA ZIP"><button class="primary" data-saveset="addr">Save</button></div></div>
+    <div class="setting"><div class="line"><div><div class="t">Sending</div><div class="m">${paused?"Paused. Nothing goes out.":"On. Approved emails go out weekdays 8am–5pm."}</div></div>
+      <button data-toggle="gs_sending_paused" data-val="${!paused}" class="${paused?"primary":"danger"}">${paused?"Resume sending":"Pause all sending"}</button></div></div>
+    <div class="setting"><div class="line"><div><div class="t">Approvals</div><div class="m">${appr?"On. You approve every first email. Answers to replies always wait for you.":"Off. First emails send without asking. Answers to replies still wait for you."}</div></div>
+      <button data-toggle="gs_approvals" data-val="${!appr}">${appr?"Turn off approvals":"Turn approvals back on"}</button></div></div>
+    <div class="setting"><div class="line"><div><div class="t">Emails per day</div><div class="m">Keep this low for the first few weeks so the new domain builds a good reputation.</div></div>
+      <div style="display:flex;gap:8px;width:220px"><input id="s-cap" type="number" min="1" max="100" value="${esc(S("gs_daily_cap")??15)}"><button data-saveset="cap">Save</button></div></div></div>
+    <div class="setting"><div class="line"><div><div class="t">Service radius</div><div class="m">Miles from ${esc(S("gs_home_zip")||"01890")}.</div></div>
+      <div style="display:flex;gap:8px;width:220px"><input id="s-rad" type="number" min="5" max="40" value="${esc(S("gs_radius_mi")??20)}"><button data-saveset="rad">Save</button></div></div></div>
+    <div class="setting"><div class="t">Never contact (one per line)</div>
+      <textarea id="s-excl" rows="3">${esc((S("gs_excluded")||[]).join("\n"))}</textarea><div><button data-saveset="excl">Save list</button></div></div>
+    <div class="setting"><div class="t">Quote rates</div><div class="m">Price = cleaning hours per visit × hourly rate. Hours come from how many sq ft a cleaner covers per hour in each kind of space, plus time per restroom.</div>
+      <div class="form">${Object.keys(R).map(k=>`<label>${esc(RATE_LABELS[k]||k+" sq ft/hr")}<input data-rate="${k}" type="number" step="0.01" value="${esc(R[k])}"></label>`).join("")}</div>
+      <div><button data-saveset="rates">Save rates</button></div></div>
+    <div class="setting"><div class="t">Pay line for the job post</div><div class="m">Leave empty to keep pay out of the post.</div>
+      <div style="display:flex;gap:8px"><input id="s-pay" value="${esc(S("gs_pay_line")||"")}" placeholder="$20–$23/hr to start"><button data-saveset="pay">Save</button></div></div>`;
+}
+
+async function logReply(prospectId){
+  const opts = D.P.filter(p=>p.email||p.status!=="new").sort((a,b)=>a.name.localeCompare(b.name));
+  const extra = prospectId ? "" : `<label style="margin-bottom:10px">Who replied<select id="lr-p">${opts.map(p=>`<option value="${p.id}">${esc(p.name)}${p.town?" · "+esc(p.town):""}</option>`).join("")}</select></label>`;
+  const txt = await ask("Log a reply","Paste what they wrote. Follow-ups to them stop now, and the Writer drafts your answer for you to approve.","",{ok:"Save reply",extra});
+  if(txt===null || !txt.trim()) return;
+  const pid = prospectId || (document.getElementById("lr-p")||{}).value;
+  if(!pid) return;
+  const p = D.byId[pid]||{};
+  await sb.from("gs_emails").insert({prospect_id:pid, direction:"in", kind:"inbound", to_email:"bobby@gleamstonecleaning.com", subject:"Reply from "+(p.name||""), body:txt.trim(), approval_status:"approved", status:"logged"});
+  await sb.from("gs_emails").update({status:"cancelled",note:"they replied"}).eq("prospect_id",pid).eq("status","draft").eq("kind","followup");
+  await sb.from("gs_prospects").update({status:"replied"}).eq("id",pid);
+  toast("Reply logged. Your answer will be drafted within 2 hours.");
+}
+
+document.addEventListener("input", e=>{
+  if(["q-type","q-sqft","q-visits","q-rest"].includes(e.target.id)) renderPrice();
+  if(e.target.id==="psearch"){ PQ=e.target.value; renderProspects(); }
+});
+document.addEventListener("change", async e=>{
+  const d=e.target.dataset;
+  if(e.target.id==="q-prospect"){ const p=D.byId[e.target.value]; if(p){ if(p.category) $("q-type").value=p.category; if(p.sqft) $("q-sqft").value=p.sqft; renderPrice(); } return; }
+  if(d.pstatus){ await sb.from("gs_prospects").update({status:e.target.value}).eq("id",d.pstatus);
+    if(e.target.value==="do_not_contact") await sb.from("gs_emails").update({status:"cancelled",note:"do not contact"}).eq("prospect_id",d.pstatus).eq("status","draft");
+    toast("Updated"); load(); }
+  if(d.qstatus){ await sb.from("gs_quotes").update({status:e.target.value}).eq("id",d.qstatus); toast("Updated"); }
+  if(d.cstatus){ await sb.from("gs_cleaners").update({status:e.target.value}).eq("id",d.cstatus); toast("Updated"); }
+});
+
+async function saveQuote(withEmail){
+  const r=renderPrice(), pid=$("q-prospect").value||null, p=D.byId[pid]||{};
+  const name = p.name || await ask("Business name","Who is this quote for?","",{ok:"Next"});
+  if(!name) return;
+  const row={prospect_id:pid,business_name:name,space_type:r.type,sqft:r.sqft,visits_per_week:r.visits,restrooms:r.rest,
+    per_visit:Math.round(r.perVisit),monthly:r.monthly,notes:$("q-notes").value.trim()||null,status:withEmail?"sent":"draft"};
+  const {error}=await sb.from("gs_quotes").insert(row);
+  if(error){ toast("Couldn't save: "+error.message); return; }
+  if(withEmail){
+    if(!p.email){ toast("Saved. Add their email on Prospects to draft the email."); load(); return; }
+    const first=(p.contact_name||"").split(" ")[0];
+    const body=`Hi ${first||"there"},\n\nThanks for the details. Here's what cleaning ${name} would look like:\n\n`+
+      `${r.visits}× a week, evenings, for about ${r.sqft.toLocaleString()} sq ft with ${r.rest} restroom${r.rest===1?"":"s"}: ${money(r.monthly)} a month, flat.\n`+
+      `${row.notes?row.notes+"\n":""}\nThat covers the full checklist each visit: trash and recycling, restrooms cleaned and restocked, kitchen and break room, high-touch disinfecting, vacuuming and mopping. Month-to-month, no long contract. I'll send the written checklist with it.\n\n`+
+      `If that works, what start date would you like?`;
+    await sb.from("gs_emails").insert({prospect_id:pid,kind:"quote",step:9,to_email:p.email,subject:`Cleaning quote for ${name}`,body,approval_status:"pending"});
+    await sb.from("gs_prospects").update({status:"quoted"}).eq("id",pid);
+    toast("Quote saved and email drafted on Today");
+  } else toast("Quote saved");
+  load();
+}
+
+document.addEventListener("click", async e=>{
+  const goto=e.target.closest("[data-goto]"); if(goto){ e.preventDefault(); show(goto.dataset.goto); return; }
+  const el=e.target.closest("button"); if(!el) return;
+  const d=el.dataset;
+  if(d.tab){ show(d.tab); return; }
+  if(d.pf){ PF=d.pf; renderProspects(); return; }
+  if(d.of){ OF=d.of; renderOutreach(); return; }
+  if(el.id==="logreply"){ await logReply(null); load(); return; }
+  if(el.id==="q-save"){ saveQuote(false); return; }
+  if(el.id==="q-email"){ saveQuote(true); return; }
+  if(el.id==="copyjob"){ try{ await navigator.clipboard.writeText($("job").textContent); toast("Copied"); }catch{ toast("Couldn't copy"); } return; }
+  if(el.id==="np-save"){ const name=$("np-name").value.trim(); if(!name) return;
+    const em=$("np-email").value.trim().toLowerCase()||null;
+    const {error}=await sb.from("gs_prospects").insert({name,town:$("np-town").value.trim()||null,category:$("np-cat").value,email:em,
+      email_source:em?"added by Bobby":null,signal:$("np-signal").value.trim()||null,source:"manual",fit_score:8});
+    if(error){ toast(/duplicate/.test(error.message)?"Already in your list":"Couldn't save: "+error.message); return; }
+    ["np-name","np-town","np-email","np-signal"].forEach(i=>$(i).value=""); toast("Added"); load(); return; }
+  if(el.id==="nc-save"){ const name=$("nc-name").value.trim(); if(!name) return;
+    await sb.from("gs_cleaners").insert({name,email:$("nc-email").value.trim()||null,phone:$("nc-phone").value.trim()||null,towns:$("nc-towns").value.trim()||null,
+      availability:$("nc-avail").value.trim()||null,has_car:$("nc-car").value===""?null:$("nc-car").value==="true",notes:$("nc-notes").value.trim()||null,source:"manual"});
+    ["nc-name","nc-email","nc-phone","nc-towns","nc-avail","nc-notes"].forEach(i=>$(i).value=""); toast("Added"); load(); return; }
+  const edits = id => ({subject:document.querySelector(`[data-subj="${id}"]`).value.trim(), body:document.querySelector(`[data-body="${id}"]`).value.trim()});
+  if(d.approve){ await sb.from("gs_emails").update({...edits(d.approve),approval_status:"approved"}).eq("id",d.approve); toast("Approved"); }
+  if(d.saveedit){ await sb.from("gs_emails").update(edits(d.saveedit)).eq("id",d.saveedit); toast("Saved"); }
+  if(d.reject){ const why=await ask("Skip this email?","Optional: say why, so the Writer does better.","",{ok:"Skip"}); if(why===null) return;
+    const row=D.drafts.find(x=>x.id===d.reject)||{};
+    await sb.from("gs_emails").update({approval_status:"rejected",status:"cancelled",note:"Skipped: "+(why.trim()||"no reason")}).eq("id",d.reject);
+    if(row.kind==="intro" && row.prospect_id) await sb.from("gs_prospects").update({status:"lost",notes:"Skipped: "+(why.trim()||"")}).eq("id",row.prospect_id);
+    toast("Skipped"); }
+  if(d.dnc){ if(!await ask("Never email them?","They'll be marked do-not-contact and anything queued is stopped.","",{input:false,ok:"Never email"})) return;
+    await sb.from("gs_prospects").update({status:"do_not_contact"}).eq("id",d.dnc);
+    await sb.from("gs_emails").update({status:"cancelled",approval_status:"rejected",note:"do not contact"}).eq("prospect_id",d.dnc).eq("status","draft"); toast("Done"); }
+  if(d.cancel){ await sb.from("gs_emails").update({status:"cancelled",note:"stopped by Bobby"}).eq("id",d.cancel); toast("Stopped"); }
+  if(d.resolve) await sb.from("alerts").update({resolved:true}).eq("id",d.resolve);
+  if(d.reply){ await logReply(d.reply); }
+  if(d.quote){ $("q-prospect").value=d.quote; $("q-prospect").dispatchEvent(new Event("change",{bubbles:true})); show("quotes"); return; }
+  if(d.pemailsave){ const v=document.querySelector(`[data-pemail="${d.pemailsave}"]`).value.trim().toLowerCase(); if(!v) return;
+    await sb.from("gs_prospects").update({email:v,email_source:"added by Bobby",status:"new"}).eq("id",d.pemailsave); toast("Saved"); }
+  if(d.toggle){ if(d.toggle==="gs_approvals" && d.val==="false" && !await ask("Turn off approvals?","First emails will send without asking you. Answers to replies still wait for you.","",{input:false,ok:"Turn off"})) return;
+    await setSetting(d.toggle, d.val==="true"); }
+  if(d.saveset){
+    if(d.saveset==="addr") await setSetting("gs_mailing_address", $("s-addr").value.trim());
+    if(d.saveset==="cap") await setSetting("gs_daily_cap", Math.max(1,Math.min(100,Number($("s-cap").value)||15)));
+    if(d.saveset==="rad") await setSetting("gs_radius_mi", Math.max(5,Math.min(40,Number($("s-rad").value)||20)));
+    if(d.saveset==="excl") await setSetting("gs_excluded", $("s-excl").value.split("\n").map(s=>s.trim()).filter(Boolean));
+    if(d.saveset==="pay") await setSetting("gs_pay_line", $("s-pay").value.trim());
+    if(d.saveset==="rates"){ const r={}; document.querySelectorAll("[data-rate]").forEach(i=>r[i.dataset.rate]=Number(i.value)); await setSetting("gs_rates", r); }
+  }
+  if(d.approve||d.reject||d.dnc||d.cancel||d.resolve||d.reply||d.pemailsave||d.toggle||d.saveset) load();
+});
+$("send").onclick=async()=>{const {error}=await sb.auth.signInWithOtp({email:$("email").value.trim(),options:{emailRedirectTo:location.origin+"/gleamstone"}});$("lmsg").textContent=error?error.message:"Check your email for the link.";};
+$("out").onclick=async()=>{await sb.auth.signOut();location.reload();};
+(async()=>{const {data:{session}}=await sb.auth.getSession();
+  if(!session){$("login").hidden=false;return;}
+  for(const id of ["out","logreply","tabs","app"]) $(id).hidden=false;
+  show(TAB); load(); setInterval(()=>{ if(!document.querySelector("dialog[open]") && !document.activeElement?.matches("textarea,input")) load(); },60000);})();
+</script>
+</body>
+</html>

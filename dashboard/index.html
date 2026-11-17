@@ -33,6 +33,12 @@ input,textarea{background:var(--bg);border:1px solid var(--line);color:var(--tex
   font:14px Inter,system-ui,sans-serif;width:100%}
 input:focus,textarea:focus{outline:2px solid var(--gold);outline-offset:-1px;border-color:transparent}
 
+/* workspace switch (shared across HQ) */
+.ws{display:flex;gap:4px;max-width:1100px;margin:0 auto;padding:8px 16px 0}
+.ws a{font:700 12px Inter,system-ui,sans-serif;letter-spacing:.06em;text-transform:uppercase;text-decoration:none;color:var(--dim);
+  padding:5px 12px;border-radius:99px;border:1px solid transparent}
+.ws a.on{background:var(--gold);color:var(--gold-ink)}
+.ws a:not(.on):hover{border-color:var(--line);color:var(--text)}
 /* header */
 header{position:sticky;top:0;z-index:10;background:rgba(13,15,20,.94);backdrop-filter:blur(8px);border-bottom:1px solid var(--line)}
 .bar{max-width:1100px;margin:0 auto;padding:12px 16px;display:flex;align-items:center;gap:12px}
@@ -130,6 +136,7 @@ header button{white-space:nowrap}
 </head>
 <body>
 <header>
+  <div class="ws"><a class="on" href="/?ws=tenfour">Ten-Four Tapes</a><a href="/gleamstone">Gleamstone</a></div>
   <div class="bar">
     <div class="logo"><span class="stripe"></span>TEN-FOUR TAPES <span class="hq">HQ</span></div>
     <div class="sp"></div>
@@ -209,6 +216,11 @@ header button{white-space:nowrap}
 <div class="toast" id="toast"></div>
 
 <script>
+// HQ opens in the workspace you used last; the switch links pass ?ws= to say which one you picked
+(()=>{ try{ const q=new URLSearchParams(location.search).get("ws");
+  if(q==="tenfour"){ localStorage.setItem("hq_ws","tenfour"); history.replaceState(null,"","/"); }
+  else if(!q && !location.hash && !location.search && localStorage.getItem("hq_ws")==="gleamstone"){ location.replace("/gleamstone"); }
+}catch{} })();
 const sb = supabase.createClient(window.HQ.SUPABASE_URL, window.HQ.SUPABASE_ANON_KEY);
 const $ = id => document.getElementById(id);
 const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
@@ -262,8 +274,8 @@ function ask(title, text, def="", {input=true, ok="Save"}={}){
 
 async function load(){
   const [runs, alerts, content, leads, reqs, agencies, playbook, metrics, settings] = await Promise.all([
-    sb.from("agent_runs").select("*").order("started_at",{ascending:false}).limit(300),
-    sb.from("alerts").select("*").eq("resolved",false).order("created_at",{ascending:false}).limit(40),
+    sb.from("agent_runs").select("*").not("agent","like","gs_%").order("started_at",{ascending:false}).limit(300),
+    sb.from("alerts").select("*").eq("resolved",false).not("agent","like","gs_%").order("created_at",{ascending:false}).limit(40),
     sb.from("content").select("*").neq("status","posted").order("created_at",{ascending:false}).limit(60),
     sb.from("leads").select("*").in("status",["new","obtained","requested"]).order("action_score",{ascending:false}).limit(15),
     sb.from("records_requests").select("*").order("created_at",{ascending:false}).limit(25),
