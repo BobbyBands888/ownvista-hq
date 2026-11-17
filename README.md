@@ -40,3 +40,25 @@ Approvals are required on the dashboard until **Nov 23, 2026**, then it goes ful
 8. **Mac** — unzip, then in Terminal: `bash ~/Downloads/ownvista-hq-main/mac/install.sh` (after downloading the repo zip from GitHub). It installs everything free (Python 3.12 via uv, Kokoro narrator voice, Inter fonts, ffmpeg), walks you through the keys one at a time (`mac/setup_env.py`), copies the code to `~/TenFourTapes/hq` and schedules the runner every 30 min. Rendering is built in (`mac/render.py`: Groq Whisper transcript + loudness → picks the action → episode / Shorts / Reels). During the approval window every fresh render goes back to Pending, so you approve the exact video before it posts.
 9. **YouTube API audit** — until Google approves the app, API uploads land as Private; the Publisher flags each one.
    Request the audit (free) from the YouTube API Services audit form.
+
+## Gleamstone workspace (levelingclips.com/gleamstone)
+
+A separate workspace for Gleamstone Commercial Cleaning: its own page, brand and tabs (Today, Prospects, Outreach,
+Quotes, Cleaners, Agents, Settings). The switch at the top of either page flips between Ten-Four Tapes and Gleamstone,
+and HQ opens in whichever one you used last. Gleamstone data lives only in `gs_*` tables and `gs_*` settings, and its
+agents log as `gs_*`, so nothing crosses over.
+
+| Agent | When | Job |
+|---|---|---|
+| Prospect Scout | every 6h | Google News for leases, openings and moves in towns within 20 mi of 01890 |
+| Map Scout | weekly | OpenStreetMap: dealerships, medical/dental, gyms, offices in range (150 new a week) |
+| Contact Finder | every 2h | Finds an email printed on the business's own site. Never guesses addresses |
+| Writer | every 2h | Drafts intros (best fit first) and answers to replies you log |
+| Sender | hourly, weekdays 8–5 ET | Sends approved email via Brevo (free, 300/day) from bobby@gleamstonecleaning.com, daily cap, auto follow-ups on day 4 and 9, stops on reply/bounce |
+| Recruiter | weekly | Writes the cleaner job post (you post it) |
+| Brief | 8am ET | Morning summary on the dashboard + emailed to bobby@gleamstonecleaning.com |
+
+Rules: email only, no call offers, no "same crew" promises, no prices in first emails, no spending.
+Setup: run `supabase/gleamstone.sql`; add the `BREVO_API_KEY` secret (Brevo account with gleamstonecleaning.com
+authenticated); add a mailing address in Gleamstone Settings. Zoho's free plan has no IMAP, so replies are
+logged with "Log a reply" on the dashboard.

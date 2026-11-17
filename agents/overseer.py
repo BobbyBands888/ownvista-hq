@@ -77,7 +77,8 @@ def daily_report(db, problems, jam):
         lines += ["", "Needs you:"] + [f"- {x}" for x in jam]
     if problems:
         lines += ["", "Agent problems:"] + [f"- {x}" for x in problems]
-    alerts = db.select("alerts", {"resolved": "is.false", "level": "eq.urgent", "order": "created_at.desc", "limit": 8})
+    alerts = db.select("alerts", {"resolved": "is.false", "level": "eq.urgent", "agent": "not.like.gs_*",
+                                  "order": "created_at.desc", "limit": 8})
     if alerts:
         lines += ["", "Urgent:"] + [f"- [{a['agent']}] {a['message'][:200]}" for a in alerts]
     lines += ["", f"Dashboard: {DASH}"]
