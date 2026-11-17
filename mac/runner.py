@@ -657,6 +657,7 @@ def keep_copies(db):
     reqs = db.select("records_requests", {"status": "eq.fulfilled", "download_links": "not.is.null",
                                           "last_activity_at": f"gte.{since}", "select": "lead_id,subject",
                                           "order": "last_activity_at.asc"})
+    failed = []
     for r in reqs:
         if not r.get("lead_id"):
             continue
@@ -669,8 +670,10 @@ def keep_copies(db):
         dest = FOOTAGE / str(r["lead_id"])
         ok = ensure_footage(db, {"lead_id": r["lead_id"], "case_name": (r.get("subject") or "")[:80]})
         _free_footage(dest)
-        return f"kept {r['lead_id']}" if ok else f"couldn't fetch {r['lead_id']}"
-    return "nothing new to keep"
+        if ok:
+            return f"kept {r['lead_id']}"
+        failed.append(str(r["lead_id"])[:8])        # expired link etc.: try the next package instead of stopping
+    return f"couldn't fetch {', '.join(failed)}" if failed else "nothing new to keep"
 
 def main(db):
     d = 0 if CLOUD else download_footage(db)
