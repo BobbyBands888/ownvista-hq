@@ -135,13 +135,13 @@ def write_vertical(job, log=print):
              '"intro_vo":"' + ('' if plan["kind"] == "short" and part > 1 else
                                '1-2 short spoken sentences, max 24 words, read in about 6 seconds: place, who the suspect '
                                'is and why police were there, from the CASE FILE/FACTS only, natural documentary tone '
-                               '(e.g. \'Las Cruces, New Mexico. Agents are chasing a man wanted on a felony warrant, '
+                               '(STYLE ONLY, a different case: never copy its place or facts — e.g. \'Las Cruces, New Mexico. Agents are chasing a man wanted on a felony warrant, '
                                'and he is not giving up.\'). Must not contradict the first seconds.') + '",'
              '"outcome_vo":"' + ('' if plan["kind"] == "short" and part in (1, 2) else
                                  'how the case ended in max 25 spoken words, following the HOW IT ENDED wording rule; '
                                  '"" if there is no case file or no outcome') + '"'
              + (',"caption":"PLACE. STAKES in under 10 words, about what this clip shows (e.g. '
-             '\'Quemado, Texas. A man swinging tree branches has already hit a Border Patrol agent in the head.\')",'
+             'STYLE ONLY, a different case: never copy its place or facts: \'Quemado, Texas. A man swinging tree branches has already hit a Border Patrol agent in the head.\')",'
              '"question":"one short question for the comments about what the viewer just saw",'
              '"hashtags":["3-4 tags like ' + ('#bodycam #police' if (sc.get('camera') or 'body') == 'body' else '#police #caughtoncamera') + '"]' if plan["kind"] == "reel" else "") + "}")
     h = (j.get("hook_text") or "").strip()
