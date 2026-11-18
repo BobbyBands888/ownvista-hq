@@ -26,3 +26,15 @@ def is_military_op(lead):
     if STRIKE_WORDS.search(text):
         return True
     return bool(MILITARY_UNITS.search(unit)) and not LAW_ENFORCEMENT.search(unit + " " + text)
+
+
+PEOPLE_BOAT = re.compile(r"\b(migrants?|illegal (aliens?|immigrants?)|undocumented|human smuggling|people smuggling|"
+                         r"alien smuggling|smuggling (of )?(people|persons|migrants|aliens)|noncitizens?|"
+                         r"(\d+|several|dozens of) (people|persons|individuals|passengers) (aboard|on board))\b", re.I)
+
+
+def is_people_smuggling(lead):
+    """True for migrant / human-smuggling interdictions (crowded boats, groups of people). Bobby rejects these:
+    minors can't be ruled out on camera (21-person boat, Coastal Interdiction 18 people, Bahamas intercept)."""
+    text = f"{lead.get('title') or ''} {lead.get('summary') or ''} {lead.get('notes') or ''}"
+    return bool(PEOPLE_BOAT.search(text))
