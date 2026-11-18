@@ -28,10 +28,22 @@ def _last_runs():
     return last
 
 
+def _map_sweep_complete():
+    try:
+        from agents.lib.db import DB
+        sw = DB().setting("gs_map_sweep", {}) or {}
+        return bool(sw.get("complete"))
+    except Exception:
+        return True
+
+
 def due(now):
     last = _last_runs()
     age = lambda n: (now - last["gs_" + n][0]).total_seconds() / 3600 if "gs_" + n in last else 1e9
     every = lambda n: min(EVERY_H[n], 6) if last.get("gs_" + n, (None, ""))[1] == "error" else EVERY_H[n]
+    if not _map_sweep_complete():
+        EVERY = dict(EVERY_H, map=6)            # keep going every 6h until the whole service area is mapped
+        every = lambda n: min(EVERY[n], 6) if last.get("gs_" + n, (None, ""))[1] == "error" else EVERY[n]
     return [n for n in ORDER if age(n) >= every(n) - 0.25]
 
 

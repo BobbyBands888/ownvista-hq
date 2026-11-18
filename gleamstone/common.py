@@ -121,7 +121,7 @@ def page_text(raw, limit=6000):
 def _ddg_html(q, n):
     r = requests.get("https://html.duckduckgo.com/html/", params={"q": q}, headers=UA, timeout=15)
     if r.status_code != 200:
-        return []                                   # 202 = DuckDuckGo's bot page (common from cloud servers)
+        return None                                 # 202 = DuckDuckGo's bot page (common from cloud servers)
     out = []
     for u in re.findall(r'class="result__a"[^>]+href="([^"]+)"', r.text):
         m = re.search(r"uddg=([^&]+)", u)
@@ -131,8 +131,8 @@ def _ddg_html(q, n):
 
 def _ddg_lite(q, n):
     r = requests.post("https://lite.duckduckgo.com/lite/", data={"q": q}, headers=UA, timeout=15)
-    if r.status_code != 200:
-        return []
+    if r.status_code != 200 or "anomaly" in r.text[:5000].lower():
+        return None
     out = []
     for u in re.findall(r'<a[^>]+href="([^"]+)"[^>]*class=.result-link', r.text) + \
             re.findall(r"<a[^>]+class=.result-link[^>]*href=\"([^\"]+)\"", r.text):
@@ -146,7 +146,7 @@ def _tavily(q, n, db=None):
     import os
     key = os.environ.get("TAVILY_API_KEY")
     if not key:
-        return []
+        return None
     cap = 15
     used = {}
     if db is not None:
@@ -157,7 +157,7 @@ def _tavily(q, n, db=None):
             pass
     day = now().strftime("%Y-%m-%d")
     if used.get(day, 0) >= cap:
-        return []
+        return None
     r = requests.post("https://api.tavily.com/search", json={"api_key": key, "query": q, "max_results": n}, timeout=30)
     if db is not None:
         try:
@@ -165,16 +165,26 @@ def _tavily(q, n, db=None):
                       upsert=True, on_conflict="key")
         except Exception:
             pass
-    return [x.get("url", "") for x in (r.json().get("results") or [])] if r.status_code < 300 else []
+    return [x.get("url", "") for x in (r.json().get("results") or [])] if r.status_code < 300 else None
+
+
+SEARCH_STATE = {"available": True}
 
 
 def ddg(q, n=6, db=None):
-    """Web search: DuckDuckGo first (free, no key), Tavily when DuckDuckGo blocks the server."""
+    """Web search: DuckDuckGo first (free, no key), Tavily when DuckDuckGo blocks the server.
+    SEARCH_STATE["available"] is False when no search engine could be asked at all (blocked + Tavily quota used),
+    so callers can tell "nothing found" apart from "couldn't search"."""
+    SEARCH_STATE["available"] = False
     for fn in (_ddg_html, _ddg_lite, lambda q, n: _tavily(q, n, db)):
         try:
-            out = [u for u in fn(q, n) if u.startswith("http") and "duckduckgo.com" not in u]
+            res = fn(q, n)
         except Exception:
-            out = []
+            continue
+        if res is None:                      # engine not usable right now (blocked / no key / daily cap)
+            continue
+        SEARCH_STATE["available"] = True
+        out = [u for u in res if u.startswith("http") and "duckduckgo.com" not in u]
         if out:
             return out[:n]
     return []
