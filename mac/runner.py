@@ -506,11 +506,16 @@ def render(db):
             have = ensure_footage(db, it)
         except Exception as e:
             have = False
-            db.alert("publisher", f"Footage download failed for {it['case_name']}: {e}", "warn")
+            db.alert_once("publisher", f"Footage download failed for {it['case_name']}: {e}", "warn",
+                          key=f"Footage download failed for {it['case_name']}")
         if not have:
             print(f"no footage yet for {it['case_name']} {it['kind']}{it.get('part') or ''}", flush=True)
-            db.alert("publisher", f"No footage on disk for {it['case_name']} yet (download not ready or failed)", "warn")
+            # one open alert per case, not one per item per run (Pole Crash filled 'Needs you' 9 times)
+            db.alert_once("publisher", f"No footage on disk for {it['case_name']} yet (download not ready or failed)",
+                          "warn", key=f"No footage on disk for {it['case_name']}")
             continue
+        db.resolve_alerts("publisher", f"No footage on disk for {it['case_name']}")
+        db.resolve_alerts("publisher", f"Footage download failed for {it['case_name']}")
         # trim the plan to what the footage can carry BEFORE any vision time is spent (28s clip != episode + 6 items)
         if it["lead_id"] not in secs_of:
             secs_of[it["lead_id"]] = footage_seconds(src)
@@ -849,8 +854,14 @@ def keep_copies(db):
                                           "last_activity_at": f"gte.{since}", "select": "lead_id,subject",
                                           "order": "last_activity_at.asc"})
     failed = []
+    # packages whose link keeps failing (expired, view-only share page) were retried every run, ~40 min each time;
+    # give up after KEEP_TRIES and tell Bobby once
+    tries = db.setting("keep_copies_failed", {}) or {}
     for r in reqs:
         if not r.get("lead_id"):
+            continue
+        lid = str(r["lead_id"])
+        if tries.get(lid, 0) >= KEEP_TRIES:
             continue
         try:
             rel = _mirror_release(r["lead_id"])
@@ -862,9 +873,29 @@ def keep_copies(db):
         ok = ensure_footage(db, {"lead_id": r["lead_id"], "case_name": (r.get("subject") or "")[:80]})
         _free_footage(dest)
         if ok:
+            tries.pop(lid, None)
+            _save_tries(db, tries)
             return f"kept {r['lead_id']}"
-        failed.append(str(r["lead_id"])[:8])        # expired link etc.: try the next package instead of stopping
+        failed.append(lid[:8])                      # expired link etc.: try the next package instead of stopping
+        tries[lid] = tries.get(lid, 0) + 1
+        if tries[lid] >= KEEP_TRIES:
+            name = (r.get("subject") or lid)[:80]
+            db.alert_once("publisher", f"Gave up keeping a copy of footage for '{name}' after {KEEP_TRIES} tries — "
+                                       "the link may have expired or be view-only. Save it by hand if it matters.",
+                          "warn", key=f"Gave up keeping a copy of footage for '{name}'")
+    _save_tries(db, tries)
     return f"couldn't fetch {', '.join(failed)}" if failed else "nothing new to keep"
+
+
+KEEP_TRIES = 3
+
+
+def _save_tries(db, tries):
+    try:
+        db.insert("settings", {"key": "keep_copies_failed", "value": tries, "updated_at": _now().isoformat()},
+                  upsert=True, on_conflict="key")
+    except Exception:
+        pass
 
 def main(db):
     d = 0 if CLOUD else download_footage(db)

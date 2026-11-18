@@ -20,6 +20,7 @@ from . import casescout
 from . import footage
 from .lib.google import yt_get
 from .lib.runner import RULES
+from .lib.sources import is_military_op
 
 AGENCY_RX = re.compile(r"sheriff|police|\bpd\b|state attorney|district attorney|prosecutor|highway patrol|"
                        r"state police|public safety|marshal|department of corrections|constable|trooper", re.I)
@@ -306,9 +307,12 @@ def from_dvids():
                 secs = float(it.get("duration") or 0) or None
             except (TypeError, ValueError):
                 secs = None
-            leads.append({"title": it.get("title", "")[:300], "agency_name": it.get("unit_name") or "DVIDS",
-                          "summary": (it.get("description") or "")[:600], "source_url": it.get("url"),
-                          "source_type": "dvids_public_domain", "_len": secs})
+            lead = {"title": it.get("title", "")[:300], "agency_name": it.get("unit_name") or "DVIDS",
+                    "summary": (it.get("description") or "")[:600], "source_url": it.get("url"),
+                    "source_type": "dvids_public_domain", "_len": secs}
+            if is_military_op(lead):
+                continue        # military operations / boat strikes aren't police footage
+            leads.append(lead)
     return leads
 
 def add_lengths(leads):
