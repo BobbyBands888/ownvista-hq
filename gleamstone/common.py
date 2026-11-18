@@ -214,16 +214,63 @@ def root_domain(url):
     return host[4:] if host.startswith("www.") else host
 
 
+# Search engines, website builders and dealer/medical/gym website vendors. Their addresses show up in page footers
+# and API pages but are never the business's own inbox (e.g. support@tavily.com, info@dealeressential.com).
+VENDOR_DOMAINS = {
+    "tavily.com", "duckduckgo.com", "google.com", "bing.com",
+    "dealeressential.com", "dealer.com", "dealerinspire.com", "dealeron.com", "dealerfire.com", "dealersocket.com",
+    "dealereprocess.com", "dealercenter.com", "dealerspike.com", "dealerspecialties.com", "cdk.com", "cdkglobal.com",
+    "foxdealer.com", "sincrodigital.com", "autorevo.com", "autotrader.com", "carsforsale.com", "drivecentric.com",
+    "reyrey.com", "reyrey.net", "fusionzone.com", "jazelauto.com", "dealervenom.com", "overfuel.com",
+    "wix.com", "wixsite.com", "squarespace.com", "godaddy.com", "secureserver.net", "wordpress.com", "wpengine.com",
+    "weebly.com", "shopify.com", "duda.co", "webflow.io", "hubspot.com", "mailchimp.com", "constantcontact.com",
+    "yext.com", "scorpion.co", "thryv.com", "hibu.com", "birdeye.com", "podium.com", "sentry.io", "cloudflare.com",
+    "mindbodyonline.com", "mindbody.io", "glofox.com", "clubready.com", "abcfitness.com", "zenplanner.com",
+    "officite.com", "prosites.com", "pbhs.com", "weave.com", "solutionreach.com", "nexhealth.com", "patientpop.com",
+    "tebra.com", "doctible.com", "lighthouse360.com", "demandforce.com", "zocdoc.com", "healthgrades.com",
+}
+_MULTI_TLD = ("co.uk", "com.au", "co.nz", "co.ca")
+
+
+def reg_domain(host):
+    """'mail.sales.bostonvw.com' -> 'bostonvw.com' (the part a business actually registers)."""
+    host = (host or "").lower().strip(". ")
+    host = host[4:] if host.startswith("www.") else host
+    parts = host.split(".")
+    n = 3 if any(host.endswith("." + t) for t in _MULTI_TLD) else 2
+    return ".".join(parts[-n:]) if len(parts) >= n else host
+
+
+def is_vendor(url_or_domain):
+    d = url_or_domain or ""
+    d = root_domain(d) if ("/" in d or ":" in d) else d
+    return reg_domain(d) in VENDOR_DOMAINS
+
+
+def email_matches_site(email, site):
+    """True only when the address is on the business's own domain (same registered domain as its website),
+    or a free-mail inbox (gmail etc.) - never a search engine or website vendor."""
+    if not email or "@" not in email:
+        return False
+    dom = reg_domain(email.split("@")[1])
+    if dom in VENDOR_DOMAINS:
+        return False
+    if dom in FREE_MAIL:
+        return True
+    return bool(site) and not is_vendor(site) and dom == reg_domain(root_domain(site))
+
+
 def emails_on(raw, site_domain):
-    """Addresses printed on a business's own page, best first. Must be on the site's domain (or a free-mail
-    address printed on the site itself)."""
+    """Addresses printed on a business's own page, best first. Must be on the site's own registered domain
+    (or a free-mail address printed on the site itself). Nothing is taken from a vendor/search-engine page."""
     found = []
+    if not site_domain or is_vendor(site_domain):
+        return found
     for e in set(EMAIL_RX.findall(html.unescape(raw)) + re.findall(r"mailto:([^\"'?>\s]+)", raw)):
         e = unquote(e).strip(".,;:").lower()
         if JUNK.search(e) or "@" not in e:
             continue
-        dom = e.split("@")[1]
-        if not (dom == site_domain or dom.endswith("." + site_domain) or site_domain.endswith(dom) or dom in FREE_MAIL):
+        if not email_matches_site(e, site_domain):
             continue
         found.append(e)
     def rank(e):

@@ -103,6 +103,11 @@ def main(db):
             if c.is_excluded(db, p["name"]):
                 db.update("gs_prospects", {"id": f"eq.{p['id']}"}, {"status": "do_not_contact"})
                 continue
+            if c.is_vendor(p["email"].split("@")[-1]):     # last guard: never draft to a vendor's inbox
+                db.update("gs_prospects", {"id": f"eq.{p['id']}"},
+                          {"email": None, "status": "no_email", "enrich_tries": 2,
+                           "notes": f"dropped {p['email']} (website vendor, not the business)"})
+                continue
             try:
                 subj, body = draft_intro(db, p)
             except Exception as e:
