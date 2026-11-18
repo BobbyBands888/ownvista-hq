@@ -1,5 +1,7 @@
 """CONTACT FINDER — finds a real email address for each prospect.
-Only accepts an address printed on the business's own website (or on its map listing). Never guesses
+Only accepts an address printed on the business's own website (or on its map listing), on that website's own
+domain (or a free-mail inbox). Search-engine and website-vendor addresses (tavily.com, dealeressential.com...) are
+never kept. Never guesses
 addresses like info@domain. Two tries, then the prospect is parked as "no email" (you can add one by hand)."""
 import re
 from urllib.parse import urljoin, urlparse
@@ -53,14 +55,14 @@ def guess_site(p):
 
 def find_site(p, db=None):
     """-> (site or None, searched): searched is False when no search engine could be asked this time."""
-    if p.get("website"):
+    if p.get("website") and not c.is_vendor(p["website"]):
         return p["website"], True
     g = guess_site(p)
     if g:
         return g, True
     q = f'{p["name"]} {p.get("town") or ""} MA'
     for u in c.ddg(q, n=8, db=db):
-        if DIRECTORIES.search(u):
+        if DIRECTORIES.search(u) or c.is_vendor(u):
             continue
         return u, True
     return None, c.SEARCH_STATE["available"]
@@ -94,6 +96,17 @@ def main(db):
         for p in db.select("gs_prospects", {"status": "eq.no_email", "select": "id", "limit": 1000}):
             db.update("gs_prospects", {"id": f"eq.{p['id']}"}, {"status": "new", "enrich_tries": 0})
         db.insert("settings", {"key": "gs_enrich_v3", "value": True}, upsert=True, on_conflict="key")
+    if not db.setting("gs_email_domain_v1"):
+        # one time: drop saved emails that aren't on the business's own domain (support@tavily.com etc.)
+        for p in db.select("gs_prospects", {"status": "eq.new", "email": "not.is.null",
+                                            "select": "id,email,website,email_source", "limit": 2000}):
+            if not (p.get("email_source") or "").startswith("http"):
+                continue                           # only Contact Finder's own finds; hand-added/Apollo/map ones stay
+            if not c.email_matches_site(p["email"], p.get("website")):
+                db.update("gs_prospects", {"id": f"eq.{p['id']}"},
+                          {"email": None, "email_source": None, "status": "no_email", "enrich_tries": 2,
+                           "notes": f"dropped {p['email']} (not the business's own domain)"})
+        db.insert("settings", {"key": "gs_email_domain_v1", "value": True}, upsert=True, on_conflict="key")
     rows = db.select("gs_prospects", {"status": "eq.new", "email": "is.null", "enrich_tries": "lt.2",
                                       "order": "enrich_tries.asc,fit_score.desc,created_at.asc", "limit": PER_RUN})
     found = 0
@@ -114,6 +127,8 @@ def main(db):
         else:
             why["no website found"] += 1
         upd = {"enrich_tries": (p.get("enrich_tries") or 0) + 1, "website": site or p.get("website")}
+        if email and not c.email_matches_site(email, site):
+            email = None                           # belt and braces: never keep a vendor/other-domain address
         if email:
             upd.update(email=email, email_source=src)
             found += 1

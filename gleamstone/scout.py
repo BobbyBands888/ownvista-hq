@@ -253,6 +253,8 @@ def map_lane(db):
         town = c.match_town(tg.get("addr:city") or "") or min(c.TOWNS, key=lambda t: c.miles((lat, lon), c.TOWNS[t]))
         addr = " ".join(x for x in [tg.get("addr:housenumber"), tg.get("addr:street")] if x) or None
         email = (tg.get("email") or tg.get("contact:email") or "").split(";")[0].strip().lower() or None
+        if email and c.is_vendor(email.split("@")[-1]):
+            email = None
         rows.append({"name": name[:120], "town": town, "category": cat, "address": addr,
                      "website": tg.get("website") or tg.get("contact:website") or tg.get("url"),
                      "email": email, "email_source": "OpenStreetMap listing" if email else None,
