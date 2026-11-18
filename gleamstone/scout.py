@@ -24,6 +24,10 @@ Good fits: offices, medical/dental suites, clinics, car dealerships and showroom
 light industrial with offices. Skip: restaurants (they clean in-house), schools, government, hospitals, churches,
 homes and apartments, big-box chains, anything already closed, anything outside Massachusetts.
 Only use what the text says. Never invent a business or a square footage.
+"name" must be the business's own proper name exactly as printed (e.g. "Lexington Toyota", "Burlington Dental Associates").
+If the article only describes it ("an energy company", "a law firm", "a biotech", "an indoor soccer chain"), leave it out.
+Also skip hospitals and health systems, large or national corporations, tech/biotech/pharma companies with their own
+facilities teams, and companies that are themselves outsourcing or facilities providers.
 Return JSON: {"businesses":[{"name":"...","town":"...","category":"office|medical|dealership|showroom|retail|gym|warehouse|other",
 "signal":"short plain sentence: what happened and where","sqft":number or null,"address":"if printed, else null",
 "item":index of the news item it came from,"fit":1-10}]}. Empty list if none."""
@@ -39,6 +43,40 @@ def _date(s):
 def _known(db):
     rows = db.select("gs_prospects", {"select": "name,town", "limit": 10000})
     return {((r["name"] or "").lower().strip(), (r.get("town") or "").lower()) for r in rows}
+
+
+GENERIC = set("""a an the new local national regional unnamed unknown undisclosed tenant company companies corp firm firms
+chain chains business businesses office offices headquarters hq energy biotech biotechnology tech technology software
+startup law legal medical health healthcare care practice clinic dental physician physicians pharmaceutical pharma
+life sciences science retailer retail store shop restaurant indoor outdoor soccer sports fitness gym dealership dealer auto
+car bank manufacturer manufacturing developer provider group agency financial services service consulting insurance
+real estate logistics distribution warehouse coworking co-working space nonprofit organization research lab labs
+center centre facility of and & in ma massachusetts""".split())
+BIG_ORGS = ("mass general", "brigham", "beth israel", "tufts medicine", "lahey", "anthropic", "conduent", "amazon",
+            "google", "microsoft", "moderna", "vertex pharma", "raytheon", "rtx", "general electric", "fidelity",
+            "state street", "liberty mutual", "wayfair", "hubspot", "harvard", "mit", "boston children")
+
+
+def bad_name(name):
+    """Generic descriptions ("Energy Company", "Law Firm") and big organisations with their own facilities teams."""
+    import re
+    n = (name or "").lower().strip()
+    words = [w for w in re.split(r"[^a-z0-9&'-]+", n) if w]
+    if not words or all(w in GENERIC for w in words):
+        return True
+    return any(re.search(rf"\b{re.escape(b)}\b", n) for b in BIG_ORGS)
+
+
+def purge_junk(db):
+    """Remove news-scout prospects that fail bad_name, as long as nothing has been sent to them."""
+    rows = db.select("gs_prospects", {"select": "id,name", "source": "eq.lease_news",
+                                      "status": "in.(new,no_email,drafted)", "limit": 5000})
+    sent = {e["prospect_id"] for e in db.select("gs_emails", {"select": "prospect_id", "status": "in.(sent,logged)",
+                                                               "limit": 10000})}
+    gone = [r for r in rows if bad_name(r["name"]) and r["id"] not in sent]
+    for r in gone:
+        db.delete("gs_prospects", {"id": f"eq.{r['id']}"})
+    return [r["name"] for r in gone]
 
 
 def _add(db, rows, limit=None):
@@ -87,7 +125,7 @@ def lease_news(db):
             continue
         for b in (res or {}).get("businesses", []) or []:
             town = c.match_town(b.get("town") or "") or c.match_town(b.get("address") or "")
-            if not town or not b.get("name"):
+            if not town or not b.get("name") or bad_name(b["name"]):
                 continue
             dist = c.miles(h, c.TOWNS[town])
             if dist > rad:
@@ -223,12 +261,20 @@ def map_lane(db):
                      "fit_score": fit + (1 if email else 0)})
     rows.sort(key=lambda r: (-r["fit_score"], r["distance_mi"]))
     total = len(pieces)
-    return _add(db, rows, limit=int(db.setting("gs_map_batch", 150) or 150)), len(rows), f"{done}/{total}"
+    why = ""
+    if fails:
+        from collections import Counter
+        why = f"; {len(fails)} pieces failed, mostly: {Counter(fails).most_common(1)[0][0][:120]}"
+    return _add(db, rows, limit=int(db.setting("gs_map_batch", 150) or 150)), len(rows), f"{done}/{total}{why}"
 
 
 def main(db):
+    gone = purge_junk(db)
     n, towns = lease_news(db)
-    return f"lease/opening news in {', '.join(towns)}: {n} new prospects"
+    msg = f"lease/opening news in {', '.join(towns)}: {n} new prospects"
+    if gone:
+        msg += f"; removed {len(gone)} generic/non-fit: {', '.join(gone)[:300]}"
+    return msg
 
 
 def main_map(db):
