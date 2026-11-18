@@ -79,7 +79,7 @@ def main(db):
         if is_case(lead):
             subject, body = compose_case(lead, a, signature, chk)
         else:
-            subject, body = compose(lead, a, signature, desc=chk.get("description"))
+            subject, body = compose(lead, a, signature, desc=chk.get("description"), chk=chk)
         db.insert("records_requests", {"lead_id": lead["id"], "agency_id": a["id"], "to_email": None,
                                        "subject": subject, "body": body, "status": "to_file",
                                        "notes": f"portal: {a['portal_url']}"})

@@ -142,7 +142,11 @@ VERIFY_SYSTEM = """You check a police incident before a public records request i
 which agency's officers are in the footage, which US state it is in, and what identifies the incident for a records
 clerk. Use ONLY the documents; cite nothing you can't see. Watch for look-alike place names: a "Washington County" or
 "Springfield" story may be in a different state than assumed — the news outlet's own city/state is a strong clue.
-Only include a suspect's full name if a document prints it. Never include minors, victims or bystanders."""
+Only include a suspect's full name if a document prints it. Never include minors, victims or bystanders.
+Dates: each document has a "published" date when known. Resolve relative dates ("Tuesday", "last weekend",
+"early Sunday") against the publish date of the document that uses them, and give the exact incident date only when
+that works out to one specific day. If the agency itself posted or released the video, give the day it was
+released (from the release or the news coverage of it) as release_date, even when the incident date is unclear."""
 
 VERIFY_CASE_SYSTEM = """You check a closed criminal case before a public records request for the suspect's recorded
 police interviews is sent. From the documents, decide which office holds those recordings now: the prosecutor's office
@@ -180,9 +184,11 @@ def verify(lead, agency):
     out = llm.ask(VERIFY_SYSTEM,
                   "LEAD:\n" + json.dumps({k: lead.get(k) for k in ("title", "agency_name", "state", "incident_date", "summary")}) +
                   f"\nWE WERE ABOUT TO SEND TO: {agency['name']} ({agency.get('state') or '?'})\n\nDOCUMENTS:\n" +
-                  json.dumps([{k: d[k] for k in ("i", "title", "url", "text")} for d in docs])[:20000] +
+                  json.dumps([{k: d.get(k) for k in ("i", "title", "url", "published", "text")} for d in docs])[:20000] +
                   '\n\nReturn JSON {"agency":"exact agency whose officers recorded it","state":"2-letter",'
-                  '"same_agency":true|false,"date":"YYYY-MM-DD or null","full_name":"suspect full name or null",'
+                  '"same_agency":true|false,"date":"YYYY-MM-DD or null",'
+                  '"release_date":"YYYY-MM-DD the agency released the video, or null",'
+                  '"full_name":"suspect full name or null",'
                   '"case_number":"or null","location":"road/address/landmark + city or null",'
                   '"description":"2-3 neutral sentences for the records clerk: what happened, where, exact date, '
                   'and the name/case number if known","why":"one line"}', max_tokens=700, temperature=0.1)
@@ -207,7 +213,10 @@ def ready_to_send(chk, agency, lead=None):
         return False, f"footage is from {chk.get('agency') or 'another agency'} ({chk.get('state') or '?'}), not {agency['name']}"
     if agency.get("state") and chk.get("state") and agency["state"].upper() != str(chk["state"]).upper():
         return False, f"state mismatch: incident in {chk['state']}, agency listed in {agency['state']}"
-    if not re.match(r"\d{4}-\d{2}-\d{2}$", str(chk.get("date") or "")):
+    day = r"\d{4}-\d{2}-\d{2}$"
+    released = (lead or {}).get("source_type") == "agency_release" and re.match(day, str(chk.get("release_date") or ""))
+    if not (re.match(day, str(chk.get("date") or "")) or released):
+        # an agency's own release is identifiable by its release date + link, even without the incident date
         return False, "no specific incident date found"
     if not (chk.get("full_name") or chk.get("case_number") or chk.get("location")):
         return False, "no name, case number or exact location to identify it"
@@ -242,7 +251,7 @@ Ten-Four Tapes
     return subject, body
 
 
-def compose(lead, agency, signature, desc=None):
+def compose(lead, agency, signature, desc=None, chk=None):
     statute = STATUTES.get((agency.get("state") or lead.get("state") or "").upper(),
                            "your state's public records law")
     desc = desc or llm.ask(
@@ -251,6 +260,10 @@ def compose(lead, agency, signature, desc=None):
         "Output plain text only.",
         f"Title: {lead['title']}\nSummary: {lead.get('summary') or ''}\nDate: {lead.get('incident_date') or 'unknown'}\n"
         f"Agency: {agency['name']}", json_mode=False, max_tokens=250, temperature=0.2).strip()
+    chk = chk or {}
+    if chk.get("release_date") and not chk.get("date") and lead.get("source_url"):
+        desc += (f"\n\nThis is the incident in the video your office released on {chk['release_date']}: "
+                 f"{lead['source_url']}")
     subject = f"Public Records Request – Body Camera Video – {lead['title'][:70]}"
     body = f"""Hello,
 
@@ -351,7 +364,7 @@ def main(db):
         if is_case(lead):
             subject, body = compose_case(lead, a, signature, chk)
         else:
-            subject, body = compose(lead, a, signature, desc=chk.get("description"))
+            subject, body = compose(lead, a, signature, desc=chk.get("description"), chk=chk)
         res = send_email(a["records_email"], subject, body)
         db.insert("records_requests", {"lead_id": lead["id"], "agency_id": a["id"], "to_email": a["records_email"],
                                        "subject": subject, "body": body, "sent_at": _now(),
