@@ -487,6 +487,22 @@ def render(db):
     items = db.select("content", {"status": "eq.scripted", "compliance_status": "eq.pass",
                                   "approval_status": "in.(approved,not_required)",
                                   "order": "lead_id.asc,kind.desc,created_at.asc", "limit": 40})
+    # migrant / human-smuggling cases are never made (minors can't be ruled out): Maker skips new ones, and plans
+    # made before that rule (Coastal Interdiction re-rendered 4 videos on Nov 18) are rejected here, not rendered
+    try:
+        from agents.lib import sources
+        ids = sorted({str(it["lead_id"]) for it in items if it.get("lead_id")})
+        bad = {str(l["id"]) for l in (db.select("leads", {"id": f"in.({','.join(ids)})",
+                                                          "select": "id,title,summary,notes"}) if ids else [])
+               if sources.is_people_smuggling(l)}
+    except Exception as e:
+        print(f"smuggling check failed: {e}", flush=True)
+        bad = set()
+    for it in [it for it in items if str(it.get("lead_id")) in bad]:
+        db.update("content", {"id": f"eq.{it['id']}"}, {"approval_status": "rejected", "status": "failed",
+                  "publish_note": "Rejected: migrant / human-smuggling case (minors can't be ruled out); not rendered"})
+        print(f"skip {it['case_name']} {it['kind']}{it.get('part') or ''}: people-smuggling case", flush=True)
+    items = [it for it in items if str(it.get("lead_id")) not in bad]
     waiting = {k.split(":")[1] for k in (json.loads(FAILS.read_text()) if FAILS.exists() else {}) if k.startswith("vision_wait:")}
     items = sorted(items, key=lambda it: str(it.get("lead_id")) in waiting)[:12]   # stable: case order kept
     # all of a case's videos in one run, so its footage is downloaded once
