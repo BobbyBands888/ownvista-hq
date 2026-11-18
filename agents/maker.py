@@ -12,6 +12,7 @@ from . import packaging
 from . import footage
 from . import danger
 from . import backlog
+from . import factcheck
 
 FORMAT = """Ten-Four Tapes format:
 - Every case gets a short, unique CASE NAME (e.g. "Backyard Standoff", "Bee Swarm") used on the Reel badge,
@@ -94,6 +95,15 @@ def _standalone(r):
     txt = " ".join(str(r.get(k) or "") for k in ("moment", "hook_text", "caption")).lower()
     return bool((r.get("moment") or "").strip()) and not PART_RE.search(txt)
 
+def _camera_note(lead):
+    kind = factcheck.camera_kind(lead)
+    if kind == "body":
+        return "\n\nCAMERA: this is " + factcheck.camera_phrase(kind) + "."
+    return ("\n\nCAMERA: this is " + factcheck.camera_phrase(kind) + ", NOT bodycam. Never say bodycam/body camera "
+            "anywhere (titles, hooks, captions, narration, hashtags); angle labels like \"" +
+            factcheck.CAMERA_WORDS[kind][2] + " 1\".")
+
+
 def plan(lead, playbook, rejects=(), facts=None, graded=None, max_reels=None):
     n_reels = reel_count(lead, facts) if max_reels is None else min(reel_count(lead, facts), max_reels)
     fatal_note = (" Someone died in this case: the one Reel must END BEFORE any shot, strike or injury — the"
@@ -111,7 +121,7 @@ def plan(lead, playbook, rejects=(), facts=None, graded=None, max_reels=None):
          "(captions, hooks, which moment, case type):\n" + json.dumps(graded) if graded else "") +
         "\n\nLead:\n" + json.dumps({k: lead.get(k) for k in ("title", "agency_name", "state", "incident_date",
                                                               "summary", "category", "source_type")}) +
-        "\n\n" + casefacts.narration_rules(facts) +
+        "\n\n" + casefacts.narration_rules(facts) + _camera_note(lead) +
         """
 
 Return JSON:
@@ -125,7 +135,7 @@ Return JSON:
    "analysis_tags":{"pillar":"Case File|Pursuit|Border|Update","title_formula":"Person + action + twist|Situation + realization|Place + incident + bodycam|Outcome tease|Number + stakes","thumbnail_type":"weapon|crash|face|scene","case_type":"pursuit|shooting|standoff|rescue|death in story|other"}},
  "shorts":[{"part":1,"title":"<Case Name> Part 1","moment":"which moment to cut","on_screen_text":"",
    "intro_vo":"Part 1 only: 1-2 spoken sentences (max 24 words): place, who, why police were there","outcome_vo":"Part 3 only: how it ended (max 25 words) or \"\""}],
- "reels":[{"moment":"one single 25-30s action moment, different from the other reels","hook_text":"first 2s text","caption":"PLACE. STAKES of THIS moment (under 10 words) + optional one concrete visible detail; no question","hashtags":["#bodycam"],"intro_vo":"1-2 spoken sentences (max 24 words) the narrator reads over the opening seconds: place, who, why police were there","outcome_vo":"how it ended (max 25 words) or \"\""}]}
+ "reels":[{"moment":"one single 25-30s action moment, different from the other reels","hook_text":"the exact words shown on screen in the first 2 seconds (max 9 words; the text itself, never an instruction like 'First 2s: ...')","caption":"PLACE. STAKES of THIS moment (under 10 words) + optional one concrete visible detail; no question","hashtags":["#bodycam"],"intro_vo":"1-2 spoken sentences (max 24 words) the narrator reads over the opening seconds: place, who, why police were there","outcome_vo":"how it ended (max 25 words) or \"\""}]}
 3 shorts and """ + (f"exactly {n_reels} reels, each a different single moment in story order, each standalone." + fatal_note
                     if n_reels else "no reels (\"reels\":[])."), max_tokens=2800, temperature=0.6)
 
@@ -336,7 +346,7 @@ def recut_plan(lead, winner, facts, playbook, rejects=()):
          if rejects else "") +
         "\n\nLead:\n" + json.dumps({k: lead.get(k) for k in ("title", "agency_name", "state", "incident_date",
                                                               "summary", "category", "source_type")}) +
-        "\n\n" + casefacts.narration_rules(facts) +
+        "\n\n" + casefacts.narration_rules(facts) + _camera_note(lead) +
         """
 
 Write ONE new standalone 25-30s Facebook Reel from this same incident's footage. It is a RE-CUT, not a repost:
@@ -346,7 +356,7 @@ Write ONE new standalone 25-30s Facebook Reel from this same incident's footage.
 - Keep what made the winner work (place + stakes caption, action in the first 2 seconds), but every word is new:
   a different hook_text and a different caption from the winner's. Standalone: no "part", "again", "another angle",
   "continued" or references to the earlier Reel.
-Return JSON {"moment":"","fallback_moment":"","hook_text":"first 2s text","caption":"PLACE. STAKES of THIS moment (under 10 words) + optional one concrete visible detail; no question",
+Return JSON {"moment":"","fallback_moment":"","hook_text":"the exact words shown on screen in the first 2 seconds (max 9 words; the text itself, never an instruction like 'First 2s: ...')","caption":"PLACE. STAKES of THIS moment (under 10 words) + optional one concrete visible detail; no question",
 "hashtags":["#bodycam"],"intro_vo":"1-2 spoken sentences (max 24 words): place, who, why police were there","outcome_vo":"how it ended (max 25 words) or \\"\\""}""",
         max_tokens=900, temperature=0.7)
 
@@ -393,6 +403,7 @@ def recut(db, want, playbook, rejects):
         except Exception as e:
             db.alert("maker", f"Re-cut plan failed for {w['case_name']}: {str(e)[:150]}", "info")
             continue
+        r = factcheck.check(r, lead, facts)
         old_cap = ((w.get("description") or "").splitlines() or [""])[0].strip().lower()
         if not _standalone(r) or (r.get("caption") or "").strip().lower() == old_cap:
             skipped.append(f"{w['case_name']}: plan repeated the winner")
@@ -460,7 +471,7 @@ def main(db):
     rejects = [f"{r['kind']}: {r.get('title')} — {(r.get('publish_note') or '').replace('Rejected: ', '')}"
                for r in db.select("content", {"select": "kind,title,publish_note", "approval_status": "eq.rejected",
                                               "order": "created_at.desc", "limit": 15})]
-    made = n_reel = 0
+    made = n_reel = n_fixed = 0
     for lead in leads:
         # clear any half-made plan from a failed earlier run of this lead (never touches rendered/posted items)
         db.delete("content", {"lead_id": f"eq.{lead['id']}", "status": "eq.scripted"})
@@ -479,27 +490,14 @@ def main(db):
         src_type = lead["source_type"]
         ep = fix_packaging(ep, lead, facts)
         ep["analysis_tags"] = analysis_tags(ep.get("analysis_tags"), lead)
-        epi = db.insert("content", {
-            "lead_id": lead["id"], "kind": "episode", "case_name": case, "title": ep.get("title"),
-            "description": (ep.get("description") or "") + f"\n\n{credit}" + _sources(ep, facts), "tags": ep.get("tags") or [],
-            "script": ep, "source_type": src_type, "source_credit": credit, "source_urls": [lead.get("source_url")],
-            # too little footage for an episode: the row stays (Shorts/Reels hang off it) but is never rendered
-            **({} if fit["episode"] else {"status": "failed",
-                "publish_note": f"Skipped: only {secs}s of footage (an episode needs {footage.EPISODE_MIN // 60} min+)"}),
-        })[0]
-        rows = []
-        for s in p.get("shorts", [])[:fit["shorts"]]:
-            rows.append({"lead_id": lead["id"], "kind": "short", "parent_id": epi["id"], "part": s.get("part"),
-                         "case_name": case, "title": s.get("title") or f"{case} Part {s.get('part')}",
-                         "description": f"Full episode on the channel. {credit}", "script": s,
-                         "source_type": src_type, "source_credit": credit, "source_urls": [lead.get("source_url")]})
+        shorts = [s for s in p.get("shorts", []) if isinstance(s, dict)][:fit["shorts"]]
         # standalone single-moment Reels (count from reel_count); rescues get the episode + Shorts only
         want = min(reel_count(lead, facts), fit["reels"])
         reels, seen = [], set()
         def take(cands):
             for r in cands or []:
-                key = (r.get("moment") or "").strip().lower()[:60]
-                if _standalone(r) and key not in seen:
+                key = (r.get("moment") or "").strip().lower()[:60] if isinstance(r, dict) else ""
+                if isinstance(r, dict) and _standalone(r) and key not in seen:
                     seen.add(key)
                     reels.append(r)
         take(p.get("reels"))
@@ -512,7 +510,31 @@ def main(db):
                 db.alert("maker", f"Reel top-up failed for {case}: {str(e)[:150]}", "info")
             if len(reels) < want:
                 db.alert("maker", f"{case}: planned {len(reels)} of {want} Reels", "info")
-        for n, r in enumerate(reels[:want], 1):
+        reels = reels[:want]
+        # fact check: hooks are screen text (not instructions), no invented facts, the right camera word
+        title0 = ep.get("title")
+        checked = factcheck.check({"episode": ep, "shorts": shorts, "reels": reels}, lead, facts)
+        ep, shorts, reels = checked["episode"], checked["shorts"], checked["reels"]
+        if ep.get("title") != title0 and not packaging.title_ok(
+                ep.get("title"), (ep.get("analysis_tags") or {}).get("title_formula"),
+                bool((facts or {}).get("outcome") or (facts or {}).get("sentence"))):
+            ep["title"] = factcheck._fix_camera_words(title0, factcheck.camera_kind(lead))   # the check broke the formula
+        n_fixed += len((ep.get("factcheck") or {}).get("fixed") or [])
+        epi = db.insert("content", {
+            "lead_id": lead["id"], "kind": "episode", "case_name": case, "title": ep.get("title"),
+            "description": (ep.get("description") or "") + f"\n\n{credit}" + _sources(ep, facts), "tags": ep.get("tags") or [],
+            "script": ep, "source_type": src_type, "source_credit": credit, "source_urls": [lead.get("source_url")],
+            # too little footage for an episode: the row stays (Shorts/Reels hang off it) but is never rendered
+            **({} if fit["episode"] else {"status": "failed",
+                "publish_note": f"Skipped: only {secs}s of footage (an episode needs {footage.EPISODE_MIN // 60} min+)"}),
+        })[0]
+        rows = []
+        for s in shorts:
+            rows.append({"lead_id": lead["id"], "kind": "short", "parent_id": epi["id"], "part": s.get("part"),
+                         "case_name": case, "title": s.get("title") or f"{case} Part {s.get('part')}",
+                         "description": f"Full episode on the channel. {credit}", "script": s,
+                         "source_type": src_type, "source_credit": credit, "source_urls": [lead.get("source_url")]})
+        for n, r in enumerate(reels, 1):
             r["reel_no"] = n
             rows.append({"lead_id": lead["id"], "kind": "reel", "parent_id": epi["id"], "part": None, "case_name": case,
                          "title": case, "description": (r.get("caption") or case) + f"\nFull episode on YouTube: Ten-Four Tapes\n{credit}"
@@ -548,5 +570,6 @@ def main(db):
         db.resolve_alerts("maker", "Backlog low")
     return (f"planned {made} cases ({made} episodes + shorts + {n_reel} standalone reels)"
             + (f", skipped {n_dup} already-covered incidents" if n_dup else "")
+            + (f", fact check fixed {n_fixed} lines" if n_fixed else "")
             + (f", {n_re} re-cut reels from top Facebook Reels" if n_re else "")
             + (f" ({re_note})" if re_note else "") + f"; {backlog.line(st)}")

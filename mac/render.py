@@ -303,7 +303,7 @@ def build_episode(job, out):
         segs.append(seg_card(png_card(obg, W, H, job.p("png"), kicker="Tell us in the comments", body=sc["comment_question"]),
                              job.p("mp4"), job.vo(sc["comment_question"])))
     segs.append(seg_card(png_card(obg, W, H, job.p("png"), kicker="Subscribe", title="Ten-Four Tapes",
-                                  body="Real bodycam. The full story.", footer=job.credit),
+                                  body=("Real bodycam." if (sc.get("camera") or "body") == "body" else "Real police footage.") + " The full story.", footer=job.credit),
                          job.p("mp4"), job.vo("Subscribe to Ten-Four Tapes for the full story on every case."), min_dur=4))
     concat(segs, out, job.work)
 

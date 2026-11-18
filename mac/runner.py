@@ -542,6 +542,15 @@ def render(db):
             it["case_facts"] = casefacts.get(db, it["lead_id"]) if it.get("lead_id") else None
         except Exception:
             it["case_facts"] = None
+        # plans made before the fact check have no camera type: work it out from the lead (aerial != bodycam)
+        if isinstance(it.get("script"), dict) and not it["script"].get("camera") and it.get("lead_id"):
+            try:
+                from agents import factcheck
+                lead = (db.select("leads", {"id": f"eq.{it['lead_id']}", "select": "title,summary,notes,source_type"})
+                        or [{}])[0]
+                it["script"]["camera"] = factcheck.camera_kind(lead)
+            except Exception:
+                pass
         plan_path.write_text(json.dumps(it, indent=2, default=str))
         out = OUT / _file_name(it)
         cmd = RENDER_CMD.format(plan=shlex.quote(str(plan_path)), footage=shlex.quote(str(src)), out=shlex.quote(str(out)))

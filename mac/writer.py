@@ -16,6 +16,15 @@ Never "shootout", "gunfight" or "exchange of gunfire" unless FACTS say the suspe
 fired, say "officer-involved shooting" or name what happened."""
 
 
+
+def _cam(sc):
+    """What the footage is, set by the Maker's fact check (agents/factcheck.py). Old plans: bodycam."""
+    k = (sc or {}).get("camera") or "body"
+    return ("police bodycam footage" if k == "body" else
+            {"aerial": "aerial law-enforcement footage (NOT bodycam: never call it bodycam)",
+             "dash": "police dashcam footage (NOT bodycam: never call it bodycam)"}.get(
+                k, "law-enforcement footage (never call it bodycam unless the FACTS say it is)"))
+
 def _span(f, s, e, pad=0.0):
     """What's on screen and said between s and e, with times relative to s."""
     frames = [f"{v['t'] - s:+.0f}s [{v['view']} a{v['action']}] {v['desc']}"
@@ -55,8 +64,8 @@ def write_episode(job, log=print):
     cold = _span(files[co["file"]], co["start"], co["end"], pad=3)
     drafts = {k: sc.get(k) for k in ("cold_open_hook", "narration_setup", "check_ins", "what_happened_next",
                                       "comment_question")}
-    j = _ask("You write the on-screen text and narration for a long-form police bodycam episode AFTER the edit is "
-             "locked. Every line must match the footage it sits next to. " + RULES,
+    j = _ask("You write the on-screen text and narration for a long-form episode of " + _cam(sc) + " AFTER the "
+             "edit is locked. Every line must match the footage it sits next to. " + RULES,
              "FACTS (the only facts you may state):\n" + json.dumps(_facts(job.plan, sc)) +
              "\n\nDRAFTS from the planner (tone guide only; rewrite anything the footage doesn't show):\n" + json.dumps(drafts) +
              "\n\nCOLD OPEN (6-12s shown first):\n" + json.dumps(cold) +
@@ -110,9 +119,9 @@ def write_vertical(job, log=print):
     from agents import casefacts
     narr = casefacts.narration_rules(plan.get("case_facts"))
     j = _ask("You write the hook text and the narrator lines for a vertical "
-             f"{'YouTube Short' if plan['kind'] == 'short' else 'Facebook Reel'} of police bodycam footage, AFTER "
+             f"{'YouTube Short' if plan['kind'] == 'short' else 'Facebook Reel'} of {_cam(sc)}, AFTER "
              "the clip is cut. The hook must match what is on screen in those first seconds. A narrator voice reads "
-             "intro_vo over the opening seconds while the bodycam keeps playing underneath, and reads outcome_vo on "
+             "intro_vo over the opening seconds while the footage keeps playing underneath, and reads outcome_vo on "
              "an end card. " +
              ("This Reel is a STANDALONE single moment: never say Part 1/2/3, 'continued', 'what happens next' or "
               "refer to other clips; caption and question are about this clip only. " if plan["kind"] == "reel" else "")
@@ -134,7 +143,7 @@ def write_vertical(job, log=print):
              + (',"caption":"PLACE. STAKES in under 10 words, about what this clip shows (e.g. '
              '\'Quemado, Texas. A man swinging tree branches has already hit a Border Patrol agent in the head.\')",'
              '"question":"one short question for the comments about what the viewer just saw",'
-             '"hashtags":["3-4 tags like #bodycam #police"]' if plan["kind"] == "reel" else "") + "}")
+             '"hashtags":["3-4 tags like ' + ('#bodycam #police' if (sc.get('camera') or 'body') == 'body' else '#police #caughtoncamera') + '"]' if plan["kind"] == "reel" else "") + "}")
     h = (j.get("hook_text") or "").strip()
     out = {"hook_text": h, "on_screen_text": h} if h else {}
     for k in ("intro_vo", "outcome_vo"):
@@ -196,8 +205,9 @@ def write(job, log=print):
     if job.plan["kind"] == "episode" and not w.get("title") and not packaging.title_ok(
             job.plan.get("title"), (job.sc.get("analysis_tags") or {}).get("title_formula") or "Place + incident + bodycam",
             bool(cf.get("outcome") or job.sc.get("what_happened_next"))):
-        case = job.plan.get("case_name") or "Bodycam"
-        job.sc["title"] = f"{case}: Full Bodycam"[:60]
+        body = (job.sc.get("camera") or "body") == "body"
+        case = job.plan.get("case_name") or ("Bodycam" if body else "Police Footage")
+        job.sc["title"] = f"{case}: Full {'Bodycam' if body else 'Footage'}"[:60]
         job.sc["title_formula"] = "Place + incident + bodycam"
         w["title"] = job.sc["title"]
         log(f"writer: plan title promised an outcome the case file doesn't have — using '{job.sc['title']}'")
