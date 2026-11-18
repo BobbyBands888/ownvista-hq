@@ -99,7 +99,8 @@ def score(items):
             '"incident_date":"YYYY-MM-DD or null","minor_involved":true|false|null,'
             '"hook":"one line: who did what and the twist, only from the text","why":"short"}]}',
             max_tokens=2500, temperature=0.1)
-        by_i = {x.get("i"): x for x in (res.get("cases") or [])}
+        cases = res if isinstance(res, list) else (res.get("cases") or [])   # the model sometimes returns the bare list
+        by_i = {x.get("i"): x for x in cases if isinstance(x, dict)}
         for n, it in enumerate(batch):
             s = by_i.get(n)
             if s:
