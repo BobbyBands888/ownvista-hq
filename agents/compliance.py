@@ -39,8 +39,9 @@ def review(item, lead=None, facts=None):
         '"minor_present":true|false|null}', max_tokens=700, temperature=0.1)
 
 def main(db):
+    # rejected plans are done: no safety review needed
     items = db.select("content", {"compliance_status": "eq.pending", "status": "neq.failed",
-                                  "order": "created_at.asc", "limit": 25})
+                                  "approval_status": "neq.rejected", "order": "created_at.asc", "limit": 25})
     until = db.setting("approval_required_until", "2026-11-23")
     need_approval = date.today().isoformat() < str(until)
     # Earned autonomy: a format (reel / short / episode) posts on its own once Bobby's last N decisions on
@@ -102,7 +103,9 @@ def main(db):
             auto = (not need_approval or earned.get(it["kind"])) and it["kind"] != "episode" and not maker_fatal(facts)
             db.update("content", {"id": f"eq.{it['id']}"}, {
                 "compliance_status": "pass", "compliance_notes": notes,
-                "approval_status": "not_required" if auto else "pending"})
+                # a plan Bobby already approved stays approved (it still comes back for a video review after render)
+                "approval_status": "approved" if it.get("approval_status") == "approved"
+                else ("not_required" if auto else "pending")})
             if auto and need_approval:
                 db.alert("compliance", f"Auto-posting (earned) for {it['kind']} '{it.get('title') or it['case_name']}' — "
                          "no one reviews this video before it posts", "warn")

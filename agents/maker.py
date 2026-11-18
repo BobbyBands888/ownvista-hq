@@ -188,6 +188,84 @@ def fix_packaging(ep, lead, facts):
         ep["analysis_tags"]["title_formula"] = f or "Other"
     return ep
 
+# ---------------- memory: never plan an incident we've already made or posted ----------------
+DVIDS_ID = re.compile(r"dvidshub\.net/video/(\d+)")
+DVIDS_NEAR = 15     # one release often lands as several DVIDS videos with back-to-back ids (HITRON 989073 / 989076)
+
+
+def _dvids_id(lead):
+    m = DVIDS_ID.search(lead.get("source_url") or "")
+    return int(m[1]) if m else None
+
+
+def covered(db):
+    """What we've already made or posted: every case HQ planned (episodes, any status), plus every Facebook Reel and
+    YouTube video Analytics has seen on our page/channel, which includes the ones posted by hand before HQ."""
+    seen, out = set(), []
+    def add(s):
+        s = re.sub(r"\s+", " ", str(s or "")).strip()[:160]
+        if s and s.lower() not in seen:
+            seen.add(s.lower())
+            out.append(s)
+    used = db.select("leads", {"status": "eq.used", "select": "title,agency_name,source_url", "order": "created_at.desc",
+                               "limit": 400})
+    for c in db.select("content", {"kind": "eq.episode", "select": "case_name,title", "order": "created_at.desc", "limit": 300}):
+        add(f"{c.get('case_name')}: {c.get('title')}")
+    for l in used:
+        add(l.get("title"))
+    for m in db.select("metrics", {"external_id": "not.in.(channel,page)", "select": "raw", "order": "captured_on.desc",
+                                   "limit": 600}):
+        raw = m.get("raw") if isinstance(m.get("raw"), dict) else {}
+        add(raw.get("title") or (raw.get("caption") or "").split("\n")[0])
+    return out, used
+
+
+def drop_covered(db, pool):
+    """Skip leads that are the same incident as something already made/posted (or as a stronger lead in this pool).
+    Rule first (neighbouring DVIDS ids from the same unit), then one AI check against the history."""
+    if not pool:
+        return pool, 0
+    history, used = covered(db)
+    used_ids = [(_dvids_id(l), (l.get("agency_name") or "").lower()) for l in used if _dvids_id(l)]
+    keep, dropped = [], 0
+    def skip(l, why):
+        db.update("leads", {"id": f"eq.{l['id']}"}, {"status": "skipped",
+                  "notes": ((l.get("notes") or "") + f"\nmaker: already covered: {why}").strip()})
+    for l in pool:
+        did, ag = _dvids_id(l), (l.get("agency_name") or "").lower()
+        twin = next((x for x in keep if _dvids_id(x) and did and abs(_dvids_id(x) - did) <= DVIDS_NEAR
+                     and (x.get("agency_name") or "").lower() == ag), None)
+        if did and (twin or any(abs(did - u) <= DVIDS_NEAR and a == ag for u, a in used_ids)):
+            skip(l, f"same DVIDS release as {twin['title'][:80] if twin else 'a case we already made'}")
+            dropped += 1
+            continue
+        keep.append(l)
+    if not history and len(keep) < 2:
+        return keep, dropped
+    try:
+        j = llm.ask("You keep Ten-Four Tapes from posting the same incident twice. Same incident = the same event "
+                    "(same place AND the same stop/chase/seizure/arrest), even when titled differently or released as "
+                    "separate clips. The same TYPE of incident somewhere else is NOT a match.",
+                    "ALREADY MADE OR POSTED:\n" + "\n".join(f"- {h}" for h in history[:250]) +
+                    "\n\nCANDIDATES (in priority order):\n" + json.dumps([{"i": n, "title": l["title"],
+                     "agency": l.get("agency_name"), "summary": (l.get("summary") or "")[:200]} for n, l in enumerate(keep)]) +
+                    '\n\nFlag a candidate that matches the history, or that matches an EARLIER candidate in this list. '
+                    'Only clear matches. Return JSON {"dupes":[{"i":0,"same_as":"what it duplicates"}]}',
+                    max_tokens=700, temperature=0.1)
+        dupes = {d.get("i"): d.get("same_as") for d in (j.get("dupes") or []) if isinstance(d, dict)}
+    except Exception as e:
+        db.alert("maker", f"Duplicate check skipped this run: {str(e)[:150]}", "info")
+        return keep, dropped
+    out = []
+    for n, l in enumerate(keep):
+        if n in dupes:
+            skip(l, str(dupes[n] or "same incident")[:150])
+            dropped += 1
+        else:
+            out.append(l)
+    return out, dropped
+
+
 # ---------------- re-cut mode: more Reels from the footage behind our best Facebook Reels ----------------
 RECUTS_PER_WINNER = 2       # lifetime, counted from the original winner (a re-cut that wins counts toward its root)
 RECUT_MAX_PER_RUN = 6
@@ -362,6 +440,8 @@ def main(db):
     # and the most on-screen danger first (agents/danger.py), then action
     pool.sort(key=lambda l: (rank.get(l.get("category") or "other", 2), is_fatal(files.get(l["id"])),
                              danger.key(l)))
+    # never the same incident twice: skips what we already made/posted (HQ or by hand) and same-release twins
+    pool, n_dup = drop_covered(db, pool)
     local = [l for l in pool if l.get("source_type") != "dvids_public_domain"]
     federal = [l for l in pool if l.get("source_type") == "dvids_public_domain"]
     local = [l for l in local if files.get(l["id"])]
@@ -371,7 +451,7 @@ def main(db):
     # Below the 2-week backlog: up to 5 cases a run instead of 3 (federal still capped so it isn't all Border Patrol)
     n_cases = 5 if low else 3
     leads = local[:n_cases]
-    leads += federal[:(2 if low else 1) if local else n_cases - 1][:n_cases - len(leads)]
+    leads += federal[:(2 if low else 1) if local else 2][:n_cases - len(leads)]
     pb = db.select("playbook", {"active": "is.true", "order": "created_at.desc", "limit": 40})
     # scorecard lessons always make the cut (they're about OUR posts); then the newest of the rest
     playbook = [p["insight"] for p in pb if p.get("source") == "scorecard"][:5] + \
@@ -467,5 +547,6 @@ def main(db):
     else:
         db.resolve_alerts("maker", "Backlog low")
     return (f"planned {made} cases ({made} episodes + shorts + {n_reel} standalone reels)"
+            + (f", skipped {n_dup} already-covered incidents" if n_dup else "")
             + (f", {n_re} re-cut reels from top Facebook Reels" if n_re else "")
             + (f" ({re_note})" if re_note else "") + f"; {backlog.line(st)}")
