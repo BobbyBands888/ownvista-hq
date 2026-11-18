@@ -191,7 +191,7 @@ header button{white-space:nowrap}
     <div><h1>Footage</h1><p class="sub">Leads the Scout found, records requests out to agencies, and contacts we still need.</p></div>
     <div class="stats" id="pipeline"></div>
     <div class="grid2">
-      <div class="card"><div class="kicker">Top leads</div><div id="leads"></div></div>
+      <div class="card"><div class="kicker">Top leads · most on-screen danger first</div><div id="leads"></div></div>
       <div class="card"><div class="kicker">Records requests</div><div id="reqs"></div></div>
     </div>
     <div class="card"><div class="kicker">Agencies missing a records contact</div><p class="m" style="margin:-4px 0 10px">Paste an email and Outreach sends to it. Paste a portal link and the request shows up under File on portal.</p><div id="agencies"></div></div>
@@ -280,7 +280,7 @@ async function load(){
     sb.from("agent_runs").select("*").not("agent","like","gs_%").order("started_at",{ascending:false}).limit(300),
     sb.from("alerts").select("*").eq("resolved",false).not("agent","like","gs_%").order("created_at",{ascending:false}).limit(40),
     sb.from("content").select("*").neq("status","posted").order("created_at",{ascending:false}).limit(60),
-    sb.from("leads").select("*").in("status",["new","obtained","requested"]).order("action_score",{ascending:false}).limit(15),
+    sb.from("leads").select("*").in("status",["new","obtained","requested"]).order("action_score",{ascending:false}).limit(80),
     sb.from("records_requests").select("*").order("created_at",{ascending:false}).limit(25),
     sb.from("agencies").select("*").is("records_email",null).is("portal_url",null).limit(25),
     sb.from("playbook").select("*").eq("active",true).order("created_at",{ascending:false}).limit(16),
@@ -344,7 +344,10 @@ async function load(){
   const stat = (v,l,hot) => `<div class="stat ${hot?"hot":""}"><div class="v">${num(v)}</div><div class="l">${l}</div></div>`;
   $("stats").innerHTML = stat(approvals.length,"to approve",approvals.length>0) + stat(po,"videos posted") +
     stat(yt?.followers,"YouTube subscribers") + stat(yt?.views,"YouTube views") + stat(fb?.followers,"Facebook followers");
-  $("pipeline").innerHTML = stat(nl,"open leads") + stat(rq,"requests out") + stat(ob,"footage in hand") + stat(pl,"plans to render") + stat(po,"posted");
+  const BL=S.backlog||null, bd=k=>BL&&BL[k]&&BL[k].days!=null?BL[k].days:null, tgt=BL?.target_days||14;
+  const blStat=(k,l)=>{const d=bd(k);return `<div class="stat ${d!=null&&d<tgt?"hot":""}" title="${BL?esc(BL[k].queued+" queued at "+BL[k].per_day+"/day · target "+tgt+" days"):"Maker fills this in on its next run"}"><div class="v">${d==null?"–":d}</div><div class="l">${l}</div></div>`;};
+  $("stats").innerHTML += blStat("reel","days of Reels queued");
+  $("pipeline").innerHTML = blStat("reel","days of Reels queued") + blStat("short","days of Shorts queued") + stat(nl,"open leads") + stat(rq,"requests out") + stat(ob,"footage in hand") + stat(pl,"plans to render") + stat(po,"posted");
 
   $("approvals").innerHTML = approvals.map(c=>{
     const w=watchLink(c.publish_note);
@@ -396,7 +399,9 @@ async function load(){
     </div>`;}).join("") || `<div class="card empty">Nothing here.</div>`;
 
   // ---- footage
-  $("leads").innerHTML=(leads.data||[]).map(l=>`<div class="row"><span class="chip ${l.action_score>=8?"gold":""}" title="action score">${l.action_score??"–"}/10</span><div class="main"><div class="t">${esc(l.title)}</div>
+  const DG=l=>{const v=l.danger_score??((l.notes||"").match(/\[danger:(\d+)\]/)||[])[1];return v==null?null:+v;};
+  const topLeads=(leads.data||[]).slice().sort((a,b)=>((DG(b)??Math.max(0,(b.action_score||0)-1))-(DG(a)??Math.max(0,(a.action_score||0)-1)))||((b.action_score||0)-(a.action_score||0))).slice(0,15);
+  $("leads").innerHTML=topLeads.map(l=>`<div class="row"><span class="chip ${DG(l)>=8?"red":DG(l)>=6?"gold":""}" title="on-screen danger">⚠ ${DG(l)??"–"}</span><span class="chip ${l.action_score>=8?"gold":""}" title="action score">${l.action_score??"–"}/10</span><div class="main"><div class="t">${esc(l.title)}</div>
     <div class="m">${esc(l.agency_name||"")}${l.state?" · "+esc(l.state):""} · ${esc(l.status)} · <a href="${esc(l.source_url)}" target="_blank" rel="noopener">source</a></div></div></div>`).join("")||`<div class="empty">No leads yet.</div>`;
   const RS = {fee_quoted:["Fee quoted","gold"],clarify:["They asked a question","gold"],fulfilled:["Footage received","green"],denied:["Denied","red"],sent:["Sent",""],acknowledged:["Acknowledged","blue"],closed:["Closed",""],draft:["Draft",""],to_file:["To file on portal","gold"]};
   $("reqs").innerHTML=(reqs.data||[]).map(r=>{const [l,t]=RS[r.status]||[r.status,""];

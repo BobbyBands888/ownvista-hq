@@ -318,8 +318,11 @@ def main(db):
         return f"daily cap reached ({cap}); found {found} agency emails"
 
     agencies = {a["name"].lower(): a for a in db.select("agencies", {"select": "*"})}
-    leads = db.select("leads", {"status": "eq.new", "source_type": "in.(agency_release,news_tip,prosecutor_release)",
-                                "order": "action_score.desc,created_at.desc", "limit": 40})
+    # most on-screen danger first (see agents/danger.py), then action
+    from . import danger
+    leads = danger.rank(db.select("leads", {"status": "eq.new",
+                                            "source_type": "in.(agency_release,news_tip,prosecutor_release)",
+                                            "order": "action_score.desc,created_at.desc", "limit": 150}))[:40]
     sent, no_contact, held, rerouted = 0, 0, 0, 0
     for lead in leads:
         if sent >= budget:

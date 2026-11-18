@@ -8,11 +8,11 @@ Supabase free org, GitHub Actions (one hourly job), Vercel Hobby, free Google + 
 | Agent | Where | When | Job |
 |---|---|---|---|
 | Research | cloud | daily | Studies top bodycam channels (EWU, Code Blue Cam, Dr Insanity + discovered ones) → playbook |
-| Scout | cloud | every 3h | Finds footage leads: agency YouTube channels, DVIDS, news. Scores action 1–10, screens minors, de-dupes incidents |
+| Scout | cloud | every 3h | Finds footage leads: agency YouTube channels, DVIDS, news. Scores action 1–10 and **on-screen danger 0–10** (shots fired/weapon on officers = 10 … calm stop = 0; never the aftermath). Every agent that picks leads works the most dangerous first. Screens minors, de-dupes incidents |
 | Outreach | cloud | weekdays 9am/1pm ET | Sends public records requests from bobbybands888 (cap 10/day, 2/agency/day). Finds agency records emails on official sites |
 | Records Tracker | cloud | every 2h | Reads agency replies, catches download links + expiry, flags fee quotes/questions to you, follows up after 10 days |
 | Case Desk | cloud | every 6h | Researches who / why / how it ended for every case (agency release + news, every fact sourced). Maker won't script a case without it. Re-checks open cases on posted episodes every 14 days and alerts you with a description update when an outcome lands |
-| Maker | cloud | 2×/day | Turns obtained footage into plans: episode + 3 Shorts (Part 1/2/3) + standalone FB Reels, using the playbook |
+| Maker | cloud | every 6h | Turns obtained footage into plans: episode + 3 Shorts (Part 1/2/3) + standalone FB Reels, using the playbook. Keeps a **2-week backlog** (`backlog_days`): below it, plans up to 5 cases a run, then **re-cut mode** makes new Reels from the footage behind our top Facebook Reels (A grade / 30K+ views): the same moment from another officer's camera, or the next strongest moment, never the winner's clip (max 2 per winner, `recut_mode` = auto/off) |
 | Compliance | cloud | hourly | The gate: provenance proof, credit line, no minors, no death on camera, platform policy review |
 | Publisher | Mac | every 30 min | Renders with `mac/render.py`, uploads to YouTube + FB Reels (1 Short/day, 3 Reels/day, 2 episodes/week) |
 | Analytics | cloud | daily | Pulls our YouTube + Facebook numbers (views, watch time, CTR + impressions when YouTube exposes them, traffic sources, retention drop/spike, subs per 1K, revenue after YPP) → "what works for us" into the playbook; fires breakout and ad-limit alerts |

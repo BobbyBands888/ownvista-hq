@@ -73,8 +73,13 @@ def daily_report(db, problems, jam):
         f"Footage received (open): {count(db, 'leads', {'status': 'eq.obtained'})}",
         f"Videos planned: {count(db, 'content', {'created_at': f'gte.{since}'})}",
         f"Posted: {count(db, 'content', {'posted_at': f'gte.{since}'})}",
-        "",
     ]
+    try:
+        from . import backlog
+        lines.append(backlog.line(backlog.status(db)))
+    except Exception:
+        pass
+    lines.append("")
     m = db.select("metrics", {"external_id": "in.(channel,page)", "order": "captured_on.desc", "limit": 4})
     for r in m[:2]:
         lines.append(f"{r['platform'].title()}: {r.get('followers') or 0} followers" +

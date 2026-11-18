@@ -18,6 +18,7 @@ import requests
 from .lib import config, llm
 from . import casescout
 from . import footage
+from . import danger
 from .lib.google import yt_get
 from .lib.runner import RULES
 from .lib.sources import is_military_op
@@ -372,14 +373,14 @@ def score(db, leads):
             "'Ok' isn't enough. Score honestly. Keep any real incident with likely on-camera action and an "
             "identifiable U.S. agency — the footage itself is judged again before anything is made. "
             "Skip opinion pieces, policy stories, press conferences with no incident video, lawsuits with no incident "
-            "video, recruiting/community videos, and non-U.S. incidents.\n" + RULES,
+            "video, recruiting/community videos, and non-U.S. incidents.\n" + danger.RUBRIC + "\n" + RULES,
             "Leads:\n" + json.dumps([{"i": n, "title": l["title"], "summary": l.get("summary", "")[:400],
                                        "agency": l.get("agency_name")} for n, l in enumerate(batch)]) +
             '\n\nReturn JSON {"leads":[{"i":0,"agency_name":"official agency that holds the footage or null",'
             '"state":"2-letter or null","incident_date":"YYYY-MM-DD or null","action_score":1-10,'
             '"category":"enforcement|case_story|rescue|other","involves_minor":true|false|null,'
             '"moment":"the one on-camera enforcement moment, or empty","place":"city/county, state, or empty",'
-            '"stakes":"what is at risk, or empty","keep":true|false,"why":"short"}]}')
+            '"stakes":"what is at risk, or empty","danger":0-10,"keep":true|false,"why":"short"}]}')
         by_i = {x.get("i"): x for x in res.get("leads", [])}
         for n, l in enumerate(batch):
             s = by_i.get(n, {})
@@ -390,6 +391,7 @@ def score(db, leads):
             row["category"] = s.get("category") or "other"
             row["action_score"] = _final_score(s, row["category"])
             row["involves_minor"] = s.get("involves_minor")
+            row["danger_score"] = danger.clamp(s.get("danger"))
             # 5+ is enough to REQUEST footage; Maker only builds from footage that actually delivers
             keep = row["involves_minor"] is not True and (row["action_score"] >= 6 or
                                                           (s.get("keep") and row["action_score"] >= 5))
@@ -402,9 +404,42 @@ def score(db, leads):
             else:
                 row["status"] = "new"
             mps = " | ".join(f"{k}: {s.get(k)}" for k in ("moment", "place", "stakes") if (s.get(k) or "").strip())
-            row["notes"] = " — ".join(x for x in (mps, s.get("why")) if x)
+            row["notes"] = danger.tag(" — ".join(x for x in (mps, s.get("why")) if x), row["danger_score"])
             out_rows.append(row)
     return out_rows
+
+BACKFILL_PER_RUN = 45      # 3 LLM calls a run until every open lead has a danger score
+
+
+def backfill(db):
+    """Danger-score open leads that came in before danger ranking existed (or whose score was lost)."""
+    open_ = db.select("leads", {"status": "in.(new,queued_request,requested,obtained)", "select": "*",
+                                "order": "action_score.desc", "limit": 400})
+    todo = [l for l in open_ if danger.of(l) is None][:BACKFILL_PER_RUN]
+    done = 0
+    for i in range(0, len(todo), 15):
+        batch = todo[i:i + 15]
+        res = llm.ask("You rate police footage leads for Ten-Four Tapes by the danger a viewer will see on camera.\n"
+                      + danger.RUBRIC,
+                      "Leads:\n" + json.dumps([{"i": n, "title": l["title"], "summary": (l.get("summary") or "")[:400],
+                                                "notes": (l.get("notes") or "")[:300]} for n, l in enumerate(batch)]) +
+                      '\n\nReturn JSON {"leads":[{"i":0,"danger":0-10}]}', max_tokens=600, temperature=0.2)
+        got = {x.get("i"): danger.clamp(x.get("danger")) for x in res.get("leads", [])}
+        for n, l in enumerate(batch):
+            d = got.get(n)
+            if d is None:
+                continue
+            upd = {"notes": danger.tag(l.get("notes"), d), "danger_score": d}
+            try:
+                db.update("leads", {"id": f"eq.{l['id']}"}, upd)
+            except RuntimeError as e:
+                if not danger.has_column_error(e):
+                    raise
+                upd.pop("danger_score")
+                db.update("leads", {"id": f"eq.{l['id']}"}, upd)
+            done += 1
+    return done
+
 
 def take_direct(rows):
     """Kept agency posts that link a file the agency hosts itself: no records request needed."""
@@ -499,7 +534,24 @@ def main(db):
         errors.append(f"cases: {e}")
         db.alert("scout", f"case scout failed: {e}", "warn")
     if rows:
-        db.insert("leads", rows, upsert=True, on_conflict="source_url")
+        for r in rows:                           # bulk insert: every row needs the same keys
+            r.setdefault("danger_score", None)
+        try:
+            db.insert("leads", rows, upsert=True, on_conflict="source_url")
+        except RuntimeError as e:
+            if not danger.has_column_error(e):
+                raise
+            # danger SQL not run yet: the score still rides in notes as [danger:N]
+            for r in rows:
+                r.pop("danger_score", None)
+            db.insert("leads", rows, upsert=True, on_conflict="source_url")
+            db.alert_once("scout", "Danger ranking is running from lead notes. Run the danger + backlog SQL in "
+                          "Supabase so the score gets its own column", "info", key="Danger ranking is running from lead notes")
+    backfilled = 0
+    try:
+        backfilled = backfill(db)
+    except Exception as e:
+        errors.append(f"danger backfill: {e}")
     # agency-hosted files: record them the way a fulfilled request is recorded so the publisher fetches them
     for url, files in direct.items():
         lead = (db.select("leads", {"source_url": f"eq.{url}", "select": "id,title,agency_name"}) or [None])[0]
@@ -520,10 +572,11 @@ def main(db):
                       upsert=True, on_conflict="name")
             known.add(a.lower())
     kept = sum(1 for r in rows if r["status"] in ("new", "obtained"))
-    top = sorted((r for r in rows if r["status"] in ("new", "obtained")), key=lambda r: -r["action_score"])[:3]
+    top = danger.rank([r for r in rows if r["status"] in ("new", "obtained")])[:3]
     return ((f"watching {STATS['channels']} agency channels; " if STATS.get("channels") else "") + (f"{STATS['reuploads']} re-upload items ignored, " if STATS.get("reuploads") else "")
             + (f"{STATS['dropped']} old re-upload leads skipped; " if STATS.get("dropped") else "") + f"{len(raw)} found ({', '.join(f'{k} {v}/{kept_src.get(k, 0)} kept' for k, v in src.items())}), {len(fresh)} new, {kept} kept, {len(direct)} agency-hosted (no request)"
-            + (f"; top: " + "; ".join(f"{r['action_score']} {r['title'][:50]}" for r in top) if top else "")
+            + (f"; top: " + "; ".join(f"danger {danger.of(r)} / action {r['action_score']} {r['title'][:50]}" for r in top) if top else "")
             + (f"; {short} skipped as too short (<{footage.REEL_MIN}s)" if short else "")
             + (f"; {case_note}" if case_note else "")
+            + (f"; danger-scored {backfilled} older leads" if backfilled else "")
             + (f"; errors: {errors}" if errors else ""))

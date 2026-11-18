@@ -200,7 +200,8 @@ def main(db):
     researched = updated = 0
     alerts = []
     # 1) obtained leads waiting for a case file
-    for lead in db.select("leads", {"status": "eq.obtained", "order": "action_score.desc", "limit": 20}):
+    from . import danger                       # research the leads Maker will pick first
+    for lead in danger.rank(db.select("leads", {"status": "eq.obtained", "order": "action_score.desc", "limit": 60}))[:20]:
         if researched >= MAX_RESEARCH_PER_RUN:
             break
         if get(db, lead["id"]):

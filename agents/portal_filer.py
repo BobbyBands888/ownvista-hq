@@ -41,8 +41,9 @@ def main(db):
 
     signature = db.setting("signature_name", "Bobby Cipro")
     agencies = {a["name"].lower(): a for a in db.select("agencies", {"select": "*"})}
-    leads = db.select("leads", {"status": "eq.new", "source_type": SOURCES,
-                                "order": "action_score.desc,created_at.desc", "limit": 60})
+    from . import danger                       # most on-screen danger first, then action
+    leads = danger.rank(db.select("leads", {"status": "eq.new", "source_type": SOURCES,
+                                            "order": "action_score.desc,created_at.desc", "limit": 150}))[:60]
     queued, held, rerouted, used_agency = 0, 0, 0, set()
     for lead in leads:
         if queued >= room:

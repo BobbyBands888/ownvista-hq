@@ -96,6 +96,9 @@ create table if not exists leads (
   notes text
 );
 create index if not exists leads_status_idx on leads (status, action_score desc);
+-- on-screen danger 0-10 (agents/danger.py): Scout ranks leads by it, every agent works the most dangerous first
+alter table leads add column if not exists danger_score int;
+create index if not exists leads_danger_idx on leads (status, danger_score desc nulls last, action_score desc);
 
 create table if not exists records_requests (
   id uuid primary key default gen_random_uuid(),
@@ -179,7 +182,9 @@ insert into settings (key, value) values
   ('posting_paused', 'false'),
   ('reels_per_day', '3'),
   ('shorts_per_day', '3'),
-  ('episodes_per_week', '2')
+  ('episodes_per_week', '2'),
+  ('backlog_days', '14'),
+  ('recut_mode', '"auto"')
 on conflict (key) do nothing;
 
 insert into agencies (name, state, releases_bodycam, notes) values

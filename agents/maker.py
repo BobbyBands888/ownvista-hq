@@ -3,12 +3,15 @@
 Research + Analytics. Rendering happens on Bobby's Mac (mac/runner.py) with the existing build tools."""
 import json
 import re
+from datetime import datetime, timedelta, timezone
 from .lib import llm
 from .lib.runner import RULES
 from .lib.sources import is_military_op
 from . import casefacts
 from . import packaging
 from . import footage
+from . import danger
+from . import backlog
 
 FORMAT = """Ten-Four Tapes format:
 - Every case gets a short, unique CASE NAME (e.g. "Backyard Standoff", "Bee Swarm") used on the Reel badge,
@@ -185,15 +188,163 @@ def fix_packaging(ep, lead, facts):
         ep["analysis_tags"]["title_formula"] = f or "Other"
     return ep
 
+# ---------------- re-cut mode: more Reels from the footage behind our best Facebook Reels ----------------
+RECUTS_PER_WINNER = 2       # lifetime, counted from the original winner (a re-cut that wins counts toward its root)
+RECUT_MAX_PER_RUN = 6
+WINNER_DAYS = 60            # only Reels posted in the last 60 days
+WINNER_MIN_AGE_H = 72       # let the original run its course before a re-cut follows it
+WIN_VIEWS = 30000           # an A on our page's Reel floors (analytics.FLOORS)
+TOP_UP_VIEWS = 10000        # if fewer than 3 A's, the best B's (10K+) count too
+
+
+def winners(db):
+    """Our top Facebook Reels, best first: graded A (or 30K+ views), topped up with 10K+ Reels when there are few A's.
+    Views come from the Scorecard; Reels not graded yet fall back to the latest Facebook numbers."""
+    now = datetime.now(timezone.utc)
+    since, ripe = (now - timedelta(days=WINNER_DAYS)).isoformat(), (now - timedelta(hours=WINNER_MIN_AGE_H)).isoformat()
+    base = {"kind": "eq.reel", "status": "eq.posted", "facebook_id": "not.is.null",
+            "posted_at": f"gte.{since}", "limit": 200}
+    cols = "id,lead_id,parent_id,case_name,title,description,script,source_type,source_credit,source_urls,posted_at"
+    try:
+        rows = db.select("content", {**base, "select": cols + ",score_grade,score_views"})
+    except RuntimeError:                         # Scorecard SQL not run: no grades, numbers only
+        rows = db.select("content", {**base, "select": cols})
+    rows = [r for r in rows if str(r.get("posted_at") or "") <= ripe]
+    if not rows:
+        return []
+    views = {}
+    for m in db.select("metrics", {"platform": "eq.facebook", "content_id": f"in.({','.join(r['id'] for r in rows)})",
+                                   "select": "content_id,views", "order": "captured_on.desc", "limit": 2000}):
+        if m.get("views") is not None:
+            views[m["content_id"]] = max(views.get(m["content_id"], 0), int(m["views"]))
+    for r in rows:
+        r["_views"] = max(int(r.get("score_views") or 0), views.get(r["id"], 0))
+    rows.sort(key=lambda r: -r["_views"])
+    top = [r for r in rows if r.get("score_grade") == "A" or r["_views"] >= WIN_VIEWS]
+    if len(top) < 3:
+        top += [r for r in rows if r not in top and r["_views"] >= TOP_UP_VIEWS][:3 - len(top)]
+    return top
+
+
+def _root(r):
+    sc = r.get("script") if isinstance(r.get("script"), dict) else {}
+    return sc.get("recut_of") or r["id"]
+
+
+def _footage_kept(db, lead_ids):
+    """Leads whose footage the publisher can still get: DVIDS (public domain, always re-downloadable) or a
+    delivered records package (kept on the footage-<lead> release, or the agency's link)."""
+    if not lead_ids:
+        return set()
+    ok = {l["id"] for l in db.select("leads", {"id": f"in.({','.join(lead_ids)})", "select": "id,source_type"})
+          if l.get("source_type") == "dvids_public_domain"}
+    ok |= {r["lead_id"] for r in db.select("records_requests", {"lead_id": f"in.({','.join(lead_ids)})",
+                                                               "status": "eq.fulfilled", "select": "lead_id"})}
+    return ok
+
+
+def recut_plan(lead, winner, facts, playbook, rejects=()):
+    """Words for one new standalone Reel from the same incident. The cutter (mac/picker.py) picks the window: the same
+    moment from another officer's camera when there is one, otherwise the next strongest moment, never the winner's clip."""
+    wsc = winner.get("script") if isinstance(winner.get("script"), dict) else {}
+    return llm.ask(
+        "You are the head of production for Ten-Four Tapes. Accuracy matters: only state facts present in the lead.\n"
+        + RULES + "\n" + FORMAT,
+        "One of our best Facebook Reels (" + f"{winner['_views']:,} views" + "):\n" + json.dumps({
+            "caption": (winner.get("description") or "").splitlines()[0][:200], "hook_text": wsc.get("hook_text"),
+            "moment": wsc.get("moment")}) +
+        "\n\nPlaybook:\n" + json.dumps(playbook[:12]) +
+        ("\n\nBobby REJECTED these recently — don't repeat what he didn't like:\n" + json.dumps(list(rejects)[:10])
+         if rejects else "") +
+        "\n\nLead:\n" + json.dumps({k: lead.get(k) for k in ("title", "agency_name", "state", "incident_date",
+                                                              "summary", "category", "source_type")}) +
+        "\n\n" + casefacts.narration_rules(facts) +
+        """
+
+Write ONE new standalone 25-30s Facebook Reel from this same incident's footage. It is a RE-CUT, not a repost:
+- The cutter will first look for the SAME moment from ANOTHER officer's camera (a different angle is new footage);
+  if there isn't one it takes the next strongest DIFFERENT moment of the incident. Describe both in "moment" and
+  "fallback_moment". It never reuses the winner's clip.
+- Keep what made the winner work (place + stakes caption, action in the first 2 seconds), but every word is new:
+  a different hook_text and a different caption from the winner's. Standalone: no "part", "again", "another angle",
+  "continued" or references to the earlier Reel.
+Return JSON {"moment":"","fallback_moment":"","hook_text":"first 2s text","caption":"PLACE. STAKES of THIS moment (under 10 words) + optional one concrete visible detail; no question",
+"hashtags":["#bodycam"],"intro_vo":"1-2 spoken sentences (max 24 words): place, who, why police were there","outcome_vo":"how it ended (max 25 words) or \\"\\""}""",
+        max_tokens=900, temperature=0.7)
+
+
+def recut(db, want, playbook, rejects):
+    """Plan up to `want` re-cut Reels from our top Facebook Reels. Returns (made, note)."""
+    if want <= 0:
+        return 0, ""
+    tops = winners(db)
+    if not tops:
+        return 0, "no winning Reels to re-cut yet"
+    ids = list({r["lead_id"] for r in tops if r.get("lead_id")})
+    if not ids:
+        return 0, "winning Reels have no lead on file"
+    kept = _footage_kept(db, ids)
+    leads = {l["id"]: l for l in db.select("leads", {"id": f"in.({','.join(ids)})", "select": "*"})}
+    made, skipped = 0, []
+    for w in tops:
+        if made >= min(want, RECUT_MAX_PER_RUN):
+            break
+        lead = leads.get(w.get("lead_id"))
+        if not lead or w["lead_id"] not in kept:
+            skipped.append(f"{w['case_name']}: footage not kept")
+            continue
+        root = _root(w)
+        done = db.select("content", {"script->>recut_of": f"eq.{root}", "select": "id", "limit": 10})
+        if len(done) >= RECUTS_PER_WINNER:
+            continue
+        # a re-cut waiting to post already covers this winner: one at a time per winner
+        if db.select("content", {"script->>recut_of": f"eq.{root}", "status": "in.(scripted,rendered)",
+                                 "select": "id", "limit": 1}):
+            continue
+        sib = db.select("content", {"kind": "eq.reel", "select": "script",
+                                    **({"parent_id": f"eq.{w['parent_id']}"} if w.get("parent_id")
+                                       else {"lead_id": f"eq.{w['lead_id']}"})})
+        n = 1 + max([int((s.get("script") or {}).get("reel_no") or 0) for s in sib if isinstance(s.get("script"), dict)] or [0])
+        secs = footage.seconds_from_notes(lead.get("notes"))
+        if secs is not None and footage.budget(secs)["reels"] < n:
+            skipped.append(f"{w['case_name']}: every {footage.REEL_EACH}s of its {secs}s is already a Reel")
+            continue
+        facts = casefacts.get(db, lead["id"])
+        try:
+            r = recut_plan(lead, w, facts, playbook, rejects)
+        except Exception as e:
+            db.alert("maker", f"Re-cut plan failed for {w['case_name']}: {str(e)[:150]}", "info")
+            continue
+        old_cap = ((w.get("description") or "").splitlines() or [""])[0].strip().lower()
+        if not _standalone(r) or (r.get("caption") or "").strip().lower() == old_cap:
+            skipped.append(f"{w['case_name']}: plan repeated the winner")
+            continue
+        wsc = w.get("script") if isinstance(w.get("script"), dict) else {}
+        r.update(reel_no=n, recut_of=root, recut={"of": root, "winner": w["id"], "winner_views": w["_views"],
+                                                  "winner_moment": wsc.get("moment"), "winner_cut": wsc.get("cut")})
+        credit = w.get("source_credit") or f"Footage: {lead.get('agency_name')}"
+        db.insert("content", {"lead_id": lead["id"], "kind": "reel", "parent_id": w.get("parent_id"), "part": None,
+                              "case_name": w["case_name"], "title": w["case_name"],
+                              "description": (r.get("caption") or w["case_name"]) +
+                              f"\nFull episode on YouTube: Ten-Four Tapes\n{credit}" +
+                              ("\n" + " ".join(r["hashtags"][:4]) if r.get("hashtags") else ""),
+                              "script": r, "source_type": w.get("source_type") or lead.get("source_type"),
+                              "source_credit": credit, "source_urls": w.get("source_urls") or [lead.get("source_url")]})
+        made += 1
+    return made, ("; ".join(skipped[:4]) if skipped and not made else "")
+
+
 def _sources(ep, facts):
     if not facts or not facts.get("sources") or "Sources:" in (ep.get("description") or ""):
         return ""
     return "\n\nSources:\n" + "\n".join(s["url"] for s in facts["sources"][:5])
 
 def main(db):
+    st = backlog.status(db)
+    low = st["reel"]["days"] is not None and st["reel"]["days"] < st["target_days"]
     # Mix of sources: local police/sheriff/prosecutor footage first; federal DVIDS (mostly U.S. Customs and
     # Border Protection) fills in (see below) so the channel isn't just Border Patrol videos.
-    pool = db.select("leads", {"status": "eq.obtained", "order": "action_score.desc", "limit": 20})
+    pool = db.select("leads", {"status": "eq.obtained", "order": "action_score.desc", "limit": 60})
     # cases already made as episodes before HQ existed — don't remake them
     made = ("yuma, az january 22, 2025", "brownsville, tx february 12, 2025", "brownsville, texas may 13, 2025",
             "bisbee, arizona june 19, 2024", "quemado, texas may 16, 2024", "laredo, texas sept 23, 2024")
@@ -208,16 +359,19 @@ def main(db):
     # Case Desk must have researched who/why/outcome first; cases without a case file wait for its next run
     files = {l["id"]: casefacts.get(db, l["id"]) for l in pool}
     # within each category, cases where nobody died go first: they pass review and yield more Reels
+    # and the most on-screen danger first (agents/danger.py), then action
     pool.sort(key=lambda l: (rank.get(l.get("category") or "other", 2), is_fatal(files.get(l["id"])),
-                             -(l.get("action_score") or 0)))
+                             danger.key(l)))
     local = [l for l in pool if l.get("source_type") != "dvids_public_domain"]
     federal = [l for l in pool if l.get("source_type") == "dvids_public_domain"]
     local = [l for l in local if files.get(l["id"])]
     federal = [l for l in federal if files.get(l["id"])]
     # 3 Shorts/day = 1 case/day. Local cases first; federal DVIDS (public domain, no request needed) is capped at 1
     # per run so the channel isn't all Border Patrol — except when no local case is ready, then 2 so it never runs dry.
-    leads = local[:3]
-    leads += federal[:(1 if local else 2)][:3 - len(leads)]
+    # Below the 2-week backlog: up to 5 cases a run instead of 3 (federal still capped so it isn't all Border Patrol)
+    n_cases = 5 if low else 3
+    leads = local[:n_cases]
+    leads += federal[:(2 if low else 1) if local else n_cases - 1][:n_cases - len(leads)]
     pb = db.select("playbook", {"active": "is.true", "order": "created_at.desc", "limit": 40})
     # scorecard lessons always make the cut (they're about OUR posts); then the newest of the rest
     playbook = [p["insight"] for p in pb if p.get("source") == "scorecard"][:5] + \
@@ -293,4 +447,25 @@ def main(db):
         db.insert("content", rows)
         db.update("leads", {"id": f"eq.{lead['id']}"}, {"status": "used"})
         made += 1
-    return f"planned {made} cases ({made} episodes + shorts + {n_reel} standalone reels)"
+    # Re-cut mode: still short of the 2-week Reel backlog after planning every case we have footage for ->
+    # new Reels from the footage behind our best Facebook Reels (settings.recut_mode: "auto" | "off")
+    n_re, re_note = 0, ""
+    st = backlog.status(db)
+    if str(db.setting("recut_mode", "auto")).lower() != "off" and st["reel"]["short_by"] > 0:
+        try:
+            n_re, re_note = recut(db, st["reel"]["short_by"], playbook, rejects)
+        except Exception as e:
+            re_note = f"re-cut error: {str(e)[:150]}"
+            db.alert("maker", f"Re-cut mode failed: {str(e)[:200]}", "warn")
+        if n_re:
+            st = backlog.status(db)
+    backlog.save(db, st)
+    if st["reel"]["days"] is not None and st["reel"]["days"] < st["target_days"]:
+        db.alert_once("maker", f"Backlog low — {backlog.line(st)}. Maker planned everything it has footage for"
+                      + (f" and {n_re} re-cuts" if n_re else "") + ". More footage is the fix: Outreach requests the most "
+                      "dangerous leads first.", "info", key="Backlog low")
+    else:
+        db.resolve_alerts("maker", "Backlog low")
+    return (f"planned {made} cases ({made} episodes + shorts + {n_reel} standalone reels)"
+            + (f", {n_re} re-cut reels from top Facebook Reels" if n_re else "")
+            + (f" ({re_note})" if re_note else "") + f"; {backlog.line(st)}")

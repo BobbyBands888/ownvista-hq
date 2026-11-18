@@ -16,7 +16,7 @@ AGENTS["overseer"] = overseer.make_main(RETRY)
 
 # How often each agent should run. GitHub's hourly schedule skips runs on quiet repos, so instead of
 # "run at exactly 14:00" each tick runs whatever is overdue based on the last run in agent_runs.
-EVERY_H = {"research": 24, "analytics": 24, "scout": 3, "tracker": 2, "casefacts": 6, "maker": 12, "compliance": 1}
+EVERY_H = {"research": 24, "analytics": 24, "scout": 3, "tracker": 2, "casefacts": 6, "maker": 6, "compliance": 1}
 
 def _last_runs():
     try:

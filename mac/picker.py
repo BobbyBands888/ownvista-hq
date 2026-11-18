@@ -485,9 +485,21 @@ def _taken(files, plan, cache):
     """Windows already used by this case's OTHER Reels: from the plan (runner passes rendered siblings' cuts)
     and from this folder's pick cache. Returned as (file_index, start, end) padded by REEL_PAD."""
     idx = {f["path"]: i for i, f in enumerate(files)}
+    # cuts made on another machine (cloud runner vs Mac) carry that machine's folder: match on the file name too
+    by_name = {}
+    for i, f in enumerate(files):
+        by_name.setdefault(Path(str(f["path"])).name, i)
     out = []
-    for c in plan.get("sibling_cuts") or []:
+    sc = plan.get("script") if isinstance(plan.get("script"), dict) else {}
+    cuts = list(plan.get("sibling_cuts") or [])
+    if (sc.get("recut") or {}).get("winner_cut"):       # a re-cut never reuses the winning Reel's seconds
+        cuts.append(sc["recut"]["winner_cut"])
+    for c in cuts:
+        if not isinstance(c, dict) or c.get("start") is None:
+            continue
         i = idx.get(c.get("path"))
+        if i is None:
+            i = by_name.get(Path(str(c.get("path") or "")).name)
         if i is not None:
             out.append((i, float(c["start"]) - REEL_PAD, float(c["end"]) + REEL_PAD))
     parent = plan.get("parent_id")
@@ -512,11 +524,18 @@ def pick_reel(files, plan, cache):
     taken = _taken(files, plan, cache)
     # a case story's one Reel is an interview teaser: a calm room is fine, a hooking line in the first 2s is the action
     talk = bool(TALK_RX.search(sc.get("moment") or ""))
+    rc = sc.get("recut") if isinstance(sc.get("recut"), dict) else None
+    recut_note = ""
+    if rc:
+        recut_note = (f"This is a RE-CUT of one of our best Reels (it showed: {rc.get('winner_moment') or 'see the taken window'}). "
+                      "First choice: the SAME moment from ANOTHER file, if another file is a different officer's camera "
+                      "covering it (a different angle is new footage). Otherwise the next strongest DIFFERENT moment: "
+                      f"{sc.get('fallback_moment') or 'the most visible action left'}. Never overlap the taken windows.\n")
     pick = None
     try:
         j = ask_llm("You cut 25-30 second Facebook Reels from police bodycam footage. " + RULES,
                     describe(files) + f"\n\nThe Reel is for this moment: {sc.get('moment') or plan.get('title')}\n"
-                    f"Hook text: {sc.get('hook_text', '')}\n" + redo(plan) +
+                    f"Hook text: {sc.get('hook_text', '')}\n" + recut_note + redo(plan) +
                     (f"Windows other Reels of this case already use (do NOT overlap them, pick a different moment): "
                      f"{[(i, round(a), round(b)) for i, a, b in taken]}\n" if taken else "") +
                     ("Pick ONE continuous 25-30s window of the police interview that opens on a line that hooks "
