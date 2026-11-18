@@ -6,22 +6,64 @@ from urllib.parse import urljoin, urlparse
 
 from . import common as c
 
-PER_RUN = 15
+PER_RUN = 25
 DIRECTORIES = re.compile(r"yelp|facebook|instagram|linkedin|yellowpages|bbb\.org|mapquest|manta|bizapedia|"
                          r"opencorporates|zoominfo|indeed|glassdoor|cars\.com|cargurus|dealerrater|edmunds|"
                          r"healthgrades|zocdoc|vitals|webmd|google\.|bing\.|apple\.com|tripadvisor|patch\.com|"
                          r"bostonglobe|wikipedia|loopnet|crexi|costar|wickedlocal|bizjournals", re.I)
 
 
+STOP_WORDS = {"the", "of", "and", "at", "inc", "llc", "co", "corp", "company", "pc", "pllc", "ltd", "group", "center",
+              "centre", "dmd", "dds", "md", "&", "-", "a", "in", "for", "ma", "massachusetts"}
+
+
+def _words(name):
+    return [w for w in re.findall(r"[a-z0-9]+", (name or "").lower().replace("&", " and ")) if w not in STOP_WORDS]
+
+
+def guess_site(p):
+    """Free first try (no search engine needed): the business's likely own domain, e.g. "Lexington Toyota" ->
+    lexingtontoyota.com. Only accepted when the page itself shows the business's name, so a guess is never trusted
+    blindly. Email addresses are still only taken when printed on that site."""
+    words = _words(p.get("name"))
+    if not words:
+        return None
+    town = re.sub(r"[^a-z]", "", (p.get("town") or "").lower())
+    slugs = ["".join(words), "-".join(words)]
+    if len(words) > 2:
+        slugs.append("".join(words[:2]))
+    if town and town not in "".join(words):
+        slugs.append("".join(words) + town)
+    tried = set()
+    for slug in slugs:
+        for tld in (".com", ".net"):
+            dom = slug + tld
+            if dom in tried or len(slug) < 4:
+                continue
+            tried.add(dom)
+            raw, final = c.fetch("https://" + dom, limit=200000, timeout=8)
+            if not raw:
+                continue
+            txt = c.page_text(raw, 20000).lower()
+            hits = sum(1 for w in words if w in txt)
+            if hits >= max(1, (len(words) + 1) // 2) and (not town or town in txt.replace(" ", "") or hits == len(words)):
+                return final or "https://" + dom
+    return None
+
+
 def find_site(p, db=None):
+    """-> (site or None, searched): searched is False when no search engine could be asked this time."""
     if p.get("website"):
-        return p["website"]
+        return p["website"], True
+    g = guess_site(p)
+    if g:
+        return g, True
     q = f'{p["name"]} {p.get("town") or ""} MA'
     for u in c.ddg(q, n=8, db=db):
         if DIRECTORIES.search(u):
             continue
-        return u
-    return None
+        return u, True
+    return None, c.SEARCH_STATE["available"]
 
 
 def find_email(site):
@@ -47,17 +89,21 @@ def find_email(site):
 
 
 def main(db):
-    if not db.setting("gs_enrich_v2"):
-        # one time: prospects parked as "no email" while web search was blocked never got a real look
-        for p in db.select("gs_prospects", {"status": "eq.no_email", "website": "is.null", "select": "id", "limit": 1000}):
+    if not db.setting("gs_enrich_v3"):
+        # one time: prospects parked as "no email" because the daily search allowance ran out (not a real miss)
+        for p in db.select("gs_prospects", {"status": "eq.no_email", "select": "id", "limit": 1000}):
             db.update("gs_prospects", {"id": f"eq.{p['id']}"}, {"status": "new", "enrich_tries": 0})
-        db.insert("settings", {"key": "gs_enrich_v2", "value": True}, upsert=True, on_conflict="key")
+        db.insert("settings", {"key": "gs_enrich_v3", "value": True}, upsert=True, on_conflict="key")
     rows = db.select("gs_prospects", {"status": "eq.new", "email": "is.null", "enrich_tries": "lt.2",
-                                      "order": "fit_score.desc,created_at.asc", "limit": PER_RUN})
+                                      "order": "enrich_tries.asc,fit_score.desc,created_at.asc", "limit": PER_RUN})
     found = 0
-    why = {"no website found": 0, "site wouldn't load": 0, "no email printed on site": 0}
+    why = {"no website found": 0, "site wouldn't load": 0, "no email printed on site": 0, "search used up today": 0}
     for p in rows:
-        site = find_site(p, db)
+        site, searched = find_site(p, db)
+        if not site and not searched:
+            why["search used up today"] += 1       # not the business's fault: never park it for this
+            db.update("gs_prospects", {"id": f"eq.{p['id']}"}, {"enrich_tries": 1})   # just lets fresh ones go first
+            continue
         email = src = None
         if site:
             raw_ok = True

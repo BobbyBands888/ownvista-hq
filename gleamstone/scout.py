@@ -174,16 +174,31 @@ def map_lane(db):
     h, rad = c.home(db), c.radius(db)
     import time
     deadline = time.time() + 9 * 60            # never hold up the hourly run for more than ~9 minutes
-    elements, fails, done = [], [], 0
-    for f, _, _ in MAP_KINDS:
-        for b in _boxes(h, rad):
-            q = f'[out:json][timeout:50];nwr{f}["name"]({b[0]:.4f},{b[1]:.4f},{b[2]:.4f},{b[3]:.4f});out center tags;'
-            try:
-                elements += _overpass(q, deadline)
-                done += 1
-            except Exception as e:
-                fails.append(str(e))
-    if not elements and fails:
+    # pieces finished this sweep are remembered, so each run only asks for the ones still missing
+    sweep = db.setting("gs_map_sweep", {}) or {}
+    key = f"{h[0]:.3f},{h[1]:.3f},{rad}"
+    if sweep.get("key") != key or sweep.get("complete"):
+        sweep = {"key": key, "done": [], "complete": False, "started": c.now().isoformat()}
+    done_set = set(sweep.get("done") or [])
+    elements, fails = [], []
+    pieces = [(i, f, b) for i, (f, b) in enumerate((f, b) for f, _, _ in MAP_KINDS for b in _boxes(h, rad))]
+    for i, f, b in pieces:
+        if i in done_set:
+            continue
+        if time.time() > deadline:
+            break
+        q = f'[out:json][timeout:50];nwr{f}["name"]({b[0]:.4f},{b[1]:.4f},{b[2]:.4f},{b[3]:.4f});out center tags;'
+        try:
+            elements += _overpass(q, deadline)
+            done_set.add(i)
+        except Exception as e:
+            fails.append(str(e))
+        time.sleep(4)                           # public map servers turn away rapid-fire requests
+    sweep["done"] = sorted(done_set)
+    sweep["complete"] = len(done_set) >= len(pieces)
+    db.insert("settings", {"key": "gs_map_sweep", "value": sweep, "updated_at": c.now()}, upsert=True, on_conflict="key")
+    done = len(done_set)
+    if not elements and fails and not done:
         raise RuntimeError(fails[-1])
     data = {"elements": elements}
     rows = []
@@ -207,7 +222,7 @@ def map_lane(db):
                      "source": "map", "source_url": f"https://www.openstreetmap.org/{el['type']}/{el['id']}",
                      "fit_score": fit + (1 if email else 0)})
     rows.sort(key=lambda r: (-r["fit_score"], r["distance_mi"]))
-    total = len(MAP_KINDS) * 4
+    total = len(pieces)
     return _add(db, rows, limit=int(db.setting("gs_map_batch", 150) or 150)), len(rows), f"{done}/{total}"
 
 
