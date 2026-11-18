@@ -5,6 +5,7 @@ import json
 import re
 from .lib import llm
 from .lib.runner import RULES
+from .lib.sources import is_military_op
 from . import casefacts
 from . import packaging
 from . import footage
@@ -193,6 +194,11 @@ def main(db):
     made = ("yuma, az january 22, 2025", "brownsville, tx february 12, 2025", "brownsville, texas may 13, 2025",
             "bisbee, arizona june 19, 2024", "quemado, texas may 16, 2024", "laredo, texas sept 23, 2024")
     pool = [l for l in pool if not any(m in (l.get("title") or "").lower() for m in made)]
+    # military operations / boat strikes from DVIDS are off-format: retire them instead of planning cases
+    for l in [l for l in pool if is_military_op(l)]:
+        db.update("leads", {"id": f"eq.{l['id']}"}, {"status": "skipped",
+                                                     "notes": ((l.get("notes") or "") + "\nmaker: military operation, not police footage").strip()})
+    pool = [l for l in pool if not is_military_op(l)]
     # enforcement action first (it's what the page's hits are), then case stories, then rescues
     rank = {"enforcement": 0, "case_story": 1, "other": 2, "rescue": 3}
     # Case Desk must have researched who/why/outcome first; cases without a case file wait for its next run
