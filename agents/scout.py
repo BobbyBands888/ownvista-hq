@@ -381,7 +381,8 @@ def score(db, leads):
             '"category":"enforcement|case_story|rescue|other","involves_minor":true|false|null,'
             '"moment":"the one on-camera enforcement moment, or empty","place":"city/county, state, or empty",'
             '"stakes":"what is at risk, or empty","danger":0-10,"keep":true|false,"why":"short"}]}')
-        by_i = {x.get("i"): x for x in res.get("leads", [])}
+        leads = res.get("leads", []) if isinstance(res, dict) else (res if isinstance(res, list) else [])
+        by_i = {x.get("i"): x for x in leads if isinstance(x, dict)}
         for n, l in enumerate(batch):
             s = by_i.get(n, {})
             row = dict(l)
@@ -536,6 +537,9 @@ def main(db):
     if rows:
         for r in rows:                           # bulk insert: every row needs the same keys
             r.setdefault("danger_score", None)
+            d = r.get("incident_date")           # the model sometimes writes "null" or "2024" here
+            if d is not None and not (isinstance(d, str) and re.fullmatch(r"\d{4}-\d{2}-\d{2}", d.strip())):
+                r["incident_date"] = None
         try:
             db.insert("leads", rows, upsert=True, on_conflict="source_url")
         except RuntimeError as e:
