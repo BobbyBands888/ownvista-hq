@@ -73,8 +73,11 @@ def _problem(subj, body, p):
         return "named the business as an example client"
     if re.search(r"\bBobby (personally )?(answers|replies|responds)", body):
         return "third person"
-    if "?" not in body:
+    paras = [x for x in re.split(r"\n\s*\n", body.strip()) if x.strip()]
+    if not paras or "?" not in paras[-1]:
         return "no question at the end"
+    if re.search(r"\bwhy now\b", body, re.I):
+        return "wrote the prompt's 'why now' label into the email"
     if len(body.split()) > 140:
         return "too long"
     return None
