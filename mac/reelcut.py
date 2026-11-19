@@ -521,26 +521,28 @@ def build(job, out):
     F, R = _font("black"), _font("bold")
     segs = pk["segments"]
     total = pk["total"]
-    used = sorted({c["file"] for c in segs})
-    idx = {fi: n for n, fi in enumerate(used)}
+    # one seeked input per segment: a single decoded input feeding several trims makes ffmpeg queue every frame
+    # between segments (OOM-killed at 2560x1440 on an 8 GB box, Nov 18)
     args = []
-    for fi in used:
-        args += ["-i", str(job.folder / files[fi]["path"])]
+    for c in segs:
+        args += ["-ss", f"{c['start']:.3f}", "-t", f"{c['end'] - c['start']:.3f}",
+                 "-i", str(job.folder / files[c["file"]]["path"])]
+    used = segs
     fc = []
     for k, c in enumerate(segs):
         f = files[c["file"]]
-        n = idx[c["file"]]
+        n = k
         vert = f["h"] > f["w"]
         # landscape: a tall centre crop fills more of the phone; vertical: as is
         fg = "scale=1080:-2" if vert else "crop='min(iw,ih*0.83)':ih,scale=1080:-2"
-        fc.append(f"[{n}:v]trim={c['start']}:{c['end']},setpts=PTS-STARTPTS,fps=30,split[s{k}a][s{k}b]")
+        fc.append(f"[{n}:v]setpts=PTS-STARTPTS,fps=30,split[s{k}a][s{k}b]")
         fc.append(f"[s{k}a]scale=270:480:force_original_aspect_ratio=increase,crop=270:480,boxblur=8:2,"
                   f"eq=brightness=-0.25,scale=1080:1920,setsar=1[bg{k}]")
         fc.append(f"[s{k}b]{fg},eq=contrast=1.08,scale='min(1080,iw)':'min(1500,ih)':force_original_aspect_ratio=decrease,"
                   f"setsar=1[fg{k}]")
         fc.append(f"[bg{k}][fg{k}]overlay=(W-w)/2:(H-h)/2-60,format=yuv420p,setsar=1[v{k}]")
         if f.get("audio"):
-            fc.append(f"[{n}:a]atrim={c['start']}:{c['end']},asetpts=PTS-STARTPTS,aresample=48000,"
+            fc.append(f"[{n}:a]asetpts=PTS-STARTPTS,aresample=48000,"
                       f"aformat=sample_fmts=fltp:channel_layouts=stereo[a{k}]")
         else:
             fc.append(f"anullsrc=r=48000:cl=stereo,atrim=0:{c['end'] - c['start']}[a{k}]")
