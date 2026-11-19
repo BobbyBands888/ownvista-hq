@@ -6,3 +6,4 @@ soundfile>=0.12
 onnxruntime>=1.20
 kokoro-onnx>=0.4.9
 imageio-ffmpeg>=0.5
+yt-dlp>=2025.1

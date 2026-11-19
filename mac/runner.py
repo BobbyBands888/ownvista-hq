@@ -142,6 +142,30 @@ def _fetch(url, dest_dir, name=None, depth=0):
     title = (re.search(r"<title>([^<]*)", page) or [None, ""])[1].strip()
     raise RuntimeError(f"share page didn't give a file (page title: '{title[:80]}', {len(cands)} candidate links)")
 
+AGENCY_POST_RX = re.compile(r"https?://(www\.|m\.)?(facebook\.com/(reel/|watch|[^/]+/videos/)|fb\.watch/|"
+                            r"youtube\.com/(watch|shorts/)|youtu\.be/)", re.I)
+
+def is_agency_post(url):
+    return bool(url and AGENCY_POST_RX.match(url))
+
+def _ytdlp(url, dest_dir):
+    """Download a public agency post (Facebook reel/video, YouTube) at <=1080p. Returns the uploader's name."""
+    import yt_dlp
+    opts = {"outtmpl": str(Path(dest_dir) / "post_%(id)s.%(ext)s"), "quiet": True, "noprogress": True,
+            "format": "bv*[height<=1080]+ba/b[height<=1080]/b", "merge_output_format": "mp4",
+            "ffmpeg_location": _ffmpeg_exe()}
+    with yt_dlp.YoutubeDL(opts) as y:
+        info = y.extract_info(url, download=True)
+    print(f"pulled agency post {info.get('id')} by {info.get('uploader')} ({info.get('duration')}s)", flush=True)
+    return info.get("uploader") or ""
+
+def _ffmpeg_exe():
+    try:
+        import imageio_ffmpeg
+        return imageio_ffmpeg.get_ffmpeg_exe()
+    except Exception:
+        return None
+
 def ensure_footage(db, it):
     """Make sure the footage for this item's lead is on disk (cloud runs start empty unless cached)."""
     dest = FOOTAGE / str(it["lead_id"])
@@ -158,6 +182,27 @@ def ensure_footage(db, it):
             files.sort(key=lambda f: (f.get("height") or 0, f.get("bitrate") or 0))
             if files:
                 _fetch(files[-1]["src"], dest, f"dvids_{m[1]}.mp4")
+    elif is_agency_post(lead.get("source_url")) and not db.select(
+            "records_requests", {"lead_id": f"eq.{it['lead_id']}", "status": "eq.fulfilled"}):
+        # the agency's own public Facebook / YouTube post: yt-dlp pulls it with no login
+        if CLOUD and restore_mirror(it["lead_id"], dest):
+            return True
+        try:
+            who = _ytdlp(lead["source_url"], dest)
+            agency = (lead.get("agency_name") or "").lower()
+            if agency and who and not set(re.findall(r"[a-z]{4,}", who.lower())) & set(re.findall(r"[a-z]{4,}", agency)):
+                db.alert_once("publisher", f"Footage for {it.get('case_name')} was posted by '{who}', not "
+                              f"'{lead.get('agency_name')}'. Check it's the agency's own post before approving",
+                              "warn", key=f"Agency post check for {it.get('case_name')}")
+        except Exception as e:
+            db.alert_once("publisher", f"Couldn't pull the agency post for {it.get('case_name')} "
+                          f"({str(e)[:140]}). Open {lead['source_url'][:200]} and check it's still up", "warn",
+                          key=f"Agency post pull for {it.get('case_name')}")
+        if CLOUD and any(p for p in dest.iterdir() if not p.name.startswith(".")):
+            try:
+                save_mirror(it["lead_id"], dest)
+            except Exception:
+                pass
     else:
         from urllib.parse import urljoin, urlparse
         if CLOUD and restore_mirror(it["lead_id"], dest):
