@@ -16,7 +16,10 @@ Write a first cold email from Bobby, owner of Gleamstone Commercial Cleaning, to
   flat monthly price, month-to-month, Bobby answers emails directly).
 - Offer a free walkthrough or a quote from rough square footage and schedule.
 - End with ONE simple question.
-- Greeting: "Hi {contact first name}," if a contact name is given, otherwise "Hi there,".
+- Greeting: "Hi {contact first name}," if a contact name is given, otherwise "Hi there,". Never write a placeholder
+  like [contact_name] or {name} anywhere.
+- Never name this business or any other business as an example, reference or client ("spaces like X"). Gleamstone
+  has no clients to name yet. Write in first person as Bobby ("I answer every email myself"), not "Bobby answers".
 - Do NOT write a sign-off or signature (it's added automatically).
 - Subject: short, lowercase-ish, specific to them, no clickbait (e.g. "cleaning for the new Woburn office").
 Return JSON {"subject":"...","body":"..."}"""
@@ -43,13 +46,53 @@ def _clean(body):
     return body.strip()
 
 
+PLACEHOLDER = re.compile(r"[\[{<]\s*[A-Za-z _]+\s*[\]}>]|\bcontact[_ ]name\b|\bfirst[_ ]name\b", re.I)
+
+
+def _greeting(p):
+    first = re.sub(r"[^A-Za-z'-]", "", (p.get("contact_name") or "").strip().split(" ")[0]) if p.get("contact_name") else ""
+    return f"Hi {first}," if first else "Hi there,"
+
+
+def _fix_greeting(body, p):
+    """The greeting is set in code, never left to the model (it once wrote 'Hi [contact_name],')."""
+    lines = body.split("\n")
+    if lines and re.match(r"\s*(hi|hello|hey|dear|good (morning|afternoon))\b", lines[0], re.I) and len(lines[0]) < 60:
+        lines = lines[1:]
+    return _greeting(p) + "\n\n" + "\n".join(lines).lstrip()
+
+
+def _problem(subj, body, p):
+    text = body + " " + subj
+    if BANNED.search(text):
+        return "banned phrase"
+    if PLACEHOLDER.search(text):
+        return "placeholder left in"
+    name = (p.get("name") or "").strip()
+    if name and re.search(r"\b(like|such as|including|for example|e\.g\.?)\s+" + re.escape(name), text, re.I):
+        return "named the business as an example client"
+    if re.search(r"\bBobby (personally )?(answers|replies|responds)", body):
+        return "third person"
+    if "?" not in body:
+        return "no question at the end"
+    if len(body.split()) > 140:
+        return "too long"
+    return None
+
+
 def draft_intro(db, p):
     facts = {k: p.get(k) for k in ("name", "town", "category", "address", "signal", "sqft", "contact_name", "website")}
-    for attempt in range(2):
-        res = llm.ask(INTRO, str(facts) + ("\nYour last draft broke a rule. Follow every rule." if attempt else ""),
+    why = None
+    for attempt in range(3):
+        res = llm.ask(INTRO, str(facts) + (f"\nYour last draft broke a rule ({why}). Follow every rule." if why else ""),
                       max_tokens=900, temperature=0.5)
         subj, body = (res or {}).get("subject", "").strip(), _clean((res or {}).get("body", ""))
-        if subj and body and not BANNED.search(body + " " + subj) and len(body.split()) <= 140:
+        if not (subj and body):
+            why = "empty"
+            continue
+        body = _fix_greeting(body, p)
+        why = _problem(subj, body, p)
+        if not why:
             return subj[:90], body
     raise RuntimeError(f"intro for {p['name']} kept breaking the rules")
 
