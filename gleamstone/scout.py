@@ -123,7 +123,10 @@ def lease_news(db):
         except Exception as e:
             db.alert("gs_scout", f"news read failed: {str(e)[:160]}", "info")
             continue
-        for b in (res or {}).get("businesses", []) or []:
+        res = res if isinstance(res, dict) else {"businesses": res if isinstance(res, list) else []}
+        for b in res.get("businesses", []) or []:
+            if not isinstance(b, dict):
+                continue
             town = c.match_town(b.get("town") or "") or c.match_town(b.get("address") or "")
             if not town or not b.get("name") or bad_name(b["name"]):
                 continue
