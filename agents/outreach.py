@@ -323,8 +323,24 @@ def main(db):
     leads = danger.rank(db.select("leads", {"status": "eq.new",
                                             "source_type": "in.(agency_release,news_tip,prosecutor_release)",
                                             "order": "action_score.desc,created_at.desc", "limit": 150}))[:40]
+    # Bobby, Nov 19: the agency's own post makes the first Reel, but we still ask for every officer's unedited
+    # camera (the other angles). These leads keep their status so the Reel work isn't held up.
+    from . import agencypost
+    posted = [l for l in db.select("leads", {"status": "in.(obtained,used)", "source_type": "eq.agency_release",
+                                             "order": "action_score.desc,created_at.desc", "limit": 150})
+              if agencypost.url_of(l) and "raw request" not in (l.get("notes") or "")]
+    if posted:
+        asked = {x["lead_id"] for x in db.select("records_requests", {"select": "lead_id", "lead_id": "in.(" +
+                 ",".join(l["id"] for l in posted) + ")"}) if x.get("lead_id")}
+        posted = [l for l in posted if l["id"] not in asked]
+    leads = leads[:30] + danger.rank(posted)[:10] + leads[30:]
+
+    def raw_note(lead, text):                   # a posted lead is never skipped: its Reel is already in the works
+        db.update("leads", {"id": f"eq.{lead['id']}"},
+                  {"notes": ((lead.get("notes") or "") + f"\nraw request {_now():%Y-%m-%d}: {text}").strip()})
     sent, no_contact, held, rerouted = 0, 0, 0, 0
     for lead in leads:
+        has_post = lead["status"] in ("obtained", "used")
         if sent >= budget:
             break
         a = agencies.get((lead.get("agency_name") or "").lower())
@@ -340,7 +356,10 @@ def main(db):
                 ids = ",".join(x["lead_id"] for x in dup)
                 same = db.select("leads", {"id": f"in.({ids})", "incident_date": f"eq.{lead['incident_date']}", "select": "id"})
                 if same:
-                    db.update("leads", {"id": f"eq.{lead['id']}"}, {"status": "skipped", "notes": "duplicate incident"})
+                    if has_post:
+                        raw_note(lead, "already asked this agency about this incident")
+                    else:
+                        db.update("leads", {"id": f"eq.{lead['id']}"}, {"status": "skipped", "notes": "duplicate incident"})
                     continue
         # never send blind: confirm the agency, state and identifiers first (Bundy went to the wrong state's sheriff)
         try:
@@ -349,6 +368,10 @@ def main(db):
             db.alert("outreach", f"Couldn't verify '{lead['title'][:60]}' before sending: {str(e)[:150]}", "info")
             continue
         ok, why = ready_to_send(chk, a, lead)
+        if not ok and has_post:
+            held += 1
+            raw_note(lead, f"held, not sent — {why}")
+            continue
         if not ok:
             held += 1
             note = f"outreach check {_now():%Y-%m-%d}: not sent — {why}"
@@ -373,7 +396,10 @@ def main(db):
                                        "subject": subject, "body": body, "sent_at": _now(),
                                        "gmail_thread_id": res.get("threadId"), "status": "sent",
                                        "last_activity_at": _now()})
-        db.update("leads", {"id": f"eq.{lead['id']}"}, {"status": "requested"})
+        if has_post:
+            raw_note(lead, "sent (every officer's unedited camera)")
+        else:
+            db.update("leads", {"id": f"eq.{lead['id']}"}, {"status": "requested"})
         db.update("agencies", {"id": f"eq.{a['id']}"}, {"last_request_at": _now()})
         per_agency[a["id"]] = per_agency.get(a["id"], 0) + 1
         sent += 1

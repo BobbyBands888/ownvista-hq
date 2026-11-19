@@ -823,6 +823,13 @@ def pick_episode(files, plan, cache):
     for n, c in enumerate(result["clips"]):
         if not c.get("label"):
             c["label"] = labels[c["file"]] if c["file"] < len(labels) else f"Body Cam Officer {c['file'] + 1}"
+    # Bobby, Nov 19: each officer's camera is BODY CAM 1 / BODY CAM 2 / DASH CAM, numbered the same all episode.
+    # The Maker's per-camera label is the camera's name; 911 / interview labels stay as they are.
+    import camlabel
+    for c in result["clips"]:
+        if not camlabel.KEEP_RX.search(c.get("label") or ""):
+            c.setdefault("cam", c.get("label"))
+    camlabel.assign(files, result["clips"], field="label")
     cache[key] = result
     return result
 

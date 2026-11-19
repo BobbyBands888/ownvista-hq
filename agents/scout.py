@@ -19,6 +19,7 @@ from .lib import config, llm
 from . import casescout
 from . import footage
 from . import danger
+from . import agencypost
 from .lib.google import yt_get
 from .lib.runner import RULES
 from .lib.sources import is_military_op, is_people_smuggling
@@ -49,7 +50,7 @@ NEVER_HOST_RX = re.compile(r"(^|\.)(youtube\.com|youtu\.be|facebook\.com|fb\.wat
 MEDIA_RX = re.compile(r"\.(mp4|mov|m4v|avi|zip|wmv|mkv|mts|mpg)(\?|$)", re.I)
 UA = {"User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 14_0) AppleWebKit/537.36 Chrome/130 Safari/537.36"}
 WATCH_EVERY_H = 20          # agency watchlist runs about once a day
-WATCH_LOOKBACK_DAYS = 7
+WATCH_LOOKBACK_DAYS = 365    # Bobby, Nov 19: older cases are fine (15 newest uploads per channel)
 # only uploads that look like incident footage go to the scorer (agency channels also post recruiting, PSAs, pressers)
 FOOTAGE_RX = re.compile(r"body ?cam|body[- ]worn|\bbwc\b|dash ?cam|critical incident|officer[- ]involved|\bois\b|"
                         r"pursuit|chase|video release|released video|footage|surveillance video|911 call|arrest|shots fired|"
@@ -336,14 +337,74 @@ def add_lengths(leads):
             if secs and v.get("id") in ids:
                 ids[v["id"]]["_len"] = secs
 
-def from_news():
+BACK_EVERY_H = 20            # back-catalog news pass (older cases) about once a day
+BACK_QUERIES = ["bodycam video released", "sheriff releases body camera video", "dash cam video released chase",
+                "police release body camera video arrest", "deputies body camera footage shows"]
+FIND_PER_RUN = 10            # agency-post lookups per run (one article read + a few metadata calls each)
+
+
+def _gnews(q, when):
+    feed = feedparser.parse(f"https://news.google.com/rss/search?q={quote_plus(q)}+when:{when}&hl=en-US&gl=US&ceid=US:en")
+    return [{"title": e.title[:300], "summary": re.sub(r"<[^>]+>", " ", e.get("summary", ""))[:600],
+             "source_url": e.link, "source_type": "news_tip"} for e in feed.entries[:20]]
+
+
+def from_bing():
+    """Bing News RSS gives the outlet's real article link (Google News links can't be opened by code), which is
+    what the agency-post finder reads."""
+    from urllib.parse import parse_qs
     leads = []
     for q in NEWS_QUERIES:
-        feed = feedparser.parse(f"https://news.google.com/rss/search?q={quote_plus(q)}+when:7d&hl=en-US&gl=US&ceid=US:en")
-        for e in feed.entries[:20]:
+        feed = feedparser.parse(f"https://www.bing.com/news/search?q={quote_plus(q)}&format=rss")
+        for e in feed.entries[:15]:
+            link = parse_qs(urlparse(e.link).query).get("url", [e.link])[0]
+            if not link.startswith("http"):
+                continue
             leads.append({"title": e.title[:300], "summary": re.sub(r"<[^>]+>", " ", e.get("summary", ""))[:600],
-                          "source_url": e.link, "source_type": "news_tip"})
+                          "source_url": link, "source_type": "news_tip"})
     return leads
+
+
+def from_news(db=None):
+    leads = []
+    for q in NEWS_QUERIES:
+        leads += _gnews(q, "7d")
+    # Bobby, Nov 19: older cases are fine too. Once a day, a year back.
+    last = db.setting("scout_back_last") if db else None
+    if db and (not last or (_now() - datetime.fromisoformat(last)).total_seconds() >= BACK_EVERY_H * 3600):
+        for q in BACK_QUERIES:
+            leads += _gnews(q, "1y")
+        db.insert("settings", {"key": "scout_back_last", "value": _now().isoformat(), "updated_at": _now().isoformat()},
+                  upsert=True, on_conflict="key")
+    return leads
+
+
+def find_agency_posts(rows):
+    """Kept news leads: look in the article for the agency's OWN Facebook / YouTube post of the video. Found =
+    HQ can make a Reel now (status obtained); Outreach still requests every officer's unedited camera."""
+    n_found, tried = 0, 0
+    for r in rows:
+        if tried >= FIND_PER_RUN:
+            break
+        url = r.get("source_url") or ""
+        if r["status"] != "new" or r["source_type"] != "news_tip" or not r.get("agency_name") or "news.google." in url:
+            continue
+        tried += 1
+        try:
+            got = agencypost.find(url, r["agency_name"], min_secs=footage.REEL_MIN)
+        except Exception:
+            got = None
+        if not got:
+            continue
+        r["source_type"] = "agency_release"
+        r["status"] = "obtained"
+        posted = got.get("upload_date") or ""
+        posted = f"{posted[:4]}-{posted[4:6]}-{posted[6:]}" if len(posted) == 8 else "?"
+        r["notes"] = (f"agency post: {got['url']} (posted by {got['uploader']} {posted}, {int(got.get('duration') or 0)}s; "
+                      f"found in {urlparse(url).hostname}). Raw request still goes out for every camera."
+                      + (f" — {r['notes']}" if r.get("notes") else ""))
+        n_found += 1
+    return n_found
 
 def _final_score(s, category, lead=None):
     """Rank by the Quemado/Laredo/Narco Sub pattern: ONE clear enforcement moment + a real place + real stakes.
@@ -476,7 +537,7 @@ def take_direct(rows):
 def main(db):
     raw, errors = [], []
     for name, fn in (("youtube", from_youtube), ("watchlist", lambda: from_watchlist(db)),
-                     ("dvids", from_dvids), ("news", from_news)):
+                     ("dvids", from_dvids), ("news", lambda: from_news(db)), ("bing", from_bing)):
         try:
             got = fn()
             for l in got:
@@ -537,6 +598,11 @@ def main(db):
                 r["notes"] = f"too short: {int(secs)}s of video — " + r["notes"]
                 short += 1
     direct = take_direct(rows)
+    posts = 0
+    try:
+        posts = find_agency_posts(rows)
+    except Exception as e:
+        errors.append(f"agency posts: {e}")
     # big closed cases whose police interviews can be requested (once a day, own scoring; see casescout.py)
     case_note = ""
     try:
@@ -589,7 +655,7 @@ def main(db):
     kept = sum(1 for r in rows if r["status"] in ("new", "obtained"))
     top = danger.rank([r for r in rows if r["status"] in ("new", "obtained")])[:3]
     return ((f"watching {STATS['channels']} agency channels; " if STATS.get("channels") else "") + (f"{STATS['reuploads']} re-upload items ignored, " if STATS.get("reuploads") else "")
-            + (f"{STATS['dropped']} old re-upload leads skipped; " if STATS.get("dropped") else "") + f"{len(raw)} found ({', '.join(f'{k} {v}/{kept_src.get(k, 0)} kept' for k, v in src.items())}), {len(fresh)} new, {kept} kept, {len(direct)} agency-hosted (no request)"
+            + (f"{STATS['dropped']} old re-upload leads skipped; " if STATS.get("dropped") else "") + f"{len(raw)} found ({', '.join(f'{k} {v}/{kept_src.get(k, 0)} kept' for k, v in src.items())}), {len(fresh)} new, {kept} kept, {len(direct)} agency-hosted (no request), {posts} agency posts found from news"
             + (f"; top: " + "; ".join(f"danger {danger.of(r)} / action {r['action_score']} {r['title'][:50]}" for r in top) if top else "")
             + (f"; {short} skipped as too short (<{footage.REEL_MIN}s)" if short else "")
             + (f"; {case_note}" if case_note else "")

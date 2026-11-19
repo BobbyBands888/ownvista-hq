@@ -53,8 +53,12 @@ def apply_reply(db, req, c, text, when, via="", extra_links=None):
         upd["download_links"] = links[:10]
     db.update("records_requests", {"id": f"eq.{req['id']}"}, upd)
     subj = (req.get("subject") or "")[:80]
+    # a lead already made from the agency's own post ('used') stays used when the raw package comes in;
+    # a denied raw request never kills the Reel already made from that post
+    lead_status = ((db.select("leads", {"id": f"eq.{req['lead_id']}", "select": "status"}) or [{}])[0]
+                   .get("status")) if req.get("lead_id") else None
     if status == "fulfilled":
-        if req.get("lead_id"):
+        if req.get("lead_id") and lead_status != "used":
             db.update("leads", {"id": f"eq.{req['lead_id']}"}, {"status": "obtained"})
         lvl = "urgent" if c.get("links_expire") else "info"
         db.alert("tracker", f"Footage ready: {subj}. Links: {', '.join(links[:3]) or 'see email'}"
@@ -63,7 +67,7 @@ def apply_reply(db, req, c, text, when, via="", extra_links=None):
         db.alert("tracker", f"Fee quote (not paid — your call): {subj}: {c.get('fee')}", "warn")
     elif status == "clarify":
         db.alert("tracker", f"Agency needs clarification: {subj}: {c.get('summary')}", "warn")
-    elif status == "denied" and req.get("lead_id"):
+    elif status == "denied" and req.get("lead_id") and lead_status not in ("obtained", "used"):
         db.update("leads", {"id": f"eq.{req['lead_id']}"}, {"status": "rejected"})
     return status
 

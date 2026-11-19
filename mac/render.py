@@ -10,6 +10,7 @@ Short / Reel (1080x1920): action from the first second with the narrator setting
 Reel (Nov 18 rebuild, mac/reelcut.py): multi-segment bodycam cut (60-95s story or 20-30s action), timed captions,
 "CITY, STATE" pill, am_adam narrator with the camera ducked under each line, full-frame blur over any death / body."""
 import json
+import re
 import shutil
 import sys
 import tempfile
@@ -49,8 +50,9 @@ def png_watermark(W, H, path, credit=None):
 
 def png_label(W, H, label, path):
     im, d = canvas(W, H)
-    txt = label.upper() if label.upper().startswith(("BODY CAM", "DASH CAM", "911", "INTERVIEW")) else f"BODY CAM: {label.upper()}"
-    txt = txt.replace("BODY CAM ", "BODY CAM: ", 1) if txt.startswith("BODY CAM ") else txt
+    txt = label.upper() if label.upper().startswith(("BODY CAM", "DASH CAM", "DRONE", "911", "INTERVIEW")) else f"BODY CAM: {label.upper()}"
+    if txt.startswith("BODY CAM ") and not re.match(r"BODY CAM \d+$", txt):
+        txt = txt.replace("BODY CAM ", "BODY CAM: ", 1)      # "BODY CAM 2" stays as is (camlabel numbering)
     f = media.font("black", 34)
     tw = d.textlength(txt, font=f)
     x, y = 60, H - 150
