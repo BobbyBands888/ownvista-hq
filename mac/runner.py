@@ -553,6 +553,11 @@ def render(db):
         if it["kind"] == "short" and it.get("parent_id"):
             ep = db.select("content", {"id": f"eq.{it['parent_id']}", "select": "status,approval_status"})
             it["episode_planned"] = bool(ep) and ep[0].get("status") != "failed" and ep[0].get("approval_status") != "rejected"
+        if it["kind"] == "reel" and it.get("lead_id"):
+            # the agency's own statement: the only source for the Reel's captions and narrator lines
+            ld = db.select("leads", {"id": f"eq.{it['lead_id']}",
+                                     "select": "title,agency_name,state,incident_date,summary,source_type,notes"})
+            it["lead"] = ld[0] if ld else None
         try:                                        # who / why / how it ended, for the narrator lines
             from agents import casefacts
             it["case_facts"] = casefacts.get(db, it["lead_id"]) if it.get("lead_id") else None

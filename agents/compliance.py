@@ -30,10 +30,10 @@ def review(item, lead=None, facts=None):
         "\n\nCASE FILE (researched who/why/outcome with sources; also counts as source facts):\n" + json.dumps(facts) +
         '\n\nCheck: ANY claim in the title, narration, check-ins or what_happened_next that the source facts do not '
         'state (invented arrests, outcomes, charges, motives) — fail it; a case where someone was shot or died and the '
-        'plan could show the person dying, dead or badly wounded — fail it; an outcome worded more strongly than the case file '
+        'plan would show the person dying, dead or badly wounded WITHOUT a full-frame blur — fail it; an outcome worded more strongly than the case file '
         '(charges called a conviction, "is a thief" before a verdict) — fail it; a named person when the case file says '
         'say_name is false — fail it; graphic or shocking words in title/thumbnail text; misleading or clickbait claims not supported by '
-        'the script; any sign a minor appears; any plan to show unblurred gore, a body or a death (the renderer fully blurs aftermath in episodes — that is allowed); any death imagery planned for a thumbnail, Short or Reel; missing educational/'
+        'the script; any sign a minor appears; any plan to show unblurred gore, a body or a death (a death on camera is ALLOWED in episodes, Shorts and Reels when the renderer puts a full-frame blur over it — do not fail a plan for that); any death imagery planned for a thumbnail or cold open; graphic words about injuries or the body; missing educational/'
         'documentary context in the description; personal info (addresses, phone numbers) of private people.\n'
         'Return JSON {"verdict":"pass|fail","issues":["..."],"required_edits":["blur/cut/rename instructions for the render"],'
         '"minor_present":true|false|null}', max_tokens=700, temperature=0.1)

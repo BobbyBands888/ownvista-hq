@@ -459,7 +459,8 @@ def ask_llm(system, user):
     return llm.ask(system, user, max_tokens=2500, temperature=0.3)
 
 
-RULES = """Hard rules for every cut: never include the moment of a death, gore, or a lingering view of a body;
+RULES = """Hard rules for every cut: never include the moment of a death, gore, or a lingering view of a body
+(Reels may keep a short one: mac/reelcut.py puts a full-frame blur over it);
 skip any stretch where a child is on camera; skip long dead air (walking, paperwork, silence).
 Prefer real action: shouting, commands, foot chases, struggles, arrests, crashes, shots fired (but not a death on screen).
 The action must be VISIBLE: use WHAT'S ON SCREEN. Sirens or shouting heard while the picture only shows a cruiser's
@@ -494,7 +495,15 @@ def _taken(files, plan, cache):
     cuts = list(plan.get("sibling_cuts") or [])
     if (sc.get("recut") or {}).get("winner_cut"):       # a re-cut never reuses the winning Reel's seconds
         cuts.append(sc["recut"]["winner_cut"])
-    for c in cuts:
+    flat = []
+    for c in cuts:                                      # multi-segment Reels (mac/reelcut.py) list every segment
+        if isinstance(c, dict) and c.get("segments"):
+            if (c.get("kind") or "action") == "story" and (sc.get("cut_kind") or "story") == "action":
+                continue                                # a case's action cut may reuse its story cut's seconds
+            flat += [s for s in c["segments"] if isinstance(s, dict)]
+        else:
+            flat.append(c)
+    for c in flat:
         if not isinstance(c, dict) or c.get("start") is None:
             continue
         i = idx.get(c.get("path"))

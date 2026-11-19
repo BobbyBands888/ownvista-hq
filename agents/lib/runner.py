@@ -8,9 +8,9 @@ RULES = """Ten-Four Tapes channel rules (never break these):
   or be public-domain federal footage (DVIDS). Never news-station clips, never other YouTubers' uploads,
   never downloaded from YouTube.
 - No minors on camera in any capacity.
-- Cases involving a death are OK. The force itself may be shown; what follows once someone goes down (the body,
-  injuries, CPR) is only ever shown FULLY BLURRED by the renderer, max 20s, in long-form episodes only — never in
-  thumbnails, cold opens, Shorts or Reels. No unblurred gore or body, ever.
+- Death on camera is OK only if it is FULLY BLURRED (Bobby, Nov 18): the renderer puts a full-frame blur over the
+  moment of death and any body, injuries or CPR, in episodes, Shorts and Reels alike (max ~10-20s per stretch).
+  Never in thumbnails or cold opens. No unblurred gore or body, ever.
 - Never call it a "shootout", "gunfight" or "exchange of gunfire" (in names, titles, thumbnails or narration)
   unless the source says the suspect fired too. When only officers fired, say "officer-involved shooting" or
   name what happened (e.g. "Desert Stop", "Roadside Struggle").
