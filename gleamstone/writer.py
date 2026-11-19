@@ -86,7 +86,8 @@ def draft_intro(db, p):
     for attempt in range(3):
         res = llm.ask(INTRO, str(facts) + (f"\nYour last draft broke a rule ({why}). Follow every rule." if why else ""),
                       max_tokens=900, temperature=0.5)
-        subj, body = (res or {}).get("subject", "").strip(), _clean((res or {}).get("body", ""))
+        res = res if isinstance(res, dict) else (res[0] if isinstance(res, list) and res and isinstance(res[0], dict) else {})
+        subj, body = (res.get("subject") or "").strip(), _clean(res.get("body") or "")
         if not (subj and body):
             why = "empty"
             continue
@@ -105,6 +106,8 @@ def handle_reply(db, inbound, approve):
     hist = "\n\n".join(f"[{'Bobby' if e['direction'] == 'out' else 'Them'}] {c.strip_footer(e['body'] or '')}" for e in thread)
     res = llm.ask(REPLY, f"Business: {p.get('name')} ({p.get('town')})\nThread so far:\n{hist}\n\nNEW REPLY:\n{inbound['body']}",
                   max_tokens=1000, temperature=0.3) or {}
+    if not isinstance(res, dict):
+        res = res[0] if isinstance(res, list) and res and isinstance(res[0], dict) else {}
     label = res.get("label", "other")
     status = {"interested": "interested", "question": "replied", "not_now": "lost", "not_interested": "lost",
               "unsubscribe": "do_not_contact", "wrong_person": "replied"}.get(label, "replied")
