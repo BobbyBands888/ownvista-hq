@@ -135,6 +135,8 @@ def write_vertical(job, log=print):
              "\n\nDRAFT hook (rewrite if the footage doesn't show it): " + json.dumps(sc.get("hook_text") or sc.get("on_screen_text")) +
              "\nDRAFT narrator lines: " + json.dumps({k: sc.get(k) for k in ("intro_vo", "outcome_vo")}) +
              "\n\nFIRST 4 SECONDS:\n" + json.dumps(first) + "\n\nWHOLE CLIP:\n" + json.dumps(whole) +
+             (f"\n\nBLURRED (death / body, full-frame blur, seconds from the clip start): {pk['blur']} — say "
+              "nothing graphic about these seconds; the hook never points at them" if pk.get("blur") else "") +
              '\n\nReturn JSON {"hook_text":"under 9 words, about what is visible right away (or what is about to happen '
              'in this clip)",'
              '"intro_vo":"' + ('' if plan["kind"] == "short" and part > 1 else
