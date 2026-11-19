@@ -28,11 +28,16 @@ FORMAT = """Ten-Four Tapes format:
   boosted (muted only while narrator talks), brief narrator check-ins, "what happened next" outro, one comment
   question, subscribe end card. Multiple angles are labeled "Body Cam Officer 1", "Body Cam Officer 2", etc.
   Credit line on screen and in description.
+- FACEBOOK REELS ARE BODYCAM-FIRST (Nov 18 rebuild, mac/reelcut.py): agency-released bodycam / dash with real action
+  (rams, foot chases, Tasers, window punches, felony stops, shots fired) beats aerial / thermal / vessel B-roll.
+  Each strong case gets TWO cuts of the same incident: a 60-95s narrated STORY cut (hook in big yellow text for the
+  first 4s -> dash / approach -> bodycam action -> arrest -> 3s "How it ended") and a 20-30s all-ACTION cut. The
+  renderer picks the segments and writes the captions + narrator lines from the agency's own statement.
 - NARRATOR ON VERTICALS: every Reel and Part 1 Short opens with the narrator setting it up over the first seconds
   (place, who, why police were there) while the bodycam plays underneath; every Reel and Part 3 ends with a narrated
   "how it ended" line. Same voice as the episodes.
 - SHORTS: 3 vertical Shorts per episode labeled "<Case Name> Part 1/2/3", each ends "Follow for Part 2/3".
-- FACEBOOK REELS: standalone 25-30s enforcement-action Reels (never "Part 1/2/3" — Facebook doesn't show Part 2 to
+- FACEBOOK REELS: standalone enforcement-action Reels (story cut 60-95s, action cuts 20-30s) (never "Part 1/2/3" — Facebook doesn't show Part 2 to
   Part 1's viewers), real audio, action in the first 2 seconds. When a case gets 2-3 Reels, each one is a DIFFERENT
   single moment of the incident (e.g. the stop, the run, the takedown) and stands on its own: a viewer who sees only
   that Reel understands it. No "part", "continued", "what happens next" or references to the other Reels. Caption line 1 = PLACE + STAKES in under 10 words
@@ -43,14 +48,15 @@ FORMAT = """Ten-Four Tapes format:
   get our Reels flagged. Vague stakes ("officers converge on a rec center", "officers board a vessel") are not stakes:
   name the danger or the action. Our page data: specific-stakes captions get 37K-106K views; "Case Name — generic
   summary" captions, guessing-question captions and rescue Reels get under 1K.
-- Titles: specific and dramatic but accurate. Unblurred gore or a body is never shown; in episodes the renderer shows
-  the aftermath fully blurred (max 20s); Shorts, Reels and thumbnails never include it. Blur bystanders as needed.
+- Titles: specific and dramatic but accurate. Unblurred gore or a body is never shown; a death on camera may stay in
+  episodes, Shorts and Reels only under a full-frame blur (the renderer adds it); thumbnails and cold opens never
+  include it. Blur bystanders as needed.
 - """ + packaging.TITLE_RULES + """
 - """ + packaging.THUMB_RULES + """
 - FACTS: every narration line, check-in and "what happened next" must be stated in the lead text. Never invent an
   outcome (arrest, custody, charges, injuries, deaths). If the lead doesn't say how it ended, leave
   what_happened_next as "" — a wrong outcome is worse than none. If the lead says someone died, say so plainly
-  and respectfully, and plan cuts so the person is never shown dying, dead, or badly wounded.
+  and respectfully; the person is never shown dying, dead or badly wounded without a full-frame blur.
 - WHO / WHY / HOW IT ENDED (every case): the setup says who the suspect is (named only if the case file allows it)
   and why police were there; what_happened_next says how it ended, using the case file's wording rules. Charges are
   never called convictions. List the case file's sources at the end of the description under "Sources:"."""
@@ -85,7 +91,7 @@ def reel_count(lead, facts=None):
     if is_case(lead):
         return 1                    # one interview teaser; long-form doesn't belong on FB (Boone 13-min: 402 views)
     if is_fatal(facts):
-        return 1
+        return 2                    # blurred death is OK now (Nov 18): the story cut + one action cut
     strong = (lead.get("action_score") or 0) >= STRONG
     if lead.get("source_type") != "dvids_public_domain":
         return 5 if strong else 4
@@ -106,8 +112,9 @@ def _camera_note(lead):
 
 def plan(lead, playbook, rejects=(), facts=None, graded=None, max_reels=None):
     n_reels = reel_count(lead, facts) if max_reels is None else min(reel_count(lead, facts), max_reels)
-    fatal_note = (" Someone died in this case: the one Reel must END BEFORE any shot, strike or injury — the"
-                  " confrontation or the chase, never the outcome." if is_fatal(facts) else "")
+    fatal_note = (" Someone died in this case: say so plainly and respectfully; the renderer blurs the moment of death"
+                  " and any body full-frame, so never describe injuries or the body in hooks or captions."
+                  if is_fatal(facts) else "")
     if is_case(lead):
         fatal_note = (" This is a case story: episode style must be case_story, and the one Reel is a teaser cut from the"
                       " police interview (a lie or a tense exchange), never the crime or its aftermath.")
@@ -516,6 +523,10 @@ def main(db):
             if len(reels) < want:
                 db.alert("maker", f"{case}: planned {len(reels)} of {want} Reels", "info")
         reels = reels[:want]
+        # Reel 1 is the 60-95s narrated story cut, the rest are 20-30s action cuts (mac/reelcut.py picks the
+        # segments; a case whose action can't carry 60s gets the short cut instead). Case-story teasers stay single.
+        for n, r in enumerate(reels):
+            r["cut_kind"] = "story" if n == 0 and not is_case(lead) else "action"
         # fact check: hooks are screen text (not instructions), no invented facts, the right camera word
         title0 = ep.get("title")
         checked = factcheck.check({"episode": ep, "shorts": shorts, "reels": reels}, lead, facts)

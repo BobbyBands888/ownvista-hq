@@ -6,7 +6,9 @@ Episode (1920x1080): cold-open hook -> title card -> short narrated setup -> raw
 comment question -> subscribe end card. Narrator never talks over bodycam audio.
 Short / Reel (1080x1920): action from the first second with the narrator setting it up over the opening seconds
 (bodycam audio low underneath), case badge (+ PART n on Shorts only), hook text, credit, narrated "how it ended",
-"Follow for Part n" end card on Shorts; Reels are standalone single moments ending "Follow for more cases"."""
+"Follow for Part n" end card on Shorts.
+Reel (Nov 18 rebuild, mac/reelcut.py): multi-segment bodycam cut (60-95s story or 20-30s action), timed captions,
+"CITY, STATE" pill, am_adam narrator with the camera ducked under each line, full-frame blur over any death / body."""
 import json
 import shutil
 import sys
@@ -20,6 +22,7 @@ from PIL import Image, ImageDraw  # noqa: E402
 
 import media  # noqa: E402
 import picker  # noqa: E402
+import reelcut  # noqa: E402
 from media import GOLD, RED, WHITE, ENC_A, ENC_V, ff  # noqa: E402
 
 LOG = print
@@ -222,7 +225,12 @@ class Job:
         self.n = 0
         from agents.lib import config
         self.files = picker.analyse(folder, config.GROQ_API_KEY, log=LOG)
-        self.pick = picker.picks_for(folder, self.files, plan)
+        if plan["kind"] == "reel":              # Nov 18 rebuild: multi-segment narrated bodycam Reel (mac/reelcut.py)
+            cache = media.load_json(Path(folder) / picker.PICKS, {})
+            self.pick = reelcut.pick(self.files, plan, cache)
+            media.save_json(Path(folder) / picker.PICKS, cache)
+        else:
+            self.pick = picker.picks_for(folder, self.files, plan)
         self.credit = (plan.get("source_credit") or "").strip()
 
     def p(self, ext):
@@ -529,12 +537,20 @@ def render(plan_path, footage, out):
             print("VISION NOT READY: frames couldn't be read this run; will retry next run")
             sys.exit(4)
         if plan["kind"] == "reel" and not job.pick:
-            # every 24s+ stretch with visible action is already in another Reel of this case
-            print("NOT ENOUGH FOOTAGE: no fresh moment left for another standalone Reel of this case")
+            # not enough clean action for this cut (or every action second is already in another Reel of this case)
+            print("NOT ENOUGH FOOTAGE: no clean action left for this Reel cut")
             sys.exit(3)
         anchor_cold_open(job)                           # before the Writer, so the hook matches the new cold open
         import writer
-        written = writer.write(job, log=LOG)            # words are written from the locked cut, not the plan
+        if plan["kind"] == "reel":
+            try:
+                written = reelcut.write(job, log=LOG)   # captions + narrator lines, fact-checked against the agency text
+            except Exception as e:
+                LOG(f"reel writer: {str(e)[:200]} — using the planner's drafts")
+                written = {}
+            reelcut.apply(job, written or reelcut.fallback_words(job))
+        else:
+            written = writer.write(job, log=LOG)        # words are written from the locked cut, not the plan
         LOG(f"{plan['kind']} '{plan.get('title')}' picks: {json.dumps(job.pick)[:400]}")
         Path(out).parent.mkdir(parents=True, exist_ok=True)
         thumb, thumbs = None, []
@@ -545,12 +561,17 @@ def render(plan_path, footage, out):
                 thumb = thumbs[0] if thumbs else None
             except Exception as e:
                 LOG(f"thumbnail error: {str(e)[:200]}")
+        elif plan["kind"] == "reel":
+            reelcut.build(job, out)
         else:
             build_vertical(job, out)
         # what the Writer put on screen, for the runner to save back to the plan (dashboard + captions)
         cut = None
         if plan["kind"] == "reel":                  # saved on the plan so the case's other Reels avoid these seconds
-            cut = {"path": job.files[job.pick["file"]]["path"], "start": job.pick["start"], "end": job.pick["end"]}
+            segs = [{"path": job.files[c["file"]]["path"], "start": c["start"], "end": c["end"]} for c in job.pick["segments"]]
+            main = max(segs, key=lambda c: c["end"] - c["start"])
+            cut = {**main, "kind": job.pick["cut"], "segments": segs, "blur": job.pick.get("blur") or [],
+                   "total": job.pick["total"]}
         Path(str(out) + ".script.json").write_text(json.dumps({"script": job.sc, "written": bool(written), "cut": cut, "thumb": thumb, "thumbs": thumbs,
                                                                 "fixed": written.get("problems") or []}, default=str))
     finally:

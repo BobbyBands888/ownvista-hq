@@ -21,7 +21,8 @@ from . import footage
 from . import danger
 from .lib.google import yt_get
 from .lib.runner import RULES
-from .lib.sources import is_military_op
+from .lib.sources import is_military_op, is_people_smuggling
+from .factcheck import camera_kind
 
 AGENCY_RX = re.compile(r"sheriff|police|\bpd\b|state attorney|district attorney|prosecutor|highway patrol|"
                        r"state police|public safety|marshal|department of corrections|constable|trooper", re.I)
@@ -53,7 +54,11 @@ WATCH_LOOKBACK_DAYS = 7
 FOOTAGE_RX = re.compile(r"body ?cam|body[- ]worn|\bbwc\b|dash ?cam|critical incident|officer[- ]involved|\bois\b|"
                         r"pursuit|chase|video release|released video|footage|surveillance video|911 call|arrest|shots fired|"
                         r"traffic stop|smuggl|standoff|carjack", re.I)
-NEWS_QUERIES = ["bodycam video released", "body camera footage released sheriff",
+NEWS_QUERIES = [
+                # Nov 18 rebuild: agency BODYCAM releases first. Police1 / Officer.com run a "BWC:" story for most
+                # notable releases; Maker then needs the agency's OWN Facebook / YouTube post of it.
+                "site:police1.com BWC", "site:police1.com bodycam video", "site:officer.com body camera video",
+                "bodycam video released", "body camera footage released sheriff",
                 "police release body camera video arrest", "911 call and bodycam released",
                 "sheriff releases body camera video", "dash cam video released chase",
                 "deputies body camera footage shows", "police release video of arrest",
@@ -340,9 +345,15 @@ def from_news():
                           "source_url": e.link, "source_type": "news_tip"})
     return leads
 
-def _final_score(s, category):
-    """Rank by the Quemado/Laredo/Narco Sub pattern: ONE clear enforcement moment + a real place + real stakes."""
+def _final_score(s, category, lead=None):
+    """Rank by the Quemado/Laredo/Narco Sub pattern: ONE clear enforcement moment + a real place + real stakes.
+    Nov 18: agency bodycam / dash with real action ranks above aerial / thermal / vessel B-roll."""
     sc = int(s.get("action_score") or 0)
+    cam = camera_kind({**(lead or {}), "notes": s.get("moment") or ""}) if lead else "unknown"
+    if cam in ("body", "dash") and category == "enforcement":
+        sc = min(10, sc + 1)
+    elif cam == "aerial":
+        sc = min(sc, 6)
     full = all((s.get(k) or "").strip() for k in ("moment", "place", "stakes"))
     if category == "enforcement" and full:
         sc = min(10, sc + 1)
@@ -390,11 +401,11 @@ def score(db, leads):
             row["state"] = s.get("state")
             row["incident_date"] = s.get("incident_date")
             row["category"] = s.get("category") or "other"
-            row["action_score"] = _final_score(s, row["category"])
+            row["action_score"] = _final_score(s, row["category"], l)
             row["involves_minor"] = s.get("involves_minor")
             row["danger_score"] = danger.clamp(s.get("danger"))
             # 5+ is enough to REQUEST footage; Maker only builds from footage that actually delivers
-            keep = row["involves_minor"] is not True and (row["action_score"] >= 6 or
+            keep = row["involves_minor"] is not True and not is_people_smuggling(l) and (row["action_score"] >= 6 or
                                                           (s.get("keep") and row["action_score"] >= 5))
             if keep and l["source_type"] != "dvids_public_domain" and not row["agency_name"]:
                 keep = False
