@@ -175,6 +175,27 @@ def _fb_get(path, params):
     return j
 
 
+def adopt_hand_reels(db, reels):
+    """Bobby, Nov 19: Reels Bobby posts by hand (Kettering, Thurston...) get a content row so the 48h Scorecard grades
+    them with HQ's own and the Maker learns from them. Marked source_type hand_posted; no lead, nothing to render,
+    so no other agent acts on them. Returns {facebook_id: content_id}."""
+    out = {}
+    for rl in reels:
+        cap = (rl.get("description") or "").strip()
+        first = cap.splitlines()[0][:120] if cap else "Hand-posted Reel"
+        row = db.insert("content", {
+            "kind": "reel", "case_name": first, "title": first, "description": cap[:2000],
+            "source_type": "hand_posted", "compliance_status": "pass",
+            "compliance_notes": "posted by hand by Bobby (not checked by HQ)", "approval_status": "not_required",
+            "status": "posted", "facebook_id": rl["id"], "posted_at": rl.get("created_time"),
+            "publish_note": "posted by hand; picked up by Analytics for the Scorecard"})
+        if row:
+            out[rl["id"]] = row[0]["id"]
+    if out:
+        db.alert("analytics", f"Scorecard now tracks {len(out)} Reel(s) you posted by hand", "info")
+    return out
+
+
 def facebook(db):
     if not (config.FB_PAGE_ID and config.FB_PAGE_TOKEN):
         return []
@@ -185,6 +206,10 @@ def facebook(db):
     rows.append({"platform": "facebook", "external_id": "page", "followers": page.get("followers_count"), "raw": page})
     reels = _fb_get(f"{pid}/video_reels", {**tok, "fields": "id,description,created_time", "limit": 50}).get("data", [])
     content_by_fb = {c["facebook_id"]: c["id"] for c in db.select("content", {"select": "id,facebook_id", "facebook_id": "not.is.null"})}
+    try:
+        content_by_fb.update(adopt_hand_reels(db, [r for r in reels if r["id"] not in content_by_fb]))
+    except Exception as e:
+        db.alert("analytics", f"couldn't record hand-posted Reels for the scorecard: {str(e)[:160]}", "warn")
     for rl in reels:
         ins = requests.get(FB + f"{rl['id']}/video_insights", params=tok, timeout=30).json().get("data", [])
         vals = {m["name"]: (m.get("values") or [{}])[0].get("value") for m in ins}
