@@ -3,7 +3,8 @@
 Two cuts per strong case (Meta: 10-30s drives reach, 30s-3min drives engagement):
   story  60-95s: hook (big yellow text, first 4s) -> dash / approach -> bodycam action -> arrest -> 3s "How it ended"
   action 20-30s: the same incident, nothing but the action, one narrator line, same end card
-Every second of action is kept; slates, maps, text screens and repeated angles are cut.
+Every second of action is kept; slates, maps, text screens are cut. A second officer's angle of the key moment
+stays in when it shows it better (one per Reel, Bobby Nov 19); every camera is tagged BODY CAM 1 / 2, DASH CAM.
 
 Narrator: Kokoro am_adam (media.VOICE). Camera audio ducks ~75% under each line; gunshots / impacts are never
 talked over (lines are moved off loud peaks). Every narrator line and caption comes from the agency's own text
@@ -13,7 +14,8 @@ Rule (Bobby, Nov 18): a death on camera is OK only under a FULL-FRAME blur over 
 vision pass tags gore, and audio aftermath (CPR, "no pulse"), become blur windows. A child on camera is never used.
 
 Pick shape (saved in the folder's pick cache and on the plan as script["cut"]):
-  {"cut":"story|action","segments":[{"file":0,"start":18.0,"end":30.0}],"blur":[[t0,t1]],"total":92.0}
+  {"cut":"story|action","segments":[{"file":0,"start":18.0,"end":30.0,"cam":"deputy 1","cam_label":"BODY CAM 1"}],
+   "blur":[[t0,t1]],"total":92.0}
 blur windows are on the OUTPUT timeline (seconds from the start of the Reel)."""
 import json
 import re
@@ -25,6 +27,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+import camlabel  # noqa: E402
 import media  # noqa: E402
 import picker  # noqa: E402
 
@@ -39,6 +42,8 @@ GAP_MERGE = 4             # action seconds this close are one beat
 BLUR_PAD = 1.0
 MAX_BLUR_RUN = 10.0       # a blurred stretch never runs longer than this: the cut moves on
 YELLOW = "0xF5C518"
+MAX_ALT = 1               # second angles of one moment kept per Reel
+ALT_MIN_PEAK = 1          # ...and only of a moment with a loud peak (shots, crash, struggle)
 
 
 def _font(kind):
@@ -175,21 +180,28 @@ def _llm_story(files, plan, lo, hi):
 Cut ONE {lo:.0f}-{hi:.0f}s story in segments, in the order events happened:
 dash / approach (short, only if something is visible) -> the bodycam action (rams, chase, Taser, struggle, shots)
 -> the arrest. Keep EVERY second of real action. Cut slates, text screens, maps, cruiser interiors with nothing
-outside, walking, paperwork, and any second angle of a moment already in the cut. Segments 4-35s each.
-Return JSON {{"segments":[{{"file":0,"start":18.0,"end":30.0,"beat":"spike strip, car hits barrier"}}]}}""")
+outside, walking, paperwork. A second officer's angle of a moment already in the cut only when it shows THE key
+moment (shots, the crash, the takedown) better: at most one, right after the first angle. Segments 4-35s each.
+"cam" names whose camera it is, the same name every time that camera appears: use the agency's own on-screen
+label or the officer's role ("deputy 1", "sergeant", "dash unit 12"); a file usually holds one camera, but agency
+edits switch between officers' cameras inside one file.
+Return JSON {{"segments":[{{"file":0,"start":18.0,"end":30.0,"cam":"deputy 1","beat":"spike strip, car hits barrier"}}]}}""")
     out = []
     for p in (j.get("segments") or []) if isinstance(j, dict) else []:
         c = picker.clamp(files, p, MIN_SEG, 40)
         if c:
             c["beat"] = str(p.get("beat") or "")[:80]
+            if p.get("cam"):
+                c["cam"] = str(p["cam"])[:30]
             out.append(c)
     return out
 
 
 def _clean(files, segs, S_of, taken=()):
     """Every segment re-checked by code: child / unknown / screen seconds split out, long blurred runs capped,
-    repeated angles and overlaps dropped, sibling Reels' seconds avoided (action cuts only)."""
-    out = []
+    overlaps dropped, sibling Reels' seconds avoided (action cuts only). A repeated angle stays only when it is
+    another camera on a loud peak moment (MAX_ALT per Reel); the rest are dropped."""
+    out, alts = [], 0
     for c in segs:
         S = S_of(c["file"])
         for s, e in _split_usable(S, c["start"], c["end"]):
@@ -202,7 +214,11 @@ def _clean(files, segs, S_of, taken=()):
             if any(i == c["file"] and a < e and b > s for i, a, b in taken):
                 continue
             if any(_repeat(files, o, piece) for o in out):
-                continue
+                peak = sum(S["peak"][int(s):int(e)])
+                if alts >= MAX_ALT or peak < ALT_MIN_PEAK:
+                    continue
+                alts += 1
+                piece["alt"] = True
             out.append(piece)
     return out
 
@@ -317,8 +333,9 @@ def pick(files, plan, cache):
                 cache[key] = got
             return got
         return None
+    camlabel.assign(files, segs)
     out = {"cut": kind, "segments": [{k: (round(v, 2) if isinstance(v, float) else v) for k, v in c.items()
-                                      if k in ("file", "start", "end", "beat")} for c in segs],
+                                      if k in ("file", "start", "end", "beat", "cam", "cam_label", "alt")} for c in segs],
            "blur": blur_windows(segs, S_of), "total": round(total, 2), "parent": plan.get("parent_id")}
     cache[key] = out
     return out
@@ -339,6 +356,7 @@ def timeline(files, pk):
             if S["peak"][t]:
                 loud.append(round(t0 + t - c["start"], 1))
         rows.append({"segment": n + 1, "from": round(t0, 1), "to": round(t0 + c["end"] - c["start"], 1),
+                     "camera": c.get("cam_label") or "", "another_angle": bool(c.get("alt")),
                      "beat": c.get("beat") or "", "frames": frames[:20], "said": said[:20]})
         t0 += c["end"] - c["start"]
     return rows, loud
@@ -561,6 +579,18 @@ def build(job, out):
         dt.append(f"drawtext=fontfile={F}:textfile={_tf(work, 'c%d' % i, c['text'])}:fontsize={96 if big else 64}:"
                   f"fontcolor={col}:borderw=6:bordercolor=black:line_spacing=14:x=(w-tw)/2:y=1440:"
                   f"enable='between(t,{c['t'][0]},{c['t'][1]})'")
+    # camera tag, top left under the brand: BODY CAM 1 / BODY CAM 2 / DASH CAM, for each segment's whole window
+    if not all(c.get("cam_label") for c in segs):
+        camlabel.assign(files, segs)                # picks cached before Nov 19 have no labels yet
+    t0 = 0.0
+    for k, c in enumerate(segs):
+        t1 = t0 + c["end"] - c["start"]
+        lab = c["cam_label"] + ("  -  ANOTHER ANGLE" if c.get("alt") else "")
+        on = f"between(t,{t0:.2f},{t1:.2f})"
+        dt.append(f"drawbox=x=40:y=112:w=14:h=50:color=0xE0262B:t=fill:enable='{on}'")
+        dt.append(f"drawtext=fontfile={F}:textfile={_tf(work, 'cam%d' % k, lab)}:fontsize=34:fontcolor=white:"
+                  f"box=1:boxcolor=black@0.62:boxborderw=8:x=62:y=118:enable='{on}'")
+        t0 = t1
     if pk.get("blur"):
         cond = "+".join(f"between(t,{a},{b})" for a, b in pk["blur"])
         dt.append(f"drawtext=fontfile={R}:textfile={_tf(work, 'bl', 'Blurred out of respect')}:fontsize=36:"

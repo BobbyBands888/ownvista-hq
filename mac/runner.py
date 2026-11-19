@@ -142,12 +142,6 @@ def _fetch(url, dest_dir, name=None, depth=0):
     title = (re.search(r"<title>([^<]*)", page) or [None, ""])[1].strip()
     raise RuntimeError(f"share page didn't give a file (page title: '{title[:80]}', {len(cands)} candidate links)")
 
-AGENCY_POST_RX = re.compile(r"https?://(www\.|m\.)?(facebook\.com/(reel/|watch|[^/]+/videos/)|fb\.watch/|"
-                            r"youtube\.com/(watch|shorts/)|youtu\.be/)", re.I)
-
-def is_agency_post(url):
-    return bool(url and AGENCY_POST_RX.match(url))
-
 def _ytdlp(url, dest_dir):
     """Download a public agency post (Facebook reel/video, YouTube) at <=1080p. Returns the uploader's name."""
     import yt_dlp
@@ -169,10 +163,19 @@ def _ffmpeg_exe():
 def ensure_footage(db, it):
     """Make sure the footage for this item's lead is on disk (cloud runs start empty unless cached)."""
     dest = FOOTAGE / str(it["lead_id"])
-    if dest.exists() and any(p for p in dest.iterdir() if not p.name.startswith(".")):
+    lead = (db.select("leads", {"id": f"eq.{it['lead_id']}"}) or [{}])[0]
+    from agents import agencypost
+    post = agencypost.url_of(lead)
+    raw_in = bool(db.select("records_requests", {"lead_id": f"eq.{it['lead_id']}", "status": "eq.fulfilled",
+                                                 "select": "id"}))
+    have = [p for p in dest.iterdir() if not p.name.startswith(".")] if dest.exists() else []
+    if have and raw_in and all(p.name.startswith("post_") for p in have):
+        for p in have:                              # the full records package arrived: it replaces the agency's edit
+            p.unlink()
+        have = []
+    if have:
         return True
     dest.mkdir(parents=True, exist_ok=True)
-    lead = (db.select("leads", {"id": f"eq.{it['lead_id']}"}) or [{}])[0]
     if lead.get("source_type") == "dvids_public_domain" and config.DVIDS_API_KEY:
         m = re.search(r"/video/(\d+)", lead.get("source_url") or "")
         if m:
@@ -182,13 +185,13 @@ def ensure_footage(db, it):
             files.sort(key=lambda f: (f.get("height") or 0, f.get("bitrate") or 0))
             if files:
                 _fetch(files[-1]["src"], dest, f"dvids_{m[1]}.mp4")
-    elif is_agency_post(lead.get("source_url")) and not db.select(
-            "records_requests", {"lead_id": f"eq.{it['lead_id']}", "status": "eq.fulfilled"}):
-        # the agency's own public Facebook / YouTube post: yt-dlp pulls it with no login
-        if CLOUD and restore_mirror(it["lead_id"], dest):
+    elif post and not raw_in:
+        # the agency's own public Facebook / YouTube post: yt-dlp pulls it with no login. Outreach still asks for
+        # every officer's unedited camera; when that package arrives it replaces this edit (above).
+        if CLOUD and restore_mirror(f"{it['lead_id']}-post", dest):
             return True
         try:
-            who = _ytdlp(lead["source_url"], dest)
+            who = _ytdlp(post, dest)
             agency = (lead.get("agency_name") or "").lower()
             if agency and who and not set(re.findall(r"[a-z]{4,}", who.lower())) & set(re.findall(r"[a-z]{4,}", agency)):
                 db.alert_once("publisher", f"Footage for {it.get('case_name')} was posted by '{who}', not "
@@ -196,11 +199,11 @@ def ensure_footage(db, it):
                               "warn", key=f"Agency post check for {it.get('case_name')}")
         except Exception as e:
             db.alert_once("publisher", f"Couldn't pull the agency post for {it.get('case_name')} "
-                          f"({str(e)[:140]}). Open {lead['source_url'][:200]} and check it's still up", "warn",
+                          f"({str(e)[:140]}). Open {post[:200]} and check it's still up", "warn",
                           key=f"Agency post pull for {it.get('case_name')}")
         if CLOUD and any(p for p in dest.iterdir() if not p.name.startswith(".")):
             try:
-                save_mirror(it["lead_id"], dest)
+                save_mirror(f"{it['lead_id']}-post", dest)
             except Exception:
                 pass
     else:

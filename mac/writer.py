@@ -79,7 +79,8 @@ Write:
 - check_ins: exactly {max(0, len(clips) - 1)} lines; line k is read BEFORE clip k+1 and sets up what clip k+1 shows
   (max 14 words each)
 - labels: one camera label per clip from what it shows (e.g. "Body Cam Officer 1", "Dash Cam", "Interview Room");
-  road_ahead/windshield footage is "Dash Cam"
+  road_ahead/windshield footage is "Dash Cam". The same officer's camera keeps the same label in every clip (it
+  shows on screen as BODY CAM 1, BODY CAM 2 ...)
 - what_happened_next: outcome from FACTS only, or "" if FACTS don't say
 - comment_question: one short question about what the viewer just saw
 - title + title_formula: the YouTube title, written for THIS cut (the cold open moment is what thumbnail A shows)
@@ -104,9 +105,13 @@ Return JSON {{"cold_open_hook":"","narration_setup":"","check_ins":[""],"labels"
     if isinstance(j.get("check_ins"), list):
         out["check_ins"] = [str(x).strip() for x in j["check_ins"]][:max(0, len(clips) - 1)]
     if isinstance(j.get("labels"), list):
+        import camlabel
         for c, lab in zip(pk["clips"], j["labels"]):
             if lab and not c.get("blur"):
                 c["label"] = str(lab)[:40]
+                if not camlabel.KEEP_RX.search(c["label"]):
+                    c["cam"] = c["label"]          # the writer names the camera; numbering stays BODY CAM 1 / 2
+        camlabel.assign(job.files, [c for c in pk["clips"] if not c.get("blur")], field="label")
     return out
 
 
