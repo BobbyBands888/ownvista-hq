@@ -11,7 +11,10 @@ INTRO = c.RULES + """
 
 Write a first cold email from Bobby, owner of Gleamstone Commercial Cleaning, to the business below.
 - Under 110 words in the body. Plain text, no bullet points, no links in the body.
-- If there is a "why now" signal (new lease, opening, move), open with it in one plain line. Don't overdo it.
+- If there is a "why now" signal (new lease, opening, move), open with one natural sentence about it in your own
+  words (e.g. "Congrats on the new headquarters in Newton."). Never paste the signal text as-is.
+- Never ask for a chat, a call, a meeting or "a few minutes" - email only.
+- Keep a blank line between paragraphs.
 - Say what Gleamstone does for a space like theirs in one or two sentences (after-hours cleaning, written checklist,
   flat monthly price, month-to-month, Bobby answers emails directly).
 - Offer a free walkthrough or a quote from rough square footage and schedule.
@@ -36,7 +39,7 @@ A prospect replied to Gleamstone. Read their reply and the thread, then:
    - No sign-off (added automatically).
 Return JSON {"label":"...","subject":"Re: ...","body":"...","summary":"one line for Bobby"}"""
 
-BANNED = re.compile(r"\bcall (me|us)\b|phone|\(\d{3}\)|\d{3}[-.]\d{3}[-.]\d{4}|same crew|same team every|"
+BANNED = re.compile(r"\bcall (me|us)\b|\bchat\b|a few minutes|hop on|talk (this|next) week|phone|\(\d{3}\)|\d{3}[-.]\d{3}[-.]\d{4}|same crew|same team every|"
                     r"premier|top-notch|best-in-class|unparalleled|elevate", re.I)
 
 
@@ -56,10 +59,13 @@ def _greeting(p):
 
 def _fix_greeting(body, p):
     """The greeting is set in code, never left to the model (it once wrote 'Hi [contact_name],')."""
-    lines = body.split("\n")
-    if lines and re.match(r"\s*(hi|hello|hey|dear|good (morning|afternoon))\b", lines[0], re.I) and len(lines[0]) < 60:
-        lines = lines[1:]
-    return _greeting(p) + "\n\n" + "\n".join(lines).lstrip()
+    greet = re.compile(r"^\s*(hi|hello|hey|dear|good (morning|afternoon))\b[^,\n]{0,40}[,!:]?[ \t]*", re.I)
+    for _ in range(3):                     # strip every leading greeting, even "Hi there, I clean..." on one line
+        new = greet.sub("", body, count=1).lstrip()
+        if new == body.lstrip():
+            break
+        body = new
+    return _greeting(p) + "\n\n" + body
 
 
 def _problem(subj, body, p):
@@ -73,8 +79,14 @@ def _problem(subj, body, p):
         return "named the business as an example client"
     if re.search(r"\bBobby (personally )?(answers|replies|responds)", body):
         return "third person"
-    if "?" not in body:
+    paras = [x for x in re.split(r"\n\s*\n", body.strip()) if x.strip()]
+    if not paras or "?" not in paras[-1]:
         return "no question at the end"
+    if re.search(r"\bwhy now\b", body, re.I):
+        return "wrote the prompt's 'why now' label into the email"
+    sig = (p.get("signal") or "").strip().lower().rstrip(".")
+    if sig and any(line.strip().lower().rstrip(".") == sig for line in body.split("\n")):
+        return "pasted the signal note as its own line"
     if len(body.split()) > 140:
         return "too long"
     return None
