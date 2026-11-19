@@ -218,7 +218,10 @@ def vis(f):
         return None
     n = int(f["duration"]) + 1
     act, dull, bad, screen = [0.0] * n, [0.0] * n, [0.0] * n, [0.0] * n
+    child, gore = [0.0] * n, [0.0] * n           # Shorts may blur gore, never use a child
     after = aftermath_from(f)
+    hits = [x.get("start", 0) for x in f.get("transcript") or [] if AFTERMATH.search(x.get("text") or "")]
+    blur_from = max(0, int(min(hits)) - 3) if hits else None   # the Reels rule (mac/reelcut.py seconds())
     j = 0
     # A second with no read frame nearby is unknown, and unknown counts as unsafe: since files may now pass with
     # up to 10% of frames unread (PR #18), a gap must never borrow a neighbour's "no child / no gore" label.
@@ -229,13 +232,16 @@ def vis(f):
         v = fr[j]
         if abs(v["t"] - t) > gap:
             act[t], dull[t], bad[t], screen[t] = 0.0, 1.0, 1.0, 0.0
+            child[t] = 1.0                          # unknown counts as a possible child: never used, never blurred
             continue
         act[t] = v["action"]
         dull[t] = 1.0 if v["view"] == "screen" or (v["action"] < 2 and (v["view"] in ("inside_car", "black")
                                                                          or v["action"] == 0)) else 0.0
+        child[t] = 1.0 if v["child"] else 0.0
+        gore[t] = 1.0 if v["gore"] or (blur_from is not None and t >= blur_from) else 0.0
         bad[t] = 1.0 if v["child"] or v["gore"] or (after is not None and t >= after) else 0.0
         screen[t] = 1.0 if v["view"] == "screen" else 0.0
-    out = {"act": act, "dull": dull, "bad": bad, "screen": screen}
+    out = {"act": act, "dull": dull, "bad": bad, "screen": screen, "child": child, "gore": gore}
     _VA[key] = out
     return out
 
@@ -252,11 +258,28 @@ def on_screen(f, s, e):
     return (sum(v["act"][a:b]) / n, sum(v["dull"][a:b]) / n, any(v["bad"][a:b]))
 
 
-def looks_bad(f, s, e, min_action=1.0, max_dull=0.5):
-    if hits_aftermath(f, s, e):
+SHORT_BLUR_MAX = 10   # seconds of death / body a Short may keep under a full-frame blur (same cap as Reels)
+
+
+def blur_ok(f, s, e):
+    """Shorts rule (Bobby, Nov 18-19): a death on camera is OK only under a full-frame blur. A window passes when
+    it has no child (or unread) second and at most SHORT_BLUR_MAX gore / aftermath seconds, which mac/render.py
+    blurs. Without vision there's nothing to blur by, so any aftermath still fails."""
+    v = vis(f)
+    if not v:
+        return not hits_aftermath(f, s, e)
+    a, b = max(0, int(s)), min(len(v["act"]), int(e))
+    return not any(v["child"][a:b]) and sum(v["gore"][a:b]) <= SHORT_BLUR_MAX
+
+
+def looks_bad(f, s, e, min_action=1.0, max_dull=0.5, allow_blur=False):
+    if allow_blur:
+        if not blur_ok(f, s, e):
+            return True
+    elif hits_aftermath(f, s, e):
         return True
     q = on_screen(f, s, e)
-    return bool(q) and (q[0] < min_action or q[1] > max_dull or q[2])
+    return bool(q) and (q[0] < min_action or q[1] > max_dull or (q[2] and not allow_blur))
 
 
 # ---------------- helpers ----------------
@@ -271,9 +294,10 @@ def window_scores(rms, length):
     return [(s, (pref[s + length] - pref[s]) / length) for s in range(0, n - length)]
 
 
-def scored_windows(f, length):
+def scored_windows(f, length, allow_blur=False):
     """Loudness plus what's on screen: visible action scores up, cruiser-interior / black stretches score down,
-    anything showing a child or gore is excluded."""
+    anything showing a child or gore is excluded. allow_blur (Shorts): a short gore stretch may stay (it gets a
+    full-frame blur), scored a little down so a clean window of the same action wins."""
     sc = window_scores(f["rms"], length)
     if not vis(f):
         return [(s, v) for s, v in sc if not hits_aftermath(f, s, s + length)]
@@ -282,6 +306,9 @@ def scored_windows(f, length):
         a, dull, bad = on_screen(f, s, s + length)
         if not bad:
             out.append((s, v + 6 * a - 15 * dull))
+        elif allow_blur and blur_ok(f, s, s + length):
+            g = sum(vis(f)["gore"][int(s):int(s + length)])
+            out.append((s, v + 6 * a - 15 * dull - g))
     return out          # may be empty: every window shows a child/gore — better no render than an unsafe one
 
 
@@ -387,14 +414,14 @@ def _cold_fallback(files, clips):
     return {"file": c["file"], "start": c["start"], "end": min(c["end"], c["start"] + 9)}
 
 
-def best_windows(files, length, count, used=None):
+def best_windows(files, length, count, used=None, allow_blur=False):
     used = list(used or [])
     cands = []
     for i, f in enumerate(files):
         L = min(length, int(f["duration"]) - 1)
         if L < 8:
             continue
-        for s, v in scored_windows(f, L):
+        for s, v in scored_windows(f, L, allow_blur):
             cands.append((v, i, s, s + L))
     cands.sort(reverse=True)
     picks = []
@@ -460,11 +487,12 @@ def ask_llm(system, user):
 
 
 RULES = """Hard rules for every cut: never include the moment of a death, gore, or a lingering view of a body
-(Reels may keep a short one: mac/reelcut.py puts a full-frame blur over it);
+(Reels and Shorts may keep a short one, 10 seconds at most: a full-frame blur goes over it);
 skip any stretch where a child is on camera; skip long dead air (walking, paperwork, silence).
 Prefer real action: shouting, commands, foot chases, struggles, arrests, crashes, shots fired (but not a death on screen).
 The action must be VISIBLE: use WHAT'S ON SCREEN. Sirens or shouting heard while the picture only shows a cruiser's
-interior, dashboard or a black screen is NOT action — never pick those stretches. Never pick frames marked CHILD or GORE."""
+interior, dashboard or a black screen is NOT action — never pick those stretches. Never pick frames marked CHILD.
+Frames marked GORE only inside a Reel or Short, briefly (they get blurred); never in a long-form clip."""
 
 
 # ---------------- picks ----------------
@@ -603,14 +631,15 @@ def pick_shorts(files, plan, cache):
             c = clamp(files, p, 30, 55)
             if c:
                 c = trim_open(files[c["file"]], c, 30)
-            if c and not looks_bad(files[c["file"]], c["start"], c["end"]):
+            if c and not looks_bad(files[c["file"]], c["start"], c["end"], allow_blur=True):
                 c["part"] = int(p.get("part", len(parts) + 1))
                 parts.append(c)
     except Exception:
         pass
     if len(parts) < 3:                          # top up only the missing parts from the vision/loudness ranking
         extra = [trim_open(files[x["file"]], x, 30)
-                 for x in best_windows(files, 45, 3 - len(parts), used=[(p["file"], p["start"], p["end"]) for p in parts])]
+                 for x in best_windows(files, 45, 3 - len(parts), used=[(p["file"], p["start"], p["end"]) for p in parts],
+                                       allow_blur=True)]
         parts += extra
         parts.sort(key=lambda p: (p["file"], p["start"]))
         for n, p in enumerate(parts, 1):
@@ -634,13 +663,13 @@ def recut_short(files, plan, cache, parts):
         c = clamp(files, j, 30, 55)
         if c:
             c = trim_open(files[c["file"]], c, 30)
-        if c and not looks_bad(files[c["file"]], c["start"], c["end"]) and \
+        if c and not looks_bad(files[c["file"]], c["start"], c["end"], allow_blur=True) and \
                 all(not (c["file"] == u[0] and c["start"] < u[2] and c["end"] > u[1]) for u in used):
             new = c
     except Exception:
         pass
     if not new:
-        got = best_windows(files, 45, 1, used=used)
+        got = best_windows(files, 45, 1, used=used, allow_blur=True)
         new = got[0] if got else old
     new["part"] = want
     return sorted(others + [new], key=lambda p: p["part"])

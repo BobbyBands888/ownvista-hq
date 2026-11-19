@@ -24,6 +24,7 @@ from PIL import Image, ImageDraw  # noqa: E402
 import media  # noqa: E402
 import picker  # noqa: E402
 import reelcut  # noqa: E402
+import camlabel  # noqa: E402
 from media import GOLD, RED, WHITE, ENC_A, ENC_V, ff  # noqa: E402
 
 LOG = print
@@ -62,6 +63,52 @@ def png_label(W, H, label, path):
     d.text((x + 56, y + 13), txt, font=f, fill=WHITE)
     im.save(path)
     return path
+
+
+def png_cam_tag(W, H, label, path):
+    """Vertical camera tag, top left under the brand (same spot as the Reels tag): red bar + BODY CAM / DASH CAM."""
+    im, d = canvas(W, H)
+    f = media.font("black", 34)
+    tw = d.textlength(label, font=f)
+    x, y = 40, 100
+    d.rectangle([x, y, x + 14, y + 52], fill=RED)
+    d.rectangle([x + 22, y, x + 22 + tw + 28, y + 52], fill=(0, 0, 0, 160))
+    d.text((x + 36, y + 7), label, font=f, fill=WHITE)
+    im.save(path)
+    return path
+
+
+def png_blur_note(W, H, path):
+    """'Blurred out of respect', shown over every blurred stretch (same words as the Reels)."""
+    im, d = canvas(W, H)
+    f = media.font("bold", 36)
+    txt = "Blurred out of respect"
+    tw = d.textlength(txt, font=f)
+    x, y = (W - tw) / 2, 520
+    d.rectangle([x - 14, y - 10, x + tw + 14, y + f.size + 14], fill=(0, 0, 0, 155))
+    d.text((x, y), txt, font=f, fill=WHITE)
+    im.save(path)
+    return path
+
+
+def short_blur(job):
+    """Output-time [a, b] windows over every gore / aftermath second of a Short's window (Reels rule, Nov 18):
+    full-frame blur, padded like the Reels. The picker only lets SHORT_BLUR_MAX such seconds into a Short."""
+    pk = job.pick
+    v = picker.vis(job.files[pk["file"]])
+    if not v:
+        return []
+    s, e = int(pk["start"]), int(min(pk["end"], len(v["gore"])))
+    pad, dur = reelcut.BLUR_PAD, pk["end"] - pk["start"]
+    wins = []
+    for t in range(s, e):
+        if v["gore"][t]:
+            x = t - pk["start"]
+            if wins and x - pad <= wins[-1][1] + 0.5:
+                wins[-1][1] = min(dur, x + 1 + pad)
+            else:
+                wins.append([max(0.0, x - pad), min(dur, x + 1 + pad)])
+    return [[round(a, 2), round(b, 2)] for a, b in wins]
 
 
 def png_hook(W, H, text, path, vertical=False):
@@ -150,7 +197,7 @@ CAM_AF_SAFE = "aresample=48000:async=1:first_pts=0,aformat=sample_fmts=fltp:chan
 BLUR_LABEL = "Blurred out of respect"
 
 
-def seg_clip(src, info, s, e, W, H, out, overlays=(), vo_wav=None, blur=False):
+def seg_clip(src, info, s, e, W, H, out, overlays=(), vo_wav=None, blur=False, blur_wins=()):
     """One bodycam clip. With vo_wav, the narrator talks over the opening seconds and the bodycam audio
     drops low underneath (never muted, so viewers still hear the scene), then comes back to full level."""
     dur = round(e - s, 2)
@@ -161,6 +208,9 @@ def seg_clip(src, info, s, e, W, H, out, overlays=(), vo_wav=None, blur=False):
     last = "base"
     if blur:                                    # whole frame, heavy: nothing identifiable survives
         fc.append(f"[base]scale={W // 16}:{H // 16},boxblur=6:3,scale={W}:{H},setsar=1[blr]")
+        last = "blr"
+    elif blur_wins:                             # timed full-frame blur (Shorts): under the overlays, so text stays sharp
+        fc.append(f"[base]" + ",".join(f"boxblur=40:5:enable='between(t,{a},{b})'" for a, b in blur_wins) + "[blr]")
         last = "blr"
     for n, (png, t0, t1) in enumerate(overlays, 1):
         en = f":enable='between(t,{t0},{t1})'" if t1 is not None else ""
@@ -337,7 +387,16 @@ def build_vertical(job, out):
     ov = [(png_watermark(W, H, job.p("png"), credit=credit), 0, None),
           (png_badge(W, H, case, part, job.p("png")), 0, None),
           (png_hook(W, H, hook, job.p("png"), vertical=True), 0, hook_end)]
-    segs = [seg_clip(path, info, pk["start"], pk["end"], W, H, job.p("mp4"), ov, vo_wav=intro_wav)]
+    # camera tag top left, switching with the camera (Bobby, Nov 19); 911 / interview clips keep no camera tag
+    if not camlabel.KEEP_RX.search(str(pk.get("label") or "")):
+        for t0, t1, lab in camlabel.runs(job.files[pk["file"]], pk["start"], pk["end"], pk.get("cam")):
+            ov.append((png_cam_tag(W, H, lab, job.p("png")), t0, t1))
+    blur = pk.get("blur") if kind == "short" else None
+    if blur:
+        note = png_blur_note(W, H, job.p("png"))
+        ov += [(note, a, b) for a, b in blur]
+    segs = [seg_clip(path, info, pk["start"], pk["end"], W, H, job.p("mp4"), ov, vo_wav=intro_wav,
+                     blur_wins=blur or ())]
     bg = media.blurred_still(path, max(0, pk["end"] - 1), W, H, job.p("png"))
     if kind == "short" and part in (1, 2):
         end_t, end_vo = f"Follow for Part {part + 1}", f"Follow for part {'two' if part == 1 else 'three'}."
@@ -543,6 +602,8 @@ def render(plan_path, footage, out):
             print("NOT ENOUGH FOOTAGE: no clean action left for this Reel cut")
             sys.exit(3)
         anchor_cold_open(job)                           # before the Writer, so the hook matches the new cold open
+        if plan["kind"] == "short":
+            job.pick = dict(job.pick, blur=short_blur(job))   # Writer must know which seconds are blurred
         import writer
         if plan["kind"] == "reel":
             try:

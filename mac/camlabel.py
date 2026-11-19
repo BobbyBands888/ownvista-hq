@@ -58,3 +58,47 @@ def assign(files, segs, field="cam_label"):
         n = order[k].index(ident) + 1
         s[field] = NAMES[k] + (f" {n}" if len(order[k]) > 1 else "")
     return segs
+
+
+RUN_MIN = 6      # seconds: a camera switch shorter than this is vision noise, not a new camera
+
+
+def runs(f, s, e, cam=None):
+    """Camera tag runs for ONE window of one file (Shorts): [(t0, t1, label)] with times relative to s.
+    A records-package file named BWC / dash / drone is one camera for the whole window. An agency edit stitches
+    cameras into one file, so there the tag follows the frames: road_ahead = DASH CAM, on foot / indoors = BODY CAM
+    (cruiser interior, slates and black frames keep the camera before them). One window can't tell two officers'
+    bodycams apart, so Shorts never number them."""
+    hint = f"{cam or ''} {f.get('path') or ''}"
+    for rx, k in ((BODY_RX, "body"), (DRONE_RX, "drone"), (DASH_RX, "dash")):
+        if rx.search(hint):
+            return [(0.0, round(e - s, 2), NAMES[k])]
+    fr = sorted(f.get("vision") or [], key=lambda v: v["t"])
+    per = []
+    for t in range(int(s), int(e)):
+        near = min(fr, key=lambda v: abs(v["t"] - t)) if fr else None
+        view = near.get("view") if near and abs(near["t"] - t) <= 8 else None
+        per.append("dash" if view == "road_ahead" else "body" if view in ("outside", "indoor") else None)
+    known = [k for k in per if k]
+    if not known:
+        return [(0.0, round(e - s, 2), NAMES[kind_of([f], {"file": 0, "start": s, "end": e, "cam": cam})])]
+    first = known[0]
+    cur, out = first, []
+    for i, k in enumerate(per):                    # carry the last known camera over unknown seconds
+        per[i] = cur = k or cur
+    a = 0
+    for i in range(1, len(per) + 1):
+        if i == len(per) or per[i] != per[a]:
+            out.append([a, i, per[a]])
+            a = i
+    merged = []                                     # short runs join the run before them (or after, for the first)
+    for r in out:
+        if merged and (r[1] - r[0] < RUN_MIN or merged[-1][2] == r[2]):
+            merged[-1][1] = r[1]
+        else:
+            merged.append(r)
+    if len(merged) > 1 and merged[0][1] - merged[0][0] < RUN_MIN:
+        merged[1][0] = merged[0][0]
+        merged.pop(0)
+    end = round(e - s, 2)
+    return [(float(a), float(b) if n < len(merged) - 1 else end, NAMES[k]) for n, (a, b, k) in enumerate(merged)]
