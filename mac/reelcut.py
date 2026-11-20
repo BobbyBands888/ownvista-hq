@@ -495,7 +495,7 @@ def _factcheck(w, plan, log):
     return w
 
 
-def place_vo(lines, wav_durs, loud, total):
+def place_vo(lines, wav_durs, loud, total, tail=END_SECS):
     """Final narrator timings: a line never covers a loud moment or the previous line; it slides later (or earlier)
     into the nearest quiet gap, and is dropped if none fits. Returns [(index, at)]."""
     out, busy_until = [], 0.0
@@ -506,7 +506,7 @@ def place_vo(lines, wav_durs, loud, total):
 
     for i, (l, d) in enumerate(zip(lines, wav_durs)):
         want = max(l["at"], busy_until + 0.25)
-        limit = total + END_SECS - d - 0.1           # must finish before the video does
+        limit = total + tail - d - 0.1               # must finish before the video does
         at = None
         for shift in [x * 0.25 for x in range(0, 33)]:          # up to 8s later
             a = want + shift
@@ -520,7 +520,7 @@ def place_vo(lines, wav_durs, loud, total):
                 a = want - shift
                 if a < busy_until + 0.25:
                     break
-                if clear(a, d):
+                if a <= limit and clear(a, d):   # Oakfield, Nov 20: an outcome line started 0.4s before the end
                     at = a
                     break
         if at is None:
@@ -570,7 +570,7 @@ def build(job, out):
     fc.append("".join(f"[v{k}][a{k}]" for k in range(len(segs))) + f"concat=n={len(segs)}:v=1:a=1[cv][ca]")
     # full-frame blur windows (death / body): heavy enough that nothing identifiable survives
     blur = "".join(f",boxblur=40:5:enable='between(t,{a},{b})'" for a, b in pk.get("blur") or [])
-    fc.append(f"[cv]tpad=stop_mode=clone:stop_duration={END_SECS}{blur}[cvb]")
+    fc.append(f"[cv]tpad=stop_mode=clone:stop_duration=@@TAIL@@{blur}[cvb]")   # tail set once the narration is known
     title = sc.get("title_pill") or ""
     dt = [f"drawtext=fontfile={R}:textfile={_tf(work, 'br', 'TEN-FOUR TAPES')}:fontsize=30:fontcolor=white:x=40:y=60"]
     if title:
@@ -619,8 +619,13 @@ def build(job, out):
         p = Path(work) / f"vo{i}.wav"
         media.tts(l["text"], p, speed=1.05)
         wavs.append((str(p), media.wav_dur(p)))
+    # the end card lasts as long as the "how it ended" narration needs (at least END_SECS, at most 12s), so the
+    # last line is never cut off mid-sentence
+    ending = [d for l, (_, d) in zip(lines, wavs) if float(l.get("at") or 0) >= total - 0.5]
+    tail = round(max(END_SECS, min(12.0, max(ending) + 0.7)) if ending else END_SECS, 2)
+    fc[:] = [x.replace("@@TAIL@@", str(tail)) for x in fc]
     _, loud = timeline(files, pk)
-    placed = place_vo(lines, [d for _, d in wavs], loud, total)
+    placed = place_vo(lines, [d for _, d in wavs], loud, total, tail)
     kept = dict(placed)
     for i, l in enumerate(lines):
         l.pop("dropped", None)
@@ -632,7 +637,7 @@ def build(job, out):
     base = len(used)
     for p, _, _ in vo_in:
         args += ["-i", p]
-    fc.append(f"[ca]apad=pad_dur={END_SECS},loudnorm=I=-16:TP=-1.5:LRA=11[cam0]")
+    fc.append(f"[ca]apad=pad_dur={tail},loudnorm=I=-16:TP=-1.5:LRA=11[cam0]")
     if vo_in:
         duck = "*".join(f"(1-{1 - DUCK}*between(t,{at - 0.15:.2f},{at + d + 0.25:.2f}))" for _, at, d in vo_in)
         fc.append(f"[cam0]volume='{duck}':eval=frame[cam]")
@@ -651,7 +656,7 @@ def build(job, out):
     # which every ffmpeg accepts; only a huge graph goes through a file, with the 7+/8 "-/filter_complex" syntax
     fc_args = ["-filter_complex", graph] if len(graph) < 100_000 else ["-/filter_complex", str(script)]
     media.ff(*args, *fc_args, "-map", "[ov]", "-map", "[oa]",
-             "-t", round(total + END_SECS, 2), "-c:v", "libx264", "-preset", "veryfast", "-crf", "20",
+             "-t", round(total + tail, 2), "-c:v", "libx264", "-preset", "veryfast", "-crf", "20",
              "-pix_fmt", "yuv420p", "-r", "30", *media.ENC_A, "-movflags", "+faststart", str(out))
     return out
 
