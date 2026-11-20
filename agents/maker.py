@@ -497,6 +497,11 @@ def main(db):
             continue
         p = plan(lead, playbook, rejects, facts, graded, max_reels=fit["reels"])
         ep = p.get("episode", {})
+        # the lead's own title can hide it ("cutter interdicts vessel"); the plan says it plainly ("240 Migrants")
+        if is_people_smuggling({"title": ep.get("title"), "summary": ep.get("description") or ep.get("what_happened_next")}):
+            db.update("leads", {"id": f"eq.{lead['id']}"}, {"status": "skipped",
+                      "notes": ((lead.get("notes") or "") + "\nmaker: plan shows a migrant/people-smuggling case, minors can't be ruled out").strip()})
+            continue
         case = p.get("case_name") or lead["title"][:30]
         credit = p.get("credit") or f"Footage: {lead.get('agency_name')}"
         src_type = lead["source_type"]

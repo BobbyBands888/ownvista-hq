@@ -28,9 +28,10 @@ def is_military_op(lead):
     return bool(MILITARY_UNITS.search(unit)) and not LAW_ENFORCEMENT.search(unit + " " + text)
 
 
-PEOPLE_BOAT = re.compile(r"\b(migrants?|illegal (aliens?|immigrants?)|undocumented|human smuggling|people smuggling|"
+PEOPLE_BOAT = re.compile(r"\b(migrants?|illegals|illegal (aliens?|immigrants?)|undocumented|human smuggling|people smuggling|"
+                         r"repatriat\w*|(haitian|cuban|dominican|chinese|ecuadorian) nationals|"
                          r"alien smuggling|smuggling (of )?(people|persons|migrants|aliens)|noncitizens?|"
-                         r"(\d+|several|dozens of) (people|persons|individuals|passengers) (aboard|on board))\b", re.I)
+                         r"(\d+|several|dozens of) (people|persons|individuals|passengers) (aboard|on ?board))\b", re.I)
 
 
 def is_people_smuggling(lead):
