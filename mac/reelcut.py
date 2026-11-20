@@ -401,7 +401,7 @@ Write:
   "" if FACTS don't give it
 - captions: short on-screen lines that follow the beats, 2-6 words per line, max 2 lines (use \\n), each with
   "t":[from,to] in Reel seconds. The FIRST caption is the hook: "t":[0,{HOOK_SECS:.0f}], "big":true, 2-4 words, the
-  biggest stakes ("SHOTS FIRED\\nAT TROOPERS"). Set "yellow":true on the 1-3 biggest moments. Cover the Reel end to end.
+  biggest stakes, from FACTS only. Set "yellow":true on the 1-3 biggest moments. Cover the Reel end to end.
 - vo: {n_vo} narrator lines, each "at" (Reel seconds) + "text" (one or two short sentences, max 22 words). The first
   line starts at 0.3 and says the date or place and why police were there. {"Lines follow the story beat by beat, "
   "each placed where its moment is on screen, with breathing room between lines (the camera audio carries the "
@@ -411,7 +411,7 @@ Write:
 - hook_options: 3 different hooks for the first caption, strongest first, 2-5 words each (2 lines max with \\n):
   the most dramatic TRUE fact from FACTS ("NEARLY 90 MPH\\nON I-670", "WANTED FOR\\nVIOLENT ROBBERIES")
 - caption_options: 3 Facebook captions (line 1), strongest first: PLACE. STAKES in under 14 words, every fact from
-  FACTS (STYLE ONLY, a different case: 'Kettering, Ohio. A stolen Suburban rams two cruisers at a gas pump.'),
+  FACTS, shaped like '<City>, <State>. <who> <did what police were there for>.' (never a place or vehicle FACTS don't name),
   no question
 - hashtags: 3-4 tags
 Return JSON {{"title":"","captions":[{{"t":[0,{HOOK_SECS:.0f}],"text":"","big":true}}],"vo":[{{"at":0.3,"text":""}}],
