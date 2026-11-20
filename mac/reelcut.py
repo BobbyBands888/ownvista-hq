@@ -614,6 +614,8 @@ def build(job, out):
                   f"fontcolor=white:box=1:boxcolor=black@0.6:boxborderw=12:x=(w-tw)/2:y=520:enable='{cond}'")
     e = f"gte(t,{total})"
     ended = sc.get("ended_text") or ""
+    # 56px bold on a 1080px frame fits ~30 characters: rewrap so "How it ended" never runs off the screen (Erdman, Nov 20)
+    ended = "\n".join(_wrap(" ".join(ended.split()), 28)[:4]) if ended else ""
     dt += [f"drawbox=x=0:y=0:w=iw:h=ih:color=black@0.72:t=fill:enable='{e}'",
            f"drawtext=fontfile={F}:textfile={_tf(work, 'e1', 'HOW IT ENDED' if ended else 'TEN-FOUR TAPES')}:fontsize=40:"
            f"fontcolor=black:box=1:boxcolor={YELLOW}:boxborderw=12:x=(w-tw)/2:y=800:enable='{e}'"]
