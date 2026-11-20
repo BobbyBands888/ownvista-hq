@@ -226,6 +226,21 @@ def see(prompt, jpeg, max_tokens=1500, check=None):
                 v = out if isinstance(out, dict) else _json_any(out if isinstance(out, str) else json.dumps(out))
                 if v is not None and (check is None or check(v)):
                     return v
+                if v is None and isinstance(out, str) and out.strip():
+                    # Llama 3.2 vision often answers in prose ("The image presents a grid of 9 frames..."). When the
+                    # Groq vision models are capped for the day, that prose still holds what it saw: have a text model
+                    # put it into the JSON the caller asked for (Nov 20: Erdman / Columbus renders failed on this).
+                    try:
+                        v = ask("You convert a vision model's description of an image into the exact JSON the "
+                                "original request asked for. Use only what the description says; leave anything it "
+                                "doesn't cover null/empty. Output only the JSON object.",
+                                "ORIGINAL REQUEST:\n" + prompt[:6000] + "\n\nVISION MODEL'S ANSWER:\n" + out[:6000],
+                                max_tokens=max_tokens, temperature=0)
+                    except Exception as e:
+                        errs.append(f"cf vision prose->json: {type(e).__name__} {str(e)[:80]}")
+                        v = None
+                    if v is not None and (check is None or check(v)):
+                        return v
                 errs.append(f"cf vision: {'unusable' if v is not None else 'no JSON'}: {str(out)[:160]!r}")
                 break
             except Exception as e:
