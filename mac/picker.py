@@ -502,6 +502,11 @@ def fix_note(plan):
     return n.split(":", 1)[1].strip() if n.startswith("Re-cut") else ""
 
 
+def _skip_until(note):
+    m = re.search(r"(?:before|until|after|from)\s+(?:about\s+|~)?(\d{1,2}):(\d{2})", note or "", re.I)
+    return int(m[1]) * 60 + int(m[2]) if m else 0
+
+
 def redo(plan):
     n = fix_note(plan)
     return f"\nBobby REJECTED the previous cut of this video: \"{n}\". Pick different moments that fix that.\n" if n else ""
@@ -771,7 +776,7 @@ def clean_clip(f, c):
 
 def pick_episode(files, plan, cache):
     key = f"episode:{plan['id']}"
-    if key in cache:                        # a cut saved before the safety net existed gets the net too
+    if key in cache and not fix_note(plan):  # a re-cut request always cuts fresh (Nov 20: it reused the old cut)
         r = cache[key]
         clear = [x for c in r["clips"] if not c.get("blur") for x in clean_clip(files[c["file"]], c)]
         r["clips"] = add_blurred_tails(files, safe_clips(files, clear))
@@ -847,6 +852,15 @@ def pick_episode(files, plan, cache):
             raise RuntimeError("NO SAFE CUT: every stretch of this footage is slates, dead air, a child, gore or "
                                "the aftermath")
         result = {"cold_open": _cold_fallback(files, clips), "clips": clips}
+    skip = _skip_until(fix_note(plan))        # "never use anything before 2:05" (agency slate the frame check missed)
+    if skip:
+        result["clips"] = [dict(c, start=max(c["start"], skip)) for c in result["clips"]
+                           if c["end"] - max(c["start"], skip) >= 15]
+        co = result.get("cold_open") or {}
+        if not co or co.get("start", 0) < skip:
+            result["cold_open"] = _cold_fallback(files, result["clips"]) if result["clips"] else co
+        if not result["clips"]:
+            raise RuntimeError("NO SAFE CUT: nothing left after the re-cut's skip")
     result["clips"] = add_blurred_tails(files, safe_clips(files, result["clips"]))
     labels = (sc.get("angle_labels") or [])
     for n, c in enumerate(result["clips"]):

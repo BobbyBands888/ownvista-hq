@@ -199,6 +199,15 @@ Return JSON {{"segments":[{{"file":0,"start":18.0,"end":30.0,"cam":"deputy 1","b
     return out
 
 
+SKIP_RX = re.compile(r"(?:before|until|after|from)\s+(?:about\s+|~)?(\d{1,2}):(\d{2})", re.I)
+
+
+def skip_until(note):
+    """Seconds a re-cut note says to skip ("never use anything before 2:05") or 0."""
+    m = SKIP_RX.search(note or "")
+    return int(m[1]) * 60 + int(m[2]) if m else 0
+
+
 def _clean(files, segs, S_of, taken=()):
     """Every segment re-checked by code: child / unknown / screen seconds split out, long blurred runs capped,
     overlaps dropped, sibling Reels' seconds avoided (action cuts only). A repeated angle stays only when it is
@@ -289,10 +298,15 @@ def pick(files, plan, cache):
     taken = []
     if kind == "action":
         taken = [(i, s, e) for i, s, e in picker._taken(files, plan, cache)]
+    # a re-cut note can rule out the start of the footage ("never use anything before 2:05": an agency slate /
+    # summary card the frame check didn't catch, Baltimore Nov 20); applies to story and action cuts alike
+    skip = skip_until(picker.fix_note(plan))
+    if skip:
+        taken += [(i, 0.0, skip) for i in range(len(files))]
     segs = []
     if kind == "story":
         try:
-            segs = _clean(files, _llm_story(files, plan, lo, hi), S_of)
+            segs = _clean(files, _llm_story(files, plan, lo, hi), S_of, taken if skip else ())
         except Exception as e:
             print(f"reelcut: story pick by model failed ({str(e)[:120]}), cutting by code")
     if _total(segs) < lo * 0.75:                    # model missed or no model: cut by code from the action beats
