@@ -8,7 +8,8 @@ import re
 
 LEN_RE = re.compile(r"\[len:(\d+)s\]")
 EPISODE_MIN = 180          # same floor render.py uses: no 1-minute "episodes"
-SHORT_EACH = 40            # Part p needs p*40s, so Part 3 never repeats Part 1
+SHORT_EACH = 40            # (old Part Shorts) Part p needed p*40s
+SHORTS_ON = False          # Bobby, Nov 20: no Part 1/2/3 Shorts; each Reel goes to YouTube as a standalone Short
 REEL_EACH = 30             # each Reel is its own 25-30s moment
 REEL_MIN = 20              # below this there is no standalone moment at all
 
@@ -16,10 +17,10 @@ REEL_MIN = 20              # below this there is no standalone moment at all
 def budget(secs):
     """-> {"episode": bool, "shorts": 0-3, "reels": n} for this many seconds of footage (None = unknown = no cap)."""
     if secs is None:
-        return {"episode": True, "shorts": 3, "reels": 99}
+        return {"episode": True, "shorts": 3 if SHORTS_ON else 0, "reels": 99}
     secs = float(secs)
     return {"episode": secs >= EPISODE_MIN,
-            "shorts": max(0, min(3, int(secs // SHORT_EACH))),
+            "shorts": max(0, min(3, int(secs // SHORT_EACH))) if SHORTS_ON else 0,
             "reels": 0 if secs < REEL_MIN else max(1, int(secs // REEL_EACH))}
 
 
