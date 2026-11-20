@@ -7,6 +7,7 @@ from .lib import llm
 from .lib.runner import RULES
 from . import casefacts
 from .maker import is_fatal as maker_fatal
+from . import agencypost
 
 def provenance_ok(db, item, lead):
     st = item.get("source_type")
@@ -18,12 +19,32 @@ def provenance_ok(db, item, lead):
         reqs = db.select("records_requests", {"lead_id": f"eq.{lead['id']}", "status": "eq.fulfilled", "select": "id"})
         if reqs:
             return True, "obtained by public records request"
+        post = agency_post(lead)
+        if post:
+            return True, f"agency's own official post ({post})"
     return False, "no proof footage came from the agency (need a fulfilled records request or a confirmed direct release)"
 
+def agency_post(lead):
+    """The agency's OWN Facebook/YouTube post of the video counts as a direct release. Scout only marks a lead
+    obtained from a post after the uploader matched the agency (agencypost.same_agency); hand-set leads
+    (e.g. @BPDMEDIAUNIT, @SheriffCitrus) are checked by Bobby/Claude before they're set to obtained."""
+    if not lead or lead.get("status") not in ("obtained", "used"):
+        return None
+    if lead.get("source_type") == "agency_release":
+        return agencypost.url_of(lead)
+    m = agencypost.NOTE_RX.search(lead.get("notes") or "")   # "agency post: <url>" is only written after a match
+    return m.group(1).rstrip(".,;)") if m else None
+
+
 def review(item, lead=None, facts=None):
+    post = agency_post(lead)
+    src_note = ("\n\nFOOTAGE SOURCE (already verified in code, do NOT fail it for this): the footage is the agency's "
+                f"OWN official post on its own channel ({post}). That is a direct agency release, not a YouTuber or "
+                "news-station re-upload, so a YouTube/Facebook link to the agency's own channel is allowed as the source."
+                if post else "")
     return llm.ask(
         "You are a strict YouTube and Facebook policy reviewer for a police bodycam channel. One strike costs a week "
-        "of uploads; three end the channel. Fail anything risky.\n" + RULES,
+        "of uploads; three end the channel. Fail anything risky.\n" + RULES + src_note,
         json.dumps({k: item.get(k) for k in ("kind", "case_name", "title", "description", "tags", "script")}) +
         "\n\nSOURCE FACTS (the only facts we have):\n" + json.dumps({k: (lead or {}).get(k) for k in
                                                                     ("title", "summary", "incident_date", "agency_name")}) +
@@ -38,7 +59,29 @@ def review(item, lead=None, facts=None):
         'Return JSON {"verdict":"pass|fail","issues":["..."],"required_edits":["blur/cut/rename instructions for the render"],'
         '"minor_present":true|false|null}', max_tokens=700, temperature=0.1)
 
+NO_PROOF = "no proof footage came from the agency"
+
+
+def requeue_provenance(db):
+    """Items blocked only because their proof came in later (a request got fulfilled, or the agency's own post was
+    recognised) go back for a fresh review instead of staying blocked forever."""
+    blocked = db.select("content", {"compliance_status": "eq.fail", "approval_status": "neq.rejected",
+                                    "status": "neq.failed", "compliance_notes": f"ilike.*{NO_PROOF}*",
+                                    "select": "id,lead_id,source_type", "limit": 100})
+    leads, n = {}, 0
+    for it in blocked:
+        lid = it.get("lead_id")
+        if lid and lid not in leads:
+            r = db.select("leads", {"id": f"eq.{lid}"})
+            leads[lid] = r[0] if r else None
+        if provenance_ok(db, it, leads.get(lid))[0]:
+            db.update("content", {"id": f"eq.{it['id']}"}, {"compliance_status": "pending"})
+            n += 1
+    return n
+
+
 def main(db):
+    requeued = requeue_provenance(db)
     # rejected plans are done: no safety review needed
     items = db.select("content", {"compliance_status": "eq.pending", "status": "neq.failed",
                                   "approval_status": "neq.rejected", "order": "created_at.asc", "limit": 25})
@@ -113,6 +156,6 @@ def main(db):
     if failed:
         db.alert("compliance", f"{failed} item(s) blocked — see Content queue for reasons", "info")
     auto = [k for k, v in earned.items() if v]
-    return (f"reviewed {len(items)}: {passed} passed, {failed} blocked; approval "
+    return (f"{f'{requeued} re-queued (proof now on file); ' if requeued else ''}reviewed {len(items)}: {passed} passed, {failed} blocked; approval "
             f"{'required until ' + str(until) if need_approval else 'off (full auto)'}"
             f"{'; auto-posting earned: ' + ', '.join(auto) if auto and need_approval else ''}")
