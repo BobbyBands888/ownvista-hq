@@ -18,11 +18,14 @@ jobs:
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-      - run: pip install requests "yt-dlp[default]" imageio-ffmpeg deno
-      - run: python mac/ytfetch.py
+      # actions/setup-python can't install on a personal Mac (it wants /Users/runner); uv brings its own Python
+      - name: uv (free, one-time install into ~/.local/bin)
+        run: |
+          command -v uv >/dev/null 2>&1 || [ -x "$HOME/.local/bin/uv" ] || curl -LsSf https://astral.sh/uv/install.sh | sh
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+      - run: >-
+          uv run --python 3.12 --no-project --with requests --with "yt-dlp[default]" --with imageio-ffmpeg --with deno
+          python mac/ytfetch.py
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
