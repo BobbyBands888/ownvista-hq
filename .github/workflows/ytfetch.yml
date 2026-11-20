@@ -1,0 +1,30 @@
+name: YouTube fetch (Bobby's Mac)
+# YouTube blocks GitHub's cloud servers ("confirm you're not a bot"), so agency YouTube posts are pulled on Bobby's
+# Mac (a GitHub self-hosted runner) and kept as footage copies the cloud publisher restores. Off until the repo
+# variable YT_FETCH_RUNNER is set (e.g. "self-hosted") once the Mac runner is installed.
+on:
+  schedule:
+    - cron: "11,41 * * * *"      # every 30 min; a sleeping Mac just picks it up when it wakes
+  workflow_dispatch:
+permissions:
+  contents: write                # stores the footage copies on footage-<lead>-post releases
+concurrency:
+  group: ytfetch
+  cancel-in-progress: false
+jobs:
+  fetch:
+    if: ${{ vars.YT_FETCH_RUNNER != '' }}
+    runs-on: ${{ vars.YT_FETCH_RUNNER || 'self-hosted' }}
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install requests "yt-dlp[default]" imageio-ffmpeg deno
+      - run: python mac/ytfetch.py
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
