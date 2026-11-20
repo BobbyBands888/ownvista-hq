@@ -1,7 +1,7 @@
 name: YouTube fetch (Bobby's Mac)
 # YouTube blocks GitHub's cloud servers ("confirm you're not a bot"), so agency YouTube posts are pulled on Bobby's
-# Mac (a GitHub self-hosted runner) and kept as footage copies the cloud publisher restores. Off until the repo
-# variable YT_FETCH_RUNNER is set (e.g. "self-hosted") once the Mac runner is installed.
+# Mac (GitHub self-hosted runner "Roberts-Air", installed Nov 20) and kept as footage copies the cloud publisher
+# restores. Set the repo variable YT_FETCH_OFF=1 to pause it.
 on:
   schedule:
     - cron: "11,41 * * * *"      # every 30 min; a sleeping Mac just picks it up when it wakes
@@ -13,8 +13,8 @@ concurrency:
   cancel-in-progress: false
 jobs:
   fetch:
-    if: ${{ vars.YT_FETCH_RUNNER != '' }}
-    runs-on: ${{ vars.YT_FETCH_RUNNER || 'self-hosted' }}
+    if: ${{ vars.YT_FETCH_OFF != '1' }}
+    runs-on: [self-hosted, macOS]
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
