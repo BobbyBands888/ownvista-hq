@@ -474,10 +474,17 @@ def score(db, leads):
                 row["status"] = "skipped"
             elif l["source_type"] == "dvids_public_domain":
                 row["status"] = "obtained"      # public domain: no request needed
+            elif l["source_type"] == "agency_release" and l.get("_cid"):
+                # Nov 20: the agency's OWN channel posted it (main() already dropped non-official channels), so it's a
+                # direct release — build from it now, like the big bodycam channels do. Outreach still requests raw.
+                row["status"] = "obtained"
             else:
                 row["status"] = "new"
             mps = " | ".join(f"{k}: {s.get(k)}" for k in ("moment", "place", "stakes") if (s.get(k) or "").strip())
             row["notes"] = danger.tag(" — ".join(x for x in (mps, s.get("why")) if x), row["danger_score"])
+            if row["status"] == "obtained" and l["source_type"] == "agency_release":
+                row["notes"] = (f"agency post: {l['source_url']} (official channel: {l.get('agency_name')}). "
+                                f"Raw request still goes out for every camera. — " + row["notes"])
             out_rows.append(row)
     return out_rows
 
