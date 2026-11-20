@@ -644,9 +644,13 @@ def build(job, out):
                   f"amix=inputs={len(vo_in) + 1}:normalize=0:duration=first,alimiter=limit=0.92[oa]")
     else:
         fc.append("[cam0]alimiter=limit=0.92[oa]")
+    graph = ";".join(fc)
     script = Path(work) / "reel_fc.txt"
-    script.write_text(";".join(fc))
-    media.ff(*args, "-filter_complex_script", str(script), "-map", "[ov]", "-map", "[oa]",
+    script.write_text(graph)
+    # ffmpeg 8 dropped -filter_complex_script (GitHub's runner image moved to it, Nov 20): pass the graph inline,
+    # which every ffmpeg accepts; only a huge graph goes through a file, with the 7+/8 "-/filter_complex" syntax
+    fc_args = ["-filter_complex", graph] if len(graph) < 100_000 else ["-/filter_complex", str(script)]
+    media.ff(*args, *fc_args, "-map", "[ov]", "-map", "[oa]",
              "-t", round(total + END_SECS, 2), "-c:v", "libx264", "-preset", "veryfast", "-crf", "20",
              "-pix_fmt", "yuv420p", "-r", "30", *media.ENC_A, "-movflags", "+faststart", str(out))
     return out
