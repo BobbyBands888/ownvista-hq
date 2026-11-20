@@ -9,11 +9,71 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from agents import packaging
 
-RULES = """Rules: on-screen text and narration may only describe what the frames/transcript show for that moment,
-plus facts from FACTS. Never invent arrests, charges, injuries, names, motives or outcomes. No graphic or gory
-words. No clickbait the picture doesn't deliver. Plain, punchy, documentary tone (EWU / Code Blue Cam style).
-Never "shootout", "gunfight" or "exchange of gunfire" unless FACTS say the suspect fired too; when only officers
-fired, say "officer-involved shooting" or name what happened."""
+RULES = """FACT RULES (the auto-check holds any video that breaks these):
+- Every FACT comes from FACTS (the agency statement, lead notes, case file): speeds, roads, places, times, numbers,
+  amounts, weapons, collisions/ramming/crashes, injuries, arrests, charges, motives, names, outcomes. If FACTS don't
+  say it, don't write it, even if you think the frames show it.
+- The frames/transcript only decide WHERE a line sits and may be described in generic, claim-free words
+  ("the chase is on", "officers close in", "he takes off running"). Never turn a frame into a new fact
+  ("rams a cruiser", "at 80 mph", "gun in hand") unless FACTS state it.
+- Never "shootout", "gunfight" or "exchange of gunfire" unless FACTS say the suspect fired too; when only officers
+  fired, say "officer-involved shooting" or name what happened. No graphic or gory words.
+STYLE RULES (be catchy with the TRUE facts):
+- Lead with the single most dramatic fact FACTS give: the biggest number, the most serious charge, the danger
+  ("Nearly 90 mph on I-670.", "Wanted for a string of violent robberies.").
+- Short, punchy, active verbs, present tense on screen. On-screen lines max 8 words.
+- Specific beats vague: never "tense moments unfold", "things escalate", "chaos erupts", "you won't believe".
+- No questions to the viewer, no "what happens next", "was it a trap", "watch till the end", "comment below".
+- Documentary voice (EWU / Code Blue Cam style): confident, never cartoonish, no ALL-CAPS hype words."""
+
+def source_facts(plan):
+    """The agency's own words for a plan: lead title + statement + the useful part of the lead notes (internal
+    [len:..]/[danger:..] tags and our provenance remarks removed). Same text the auto-check verifies against."""
+    import re
+    lead = plan.get("lead") or {}
+    notes = re.sub(r"\[[a-z_]+:[^\]]*\]", " ", lead.get("notes") or "")
+    notes = re.sub(r"https?://\S+", " ", notes)
+    return {"agency": lead.get("agency_name") or plan.get("source_credit"), "state": lead.get("state"),
+            "date": lead.get("incident_date"), "lead_title": lead.get("title"),
+            "agency_statement": (lead.get("summary") or plan.get("agency_text") or "")[:2500],
+            "lead_notes": re.sub(r"\s+", " ", notes).strip(" —-")[:800]}
+
+
+def pick_true(options, plan, sc, log=print, label="hook"):
+    """Several catchy options, strongest first -> the first one the fact check doesn't flag (or the checker's fix
+    of the first flagged one). '' if none survive. One ai_check call for all options."""
+    opts = [str(o).strip() for o in (options or []) if str(o or "").strip()][:4]
+    if not opts:
+        return ""
+    from agents import factcheck
+    lead = plan.get("lead") or {"summary": plan.get("agency_text") or plan.get("description"),
+                                "agency_name": plan.get("source_credit")}
+    try:
+        j = factcheck.ai_check([(f"{label}[{i}]", o) for i, o in enumerate(opts)], lead, plan.get("case_facts"),
+                               (sc or {}).get("camera") or factcheck.camera_kind(lead))
+    except Exception as e:
+        log(f"writer: {label} options not checked ({str(e)[:120]}) — using the first")
+        return opts[0]
+    bad, fixes = set(), {}
+    for p in j.get("problems") or []:
+        if isinstance(p, dict) and str(p.get("path", "")).startswith(f"{label}["):
+            try:
+                i = int(str(p["path"]).split("[")[1].rstrip("]"))
+            except Exception:
+                continue
+            bad.add(i)
+            if isinstance(p.get("fix"), str) and p["fix"].strip():
+                fixes.setdefault(i, p["fix"].strip())
+    for i, o in enumerate(opts):
+        if i not in bad:
+            if i:
+                log(f"writer: {label} option {i + 1} picked (earlier ones claimed things the sources don't say)")
+            return o
+    for i in range(len(opts)):
+        if i in fixes:
+            log(f"writer: every {label} option was flagged — using the checked fix '{fixes[i][:60]}'")
+            return fixes[i]
+    return ""
 
 
 
@@ -39,8 +99,9 @@ def _facts(plan, sc):
     cf = plan.get("case_facts") or {}
     case_file = {k: cf.get(k) for k in ("suspect_name", "suspect_age", "say_name", "why", "charges", "status", "outcome",
                                         "sentence") if cf.get(k) not in (None, "", [])}
+    src = {k: v for k, v in source_facts(plan).items() if v}
     return {"title": plan.get("title"), "case": plan.get("case_name"), "description": (plan.get("description") or "")[:1200],
-            **({"case_file": case_file} if case_file else {}), **{k: sc.get(k) for k in keep if sc.get(k)}}
+            **src, **({"case_file": case_file} if case_file else {}), **{k: sc.get(k) for k in keep if sc.get(k)}}
 
 
 def _ask(system, user):
@@ -82,7 +143,7 @@ Write:
   road_ahead/windshield footage is "Dash Cam". The same officer's camera keeps the same label in every clip (it
   shows on screen as BODY CAM 1, BODY CAM 2 ...)
 - what_happened_next: outcome from FACTS only, or "" if FACTS don't say
-- comment_question: one short question about what the viewer just saw
+- comment_question: always "" (we never ask the viewer questions)
 - title + title_formula: the YouTube title, written for THIS cut (the cold open moment is what thumbnail A shows)
 - thumbnail_texts: 3 options; option 1 is for the cold open moment, 2 and 3 for other peaks in the clips
 {packaging.TITLE_RULES}
@@ -129,7 +190,7 @@ def write_vertical(job, log=print):
              "intro_vo over the opening seconds while the footage keeps playing underneath, and reads outcome_vo on "
              "an end card. " +
              ("This Reel is a STANDALONE single moment: never say Part 1/2/3, 'continued', 'what happens next' or "
-              "refer to other clips; caption and question are about this clip only. " if plan["kind"] == "reel" else "")
+              "refer to other clips; the caption is about this clip only. " if plan["kind"] == "reel" else "")
              + RULES,
              "FACTS:\n" + json.dumps(_facts(plan, sc)) + "\n\n" + narr +
              "\n\nDRAFT hook (rewrite if the footage doesn't show it): " + json.dumps(sc.get("hook_text") or sc.get("on_screen_text")) +
@@ -137,8 +198,8 @@ def write_vertical(job, log=print):
              "\n\nFIRST 4 SECONDS:\n" + json.dumps(first) + "\n\nWHOLE CLIP:\n" + json.dumps(whole) +
              (f"\n\nBLURRED (death / body, full-frame blur, seconds from the clip start): {pk['blur']} — say "
               "nothing graphic about these seconds; the hook never points at them" if pk.get("blur") else "") +
-             '\n\nReturn JSON {"hook_text":"under 9 words, about what is visible right away (or what is about to happen '
-             'in this clip)",'
+             '\n\nReturn JSON {"hook_options":["3 different hooks, strongest first, each max 8 words: the most '
+             'dramatic TRUE fact from FACTS that fits what is on screen right away (or about to happen in this clip)"],'
              '"intro_vo":"' + ('' if plan["kind"] == "short" and part > 1 else
                                '1-2 short spoken sentences, max 24 words, read in about 6 seconds: place, who the suspect '
                                'is and why police were there, from the CASE FILE/FACTS only, natural documentary tone '
@@ -147,19 +208,22 @@ def write_vertical(job, log=print):
              '"outcome_vo":"' + ('' if plan["kind"] == "short" and part in (1, 2) else
                                  'how the case ended in max 25 spoken words, following the HOW IT ENDED wording rule; '
                                  '"" if there is no case file or no outcome') + '"'
-             + (',"caption":"PLACE. STAKES in under 10 words, about what this clip shows (e.g. '
-             'STYLE ONLY, a different case: never copy its place or facts: \'Quemado, Texas. A man swinging tree branches has already hit a Border Patrol agent in the head.\')",'
-             '"question":"one short question for the comments about what the viewer just saw",'
+             + (',"caption_options":["3 Facebook captions, strongest first: PLACE. STAKES in under 14 words, every fact '
+             'from FACTS, about what this clip shows (e.g. STYLE ONLY, a different case: never copy its place or facts: '
+             '\'Quemado, Texas. A man swinging tree branches has already hit a Border Patrol agent in the head.\'). '
+             'No question."],'
              '"hashtags":["3-4 tags like ' + ('#bodycam #police' if (sc.get('camera') or 'body') == 'body' else '#police #caughtoncamera') + '"]' if plan["kind"] == "reel" else "") + "}")
-    h = (j.get("hook_text") or "").strip()
+    h = pick_true(j.get("hook_options") or [j.get("hook_text")], plan, sc, log, "hook")
     out = {"hook_text": h, "on_screen_text": h} if h else {}
     for k in ("intro_vo", "outcome_vo"):
         v = j.get(k)
         if isinstance(v, str):
             out[k] = v.strip()
-    if plan["kind"] == "reel" and (j.get("caption") or "").strip():
-        out["caption"] = j["caption"].strip()
-        out["question"] = (j.get("question") or "").strip()
+    cap = pick_true(j.get("caption_options") or [j.get("caption")], plan, sc, log, "caption") \
+        if plan["kind"] == "reel" else ""
+    if cap:
+        out["caption"] = cap
+        out["question"] = ""                       # no engagement-bait question under the caption
         tags = [t if str(t).startswith("#") else "#" + str(t) for t in (j.get("hashtags") or [])][:4]
         out["hashtags"] = [t.replace(" ", "") for t in tags]
     return out
@@ -227,6 +291,8 @@ def write(job, log=print):
             job.sc.pop(k, None)            # the check found nothing true to say: fall back to the case name
         elif k != "problems" and v not in (None, [], ""):
             job.sc[k] = v
+        elif k == "comment_question":
+            job.sc.pop(k, None)            # no viewer questions (engagement-bait rule), not even the planner's draft
         elif k in ("what_happened_next", "outcome_vo") and v == "":
             job.sc.pop(k, None)            # facts don't give an outcome: say nothing rather than guess
     log("writer: " + json.dumps({k: v for k, v in w.items() if k != "problems"})[:600])
