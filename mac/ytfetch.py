@@ -33,7 +33,7 @@ def wanted(db):
 
 
 def main(db):
-    got, kept, errs = 0, 0, []
+    got, kept, errs, age = 0, 0, [], []
     for lead in wanted(db):
         if got >= MAX_PER_RUN:
             break
@@ -43,10 +43,22 @@ def main(db):
             continue
         tmp = Path(tempfile.mkdtemp(prefix="ytfetch_"))
         try:
-            runner._ytdlp(lead["source_url"], tmp)
+            try:
+                runner._ytdlp(lead["source_url"], tmp)
+            except Exception as e:
+                if "confirm your age" in str(e):
+                    raise
+                for p in tmp.iterdir():                # a 403 mid-download is usually one bad stream URL: retry once
+                    p.unlink()
+                runner._ytdlp(lead["source_url"], tmp)
             runner.save_mirror(f"{lead['id']}-post", tmp)
             got += 1
         except Exception as e:
+            if "confirm your age" in str(e):
+                # YouTube age-gates some OIS releases; we don't sign in for it. The agency's Facebook post or the
+                # records request is the way in, so it isn't a "Needs you" problem.
+                age.append((lead.get("title") or "")[:40])
+                continue
             errs.append(f"{(lead.get('title') or '')[:40]}: {str(e)[:120]}")
         finally:
             shutil.rmtree(tmp, ignore_errors=True)
@@ -54,7 +66,8 @@ def main(db):
         db.alert_once("yt_fetch", "Mac couldn't pull some agency YouTube posts: " + " | ".join(errs[:3]), "warn",
                       key="Mac couldn't pull some agency YouTube posts")
     return f"pulled {got} agency YouTube posts for the cloud publisher ({kept} already kept)" + \
-        (f"; {len(errs)} failed: {errs[:3]}" if errs else "")
+        (f"; {len(errs)} failed: {errs[:3]}" if errs else "") + \
+        (f"; {len(age)} age-restricted on YouTube (need the agency's Facebook post or the records request): {age}" if age else "")
 
 
 if __name__ == "__main__":
