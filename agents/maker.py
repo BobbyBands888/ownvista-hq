@@ -110,6 +110,41 @@ def _camera_note(lead):
             factcheck.CAMERA_WORDS[kind][2] + " 1\".")
 
 
+
+OIS_RX = re.compile(r"\b(officer|deputy|trooper|agent)[- ]involved shooting\b|\bOIS\b", re.I)
+BARE_SHOOTING = re.compile(r"(?<![Ii]nvolved )\b(shooting)\b", re.I)
+
+
+def ois_wording(text, lead):
+    """Compliance fails a bare "Shooting" when officers fired: a lead the agency calls an officer/deputy-involved
+    shooting always says so ("Erdman Shooting" -> "Erdman Officer-Involved Shooting")."""
+    if not isinstance(text, str) or not text:
+        return text
+    src = " ".join(str((lead or {}).get(k) or "") for k in ("title", "summary"))
+    m = OIS_RX.search(src)
+    if not m:
+        return text
+    who = (m.group(1) or "officer").capitalize() if m.group(1) else "Officer"
+    def rep(x):
+        w = x.group(1)
+        out = f"{who}-Involved {w}"
+        return out.upper() if w.isupper() else out
+    return BARE_SHOOTING.sub(rep, text)
+
+
+def apply_ois(ep, shorts, reels, case, lead):
+    case = ois_wording(case, lead)
+    for k in ("title", "cold_open_hook", "title_card", "thumbnail_text"):
+        ep[k] = ois_wording(ep.get(k), lead)
+    ep["thumbnail_texts"] = [ois_wording(t, lead) for t in ep.get("thumbnail_texts") or []]
+    for s in shorts:
+        for k in ("title", "on_screen_text"):
+            s[k] = ois_wording(s.get(k), lead)
+    for r in reels:
+        for k in ("hook_text", "caption"):
+            r[k] = ois_wording(r.get(k), lead)
+    return case
+
 def plan(lead, playbook, rejects=(), facts=None, graded=None, max_reels=None):
     n_reels = reel_count(lead, facts) if max_reels is None else min(reel_count(lead, facts), max_reels)
     fatal_note = (" Someone died in this case: say so plainly and respectfully; the renderer blurs the moment of death"
@@ -120,7 +155,9 @@ def plan(lead, playbook, rejects=(), facts=None, graded=None, max_reels=None):
                       " police interview (a lie or a tense exchange), never the crime or its aftermath.")
     return llm.ask(
         "You are the head of production for Ten-Four Tapes. Write production plans that follow the format exactly "
-        "and apply the playbook. Accuracy matters: only state facts present in the lead.\n" + RULES + "\n" + FORMAT,
+        "and apply the playbook. Accuracy matters: only state facts present in the lead. Name drugs, weapons and charges exactly as the lead "
+        "or case file says (cocaine is never \"cannabis\"), in thumbnails and hooks too. When officers fired and the "
+        "suspect did not, say \"officer-involved shooting\" (never a bare \"Shooting\" in a name or title).\n" + RULES + "\n" + FORMAT,
         "Playbook (what works right now):\n" + json.dumps(playbook) +
         ("\n\nBobby REJECTED these recently — don't repeat what he didn't like:\n" + json.dumps(list(rejects))
          if rejects else "") +
@@ -536,6 +573,7 @@ def main(db):
         title0 = ep.get("title")
         checked = factcheck.check({"episode": ep, "shorts": shorts, "reels": reels}, lead, facts)
         ep, shorts, reels = checked["episode"], checked["shorts"], checked["reels"]
+        case = apply_ois(ep, shorts, reels, case, lead)
         if ep.get("title") != title0 and not packaging.title_ok(
                 ep.get("title"), (ep.get("analysis_tags") or {}).get("title_formula"),
                 bool((facts or {}).get("outcome") or (facts or {}).get("sentence"))):
