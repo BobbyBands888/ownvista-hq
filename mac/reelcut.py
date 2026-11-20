@@ -366,18 +366,16 @@ def timeline(files, pk):
 
 
 def _facts(plan):
+    from writer import source_facts
     cf = plan.get("case_facts") or {}
-    lead = plan.get("lead") or {}
-    return {"agency": lead.get("agency_name") or plan.get("source_credit"), "state": lead.get("state"),
-            "date": lead.get("incident_date"), "agency_statement": (lead.get("summary") or plan.get("agency_text") or "")[:2500],
-            "lead_title": lead.get("title"), "case": plan.get("case_name"),
+    return {**source_facts(plan), "case": plan.get("case_name"),
             "case_file": {k: cf.get(k) for k in ("suspect_name", "suspect_age", "say_name", "why", "charges", "status",
                                                  "outcome", "sentence") if cf.get(k) not in (None, "", [])}}
 
 
 def write(job, log=print):
     """Captions, narrator lines with timings, title pill, end card and the Facebook caption, from the agency text."""
-    from writer import RULES, _cam, _ask
+    from writer import RULES, _cam, _ask, pick_true
     from agents import casefacts
     pk, plan, sc = job.pick, job.plan, job.sc
     total = pk["total"]
@@ -399,7 +397,8 @@ def write(job, log=print):
              f"""
 
 Write:
-- title: the place as "CITY, STATE" in capitals (e.g. "KETTERING, OH"), from FACTS only; "" if FACTS don't give it
+- title: the place as "CITY, ST" in capitals (the city and state named in FACTS — never a place from an example);
+  "" if FACTS don't give it
 - captions: short on-screen lines that follow the beats, 2-6 words per line, max 2 lines (use \\n), each with
   "t":[from,to] in Reel seconds. The FIRST caption is the hook: "t":[0,{HOOK_SECS:.0f}], "big":true, 2-4 words, the
   biggest stakes ("SHOTS FIRED\\nAT TROOPERS"). Set "yellow":true on the 1-3 biggest moments. Cover the Reel end to end.
@@ -409,12 +408,27 @@ Write:
   "action)." if story else "One setup line at the start; at most one more."} Leave gaps over the LOUD MOMENTS.
   The last line may sit at {total:.1f} (on the end card) and says how it ended, from FACTS only.
 - ended: the end-card text, max 2 short lines (\\n), how it ended from FACTS only ("" if FACTS don't say)
-- caption: Facebook caption line 1: PLACE. STAKES in under 12 words (e.g. 'Kettering, Ohio. A stolen Suburban rams
-  two cruisers at a gas pump.'), no question
+- hook_options: 3 different hooks for the first caption, strongest first, 2-5 words each (2 lines max with \\n):
+  the most dramatic TRUE fact from FACTS ("NEARLY 90 MPH\\nON I-670", "WANTED FOR\\nVIOLENT ROBBERIES")
+- caption_options: 3 Facebook captions (line 1), strongest first: PLACE. STAKES in under 14 words, every fact from
+  FACTS (STYLE ONLY, a different case: 'Kettering, Ohio. A stolen Suburban rams two cruisers at a gas pump.'),
+  no question
 - hashtags: 3-4 tags
 Return JSON {{"title":"","captions":[{{"t":[0,{HOOK_SECS:.0f}],"text":"","big":true}}],"vo":[{{"at":0.3,"text":""}}],
-"ended":"","caption":"","hashtags":[""]}}""")
-    w = _sanitize(j if isinstance(j, dict) else {}, total, story)
+"ended":"","hook_options":["","",""],"caption_options":["","",""],"hashtags":[""]}}""")
+    j = j if isinstance(j, dict) else {}
+    w = _sanitize(j, total, story)
+    hook = pick_true(j.get("hook_options"), plan, sc, log, "hook")
+    if hook:
+        hook = "\n".join(l.strip() for l in hook.replace("\\n", "\n").split("\n")[:2] if l.strip())[:60]
+        if w["captions"] and w["captions"][0]["t"][0] < 1.0:
+            w["captions"][0]["text"] = hook
+        else:
+            w["captions"].insert(0, {"t": [0.0, round(min(HOOK_SECS, total), 2)], "text": hook, "big": True, "yellow": False})
+        w["captions"][0]["big"] = True
+    cap = pick_true(j.get("caption_options") or [j.get("caption")], plan, sc, log, "caption")
+    if cap:
+        w["caption"] = cap[:160]
     w = _factcheck(w, plan, log)
     return w
 

@@ -601,8 +601,8 @@ def render(db):
         if it["kind"] == "short" and it.get("parent_id"):
             ep = db.select("content", {"id": f"eq.{it['parent_id']}", "select": "status,approval_status"})
             it["episode_planned"] = bool(ep) and ep[0].get("status") != "failed" and ep[0].get("approval_status") != "rejected"
-        if it["kind"] == "reel" and it.get("lead_id"):
-            # the agency's own statement: the only source for the Reel's captions and narrator lines
+        if it.get("lead_id"):
+            # the agency's own statement: the only source for every caption, hook and narrator line (all kinds)
             ld = db.select("leads", {"id": f"eq.{it['lead_id']}",
                                      "select": "title,agency_name,state,incident_date,summary,source_type,notes"})
             it["lead"] = ld[0] if ld else None
@@ -659,9 +659,9 @@ def render(db):
                             if ws.get("title_formula"):
                                 upd["script"]["analysis_tags"] = {**tags, "title_formula": ws["title_formula"]}
                         if it["kind"] == "reel" and ws.get("caption"):
-                            # Facebook caption from the locked cut: place + stakes, one question, credit, tags
+                            # Facebook caption from the locked cut: place + stakes (no question), credit, tags
                             upd["description"] = "\n".join(x for x in [
-                                (ws["caption"] + " " + (ws.get("question") or "")).strip(),
+                                ws["caption"].strip(),
                                 "Full episode on YouTube: Ten-Four Tapes", it.get("source_credit") or "",
                                 " ".join(ws.get("hashtags") or [])] if x)
                 except Exception:
