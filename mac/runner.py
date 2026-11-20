@@ -755,6 +755,7 @@ def set_thumbnail(db, it, vid):
         db.alert("publisher", f"Thumbnail not set on '{it['title']}': {str(e)[:200]}", "warn")
 
 YT_UPLOADS_PER_DAY = 6     # YouTube API: 10,000 units/day, an upload costs 1,600
+YT_SHORT_MAX = 180         # a YouTube Short is 3 min max; a longer full-clip Reel stays Facebook-only
 
 def reel_to_youtube(db, it, cap, ep_yt):
     """Cross-post a standalone Reel as a YouTube Short, inside the API's daily upload budget."""
@@ -763,6 +764,9 @@ def reel_to_youtube(db, it, cap, ep_yt):
     if used >= YT_UPLOADS_PER_DAY:
         return None
     sc = it.get("script") if isinstance(it.get("script"), dict) else {}
+    secs = _seconds(it["media_path"]) or float((sc.get("cut") or {}).get("total") or 0)
+    if secs > YT_SHORT_MAX - 1:
+        return None
     first = (cap.splitlines() or [""])[0]
     title = (sc.get("hook_text") or first or it["case_name"]).strip()
     title = (title[:88].rstrip() + " #shorts")[:100]
@@ -805,7 +809,34 @@ def fb_page_token():
     _FB_TOKEN = tok
     return tok
 
+FB_REEL_MAX = 90   # Reels Publishing API: 3-90s. A longer full clip goes up as a regular Page video instead.
+
+
+def _seconds(path):
+    try:
+        sys.path.insert(0, str(Path(__file__).resolve().parent))
+        import media
+        return media.probe(path)["duration"]
+    except Exception:
+        return 0.0
+
+
+def facebook_video(path, caption):
+    """Full-length clip (over 90s) as a regular Page video; Facebook shows vertical videos in the Reels feed."""
+    tok = fb_page_token()
+    with open(path, "rb") as f:
+        r = requests.post(FB.replace("graph.facebook.com", "graph-video.facebook.com") +
+                          f"{config.FB_PAGE_ID.strip()}/videos",
+                          data={"description": caption[:5000], "published": "true", "access_token": tok},
+                          files={"source": (Path(path).name, f, "video/mp4")}, timeout=3600).json()
+    if not r.get("id"):
+        raise RuntimeError(f"FB video upload failed ({fb_token_info(tok, config.FB_PAGE_ID.strip())['detail']}): {r}")
+    return r["id"]
+
+
 def facebook_reel(path, caption):
+    if _seconds(path) > FB_REEL_MAX - 0.5:
+        return facebook_video(path, caption)
     tok = fb_page_token()
     start = requests.post(FB + f"{config.FB_PAGE_ID.strip()}/video_reels",
                           params={"upload_phase": "start", "access_token": tok}, timeout=60).json()

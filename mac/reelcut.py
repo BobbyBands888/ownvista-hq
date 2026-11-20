@@ -1,7 +1,7 @@
 """BODYCAM REEL (Nov 18 rebuild) — the Reel path, ported from tools/manual_reels (Kettering / Thurston).
 
 Two cuts per strong case (Meta: 10-30s drives reach, 30s-3min drives engagement):
-  story  60-95s: hook (big yellow text, first 4s) -> dash / approach -> bodycam action -> arrest -> 3s "How it ended"
+  story  60s-8min: the FULL clip (Nov 20). hook (big yellow text, first 4s) -> dash / approach -> bodycam action -> arrest -> 3s "How it ended"
   action 20-30s: the same incident, nothing but the action, one narrator line, same end card
 Every second of action is kept; slates, maps, text screens are cut. A second officer's angle of the key moment
 stays in when it shows it better (one per Reel, Bobby Nov 19); every camera is tagged BODY CAM 1 / 2, DASH CAM.
@@ -31,7 +31,8 @@ import camlabel  # noqa: E402
 import media  # noqa: E402
 import picker  # noqa: E402
 
-STORY = (60.0, 95.0)
+STORY = (60.0, 480.0)     # Bobby, Nov 20: the full clip, as long as the action runs (4 min+ is fine)
+STORY_CODE_MAX = 150.0    # cutting by code (no model): stop at the strong beats, never pad to 8 min
 ACTION = (20.0, 30.0)
 END_SECS = 3.2            # "How it ended" card, frozen last frame under it
 HOOK_SECS = 4.0           # big yellow hook text
@@ -177,18 +178,19 @@ def _llm_story(files, plan, lo, hi):
         picker.describe(files) + "\n\nAGENCY STATEMENT (what happened):\n" + str(facts)[:2500] +
         f"\n\nThe Reel: {sc.get('moment') or plan.get('title') or plan.get('case_name')}\n" + picker.redo(plan) +
         f"""
-Cut ONE {lo:.0f}-{hi:.0f}s story in segments, in the order events happened:
+Cut ONE story of the WHOLE incident, start to finish, in segments, in the order events happened. Length is
+whatever the real action runs ({lo:.0f}s minimum, {hi:.0f}s maximum); several minutes is fine, but never pad:
 dash / approach (short, only if something is visible) -> the bodycam action (rams, chase, Taser, struggle, shots)
 -> the arrest. Keep EVERY second of real action. Cut slates, text screens, maps, cruiser interiors with nothing
 outside, walking, paperwork. A second officer's angle of a moment already in the cut only when it shows THE key
-moment (shots, the crash, the takedown) better: at most one, right after the first angle. Segments 4-35s each.
+moment (shots, the crash, the takedown) better: at most one, right after the first angle. Segments 4-90s each.
 "cam" names whose camera it is, the same name every time that camera appears: use the agency's own on-screen
 label or the officer's role ("deputy 1", "sergeant", "dash unit 12"); a file usually holds one camera, but agency
 edits switch between officers' cameras inside one file.
 Return JSON {{"segments":[{{"file":0,"start":18.0,"end":30.0,"cam":"deputy 1","beat":"spike strip, car hits barrier"}}]}}""")
     out = []
     for p in (j.get("segments") or []) if isinstance(j, dict) else []:
-        c = picker.clamp(files, p, MIN_SEG, 40)
+        c = picker.clamp(files, p, MIN_SEG, 90)
         if c:
             c["beat"] = str(p.get("beat") or "")[:80]
             if p.get("cam"):
@@ -303,8 +305,9 @@ def pick(files, plan, cache):
                 c["score"] -= 4 * sum(S_of(c["file"])["gore"][int(c["start"]):int(c["end"])])
         cands.sort(key=lambda c: -c["score"])
         chosen = []
+        cap = min(hi, STORY_CODE_MAX) if kind == "story" else hi
         for c in cands:
-            if _total(chosen) >= hi:
+            if _total(chosen) >= cap:
                 break
             if kind == "action":                    # tightest version of each beat: 12s around its peak
                 S = S_of(c["file"])

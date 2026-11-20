@@ -179,8 +179,8 @@ Return JSON:
    "analysis_tags":{"pillar":"Case File|Pursuit|Border|Update","title_formula":"Person + action + twist|Situation + realization|Place + incident + bodycam|Outcome tease|Number + stakes","thumbnail_type":"weapon|crash|face|scene","case_type":"pursuit|shooting|standoff|rescue|death in story|other"}},
  "shorts":[{"part":1,"title":"<Case Name> Part 1","moment":"which moment to cut","on_screen_text":"",
    "intro_vo":"Part 1 only: 1-2 spoken sentences (max 24 words): place, who, why police were there","outcome_vo":"Part 3 only: how it ended (max 25 words) or \"\""}],
- "reels":[{"moment":"one single 25-30s action moment, different from the other reels","hook_text":"the exact words shown on screen in the first 2 seconds (max 9 words; the text itself, never an instruction like 'First 2s: ...')","caption":"PLACE. STAKES of THIS moment (under 10 words) + optional one concrete visible detail; no question","hashtags":["#bodycam"],"intro_vo":"1-2 spoken sentences (max 24 words) the narrator reads over the opening seconds: place, who, why police were there","outcome_vo":"how it ended (max 25 words) or \"\""}]}
-3 shorts and """ + (f"exactly {n_reels} reels, each a different single moment in story order, each standalone." + fatal_note
+ "reels":[{"moment":"reel 1: the whole incident start to finish; later reels: one single 20-30s action moment each, all different","hook_text":"the exact words shown on screen in the first 2 seconds (max 9 words; the text itself, never an instruction like 'First 2s: ...')","caption":"PLACE. STAKES of THIS moment (under 10 words) + optional one concrete visible detail; no question","hashtags":["#bodycam"],"intro_vo":"1-2 spoken sentences (max 24 words) the narrator reads over the opening seconds: place, who, why police were there","outcome_vo":"how it ended (max 25 words) or \"\""}]}
+"shorts":[] (no Part Shorts: every Reel also goes to YouTube as a standalone Short) and """ + (f"exactly {n_reels} reels, each standalone, in story order. Reel 1 is the FULL clip: the whole incident start to finish (approach, the action, the arrest / how it ended), as long as the real action runs, several minutes is fine. The other reels are each one different single 20-30s action moment." + fatal_note
                     if n_reels else "no reels (\"reels\":[])."), max_tokens=2800, temperature=0.6)
 
 def scorecard_examples(db):
@@ -544,7 +544,7 @@ def main(db):
         src_type = lead["source_type"]
         ep = fix_packaging(ep, lead, facts)
         ep["analysis_tags"] = analysis_tags(ep.get("analysis_tags"), lead)
-        shorts = [s for s in p.get("shorts", []) if isinstance(s, dict)][:fit["shorts"]]
+        shorts = [s for s in p.get("shorts", []) if isinstance(s, dict)][:fit["shorts"]]   # 0 while footage.SHORTS_ON is off
         # standalone single-moment Reels (count from reel_count); rescues get the episode + Shorts only
         want = min(reel_count(lead, facts), fit["reels"])
         reels, seen = [], set()
@@ -601,9 +601,9 @@ def main(db):
                          "script": r, "source_type": src_type, "source_credit": credit,
                          "source_urls": [lead.get("source_url")]})
         n_reel += sum(1 for r in rows if r["kind"] == "reel")
-        if secs is not None and (not fit["episode"] or fit["shorts"] < 3):
+        if secs is not None and not fit["episode"]:
             db.alert("maker", f"{case}: only {secs}s of footage, so planned "
-                     f"{'an episode, ' if fit['episode'] else 'no episode, '}{min(fit['shorts'], 3)} Shorts and "
+                     f"{'an episode and ' if fit['episode'] else 'no episode, '}"
                      f"{sum(1 for r in rows if r['kind'] == 'reel')} Reels", "info")
         db.insert("content", rows)
         db.update("leads", {"id": f"eq.{lead['id']}"}, {"status": "used"})
