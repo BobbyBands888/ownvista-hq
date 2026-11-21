@@ -1006,6 +1006,75 @@ def _save_tries(db, tries):
     except Exception:
         pass
 
+SCREEN_PER_RUN = int(os.environ.get("TFT_SCREEN_PER_RUN", "2"))
+SCREEN_TRIES = 3
+
+
+def _save_setting(db, key, value):
+    db.insert("settings", {"key": key, "value": value, "updated_at": _now().isoformat()}, upsert=True, on_conflict="key")
+
+
+def screen_leads(db):
+    """WATCH THE FOOTAGE BEFORE ANYTHING IS PLANNED. For obtained leads Maker hasn't planned yet: download the
+    footage, run the vision pass (plus the 1 fps pass around shots / peaks), and save what is actually on screen as
+    settings["screen:<lead id>"]. Maker plans only leads with a screen, from its moments, and sizes the plan by
+    its real length. Leads with no clean peak action are skipped (Oakfield, Nov 21: the lead promised a PIT and a
+    Taser; the video was headlights and a hands-up surrender)."""
+    if not config.GROQ_API_KEY:
+        return "no vision key"
+    sys.path.insert(0, str(REPO / "mac"))
+    import picker
+    from agents import danger
+    from agents.lib.sources import is_military_op, is_people_smuggling
+    pool = db.select("leads", {"status": "eq.obtained", "order": "action_score.desc", "limit": 60})
+    pool = [l for l in pool if not is_military_op(l) and not is_people_smuggling(l)]
+    pool.sort(key=danger.key)                       # most on-screen danger first, like every other agent
+    out = []
+    for lead in pool:
+        if len(out) >= SCREEN_PER_RUN:
+            break
+        key = f"screen:{lead['id']}"
+        prev = db.setting(key) or {}
+        if prev.get("verdict") in ("action", "no_action", "case") or prev.get("tries", 0) >= SCREEN_TRIES:
+            continue
+        dest = FOOTAGE / str(lead["id"])
+        name = (lead.get("title") or "")[:60]
+        try:
+            ok = ensure_footage(db, {"lead_id": lead["id"], "case_name": name})
+        except Exception as e:
+            ok = False
+            print(f"screen: footage for {name}: {e}", flush=True)
+        if not ok:
+            _save_setting(db, key, {"verdict": "no_footage", "tries": prev.get("tries", 0) + 1, "at": _now().isoformat()})
+            out.append(f"{name[:30]}: no footage")
+            continue
+        try:
+            files = picker.analyse(dest, config.GROQ_API_KEY, log=lambda m: print(m, flush=True))
+            s = picker.screen_summary(files)
+        except Exception as e:
+            _save_setting(db, key, {"verdict": "error", "tries": prev.get("tries", 0) + 1, "error": str(e)[:300],
+                                    "at": _now().isoformat()})
+            out.append(f"{name[:30]}: error")
+            _free_footage(dest)
+            continue
+        verdict = picker.screen_verdict(s)
+        if lead.get("category") == "case_story" and verdict == "no_action":
+            verdict = "case"                        # interview / 911 case stories are calm by nature: Maker decides
+        s.update(verdict=verdict, at=_now().isoformat(),
+                 tries=prev.get("tries", 0) + (1 if verdict == "incomplete" else 0))
+        _save_setting(db, key, s)
+        notes = footage.tag(lead.get("notes"), s["secs"])
+        if verdict == "no_action":
+            db.update("leads", {"id": f"eq.{lead['id']}"}, {"status": "skipped", "notes": (
+                notes + f"\nscreen: watched {s['secs']}s, only {s['peak_secs']}s of clean peak action "
+                        f"(needs {picker.SCREEN_MIN_PEAK}s+): not exciting enough to make").strip()})
+        else:
+            db.update("leads", {"id": f"eq.{lead['id']}"}, {"notes": notes})
+        _free_footage(dest)                         # keeps the .tft_*.json analysis: renders reuse it
+        out.append(f"{name[:30]}: {verdict} ({s['peak_secs']}s peak / {s['secs']}s)")
+    return "; ".join(out) or "nothing to watch"
+
+
 def main(db):
     d = 0 if CLOUD else download_footage(db)
     r = render(db)
@@ -1014,8 +1083,13 @@ def main(db):
     except Exception as e:
         rc = f"error {e}"
     p = publish(db)
+    try:
+        sc = screen_leads(db)
+    except Exception as e:
+        sc = f"error {str(e)[:200]}"
     k = keep_copies(db) if CLOUD else "-"
-    return f"downloaded {d} files, rendered {r}, auto-checked {rc} older renders, {p}; footage copies: {k}"
+    return (f"downloaded {d} files, rendered {r}, auto-checked {rc} older renders, {p}; watched leads: {sc}; "
+            f"footage copies: {k}")
 
 if __name__ == "__main__":
     ok = run_agent("publisher" if CLOUD else "mac_runner", main)

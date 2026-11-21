@@ -69,6 +69,10 @@ def analyse(folder, groq_key, log=print):
         look(folder, files, log)
         media.save_json(folder / ANALYSIS, {"files": files + [f for f in media.load_json(folder / ANALYSIS, {"files": []})["files"]
                                                          if f["path"] not in {x["path"] for x in files}]})
+    if any(f.get("vision_ok") and f.get("dense_v") != DENSE_V for f in files):
+        densify(folder, files, log)
+        media.save_json(folder / ANALYSIS, {"files": files + [f for f in media.load_json(folder / ANALYSIS, {"files": []})["files"]
+                                                         if f["path"] not in {x["path"] for x in files}]})
     return files
 
 
@@ -186,6 +190,119 @@ def frange(a, b, step):
         t += step
 
 
+# ---------------- dense pass: every second around the danger ----------------
+# Glendale knife reels (Nov 21): the shot suspect lay limp on the floor for ~4s between two 5s vision samples, both
+# read "no gore", and the gap borrowed their label, so he went out unblurred. Shootings, crashes and takedowns are
+# where a downed person appears, so those stretches are read frame by frame, and after shots are fired every second
+# nobody read counts as aftermath (blurred / cut), never as clean.
+DENSE_V = 1
+DENSE_STEP = 1.0
+SHOT_AFTER = 45            # seconds after shots that must be read 1 fps before they count as clean
+HOT_AFTER = 15             # same for other peak moments (crash, tackle, weapon)
+HOT_BEFORE = 3
+MAX_DENSE = int(os.environ.get("TFT_DENSE_FRAMES", "270"))     # per case (30 vision calls)
+SHOT_WORDS = re.compile(r"\bshots? fired\b|\bshoot(?:ing)?\b|\bshots\b|\bhe'?s (?:been )?shot\b|\bi'?m hit\b|"
+                        r"\bman down\b|\bofficer down\b", re.I)
+SHOT_DESC = re.compile(r"\bshoot|\bshots?\b|\bfir(?:es|ing|ed)\b|muzzle", re.I)
+HOT_DESC = re.compile(r"\bgun\b|\bknife\b|weapon|taser|tackl|struggl|crash|on the ground|\bdown\b|lying|fight", re.I)
+
+
+def shot_times(f):
+    """Seconds where shots are fired in this file: transcript lines and vision captions. [] if none."""
+    ts = [float(s.get("start", 0)) for s in f.get("transcript") or [] if SHOT_WORDS.search(s.get("text") or "")]
+    ts += [float(v["t"]) for v in f.get("vision") or [] if SHOT_DESC.search(v.get("desc") or "")]
+    return sorted(ts)
+
+
+def hot_windows(f):
+    """[(start, end)] stretches to read every second: after any shots (SHOT_AFTER) and around peak moments."""
+    n = float(f["duration"])
+    w = [(t - HOT_BEFORE, t + SHOT_AFTER) for t in shot_times(f)]
+    for v in f.get("vision") or []:
+        if v.get("dense"):
+            continue
+        if v.get("action", 0) >= 3 or v.get("gore") or (v.get("action", 0) >= 2 and HOT_DESC.search(v.get("desc") or "")):
+            w.append((v["t"] - HOT_BEFORE - 2, v["t"] + HOT_AFTER))
+    w = sorted((max(0.0, a), min(n, b)) for a, b in w if b > 0)
+    out = []
+    for a, b in w:
+        if out and a <= out[-1][1] + 2:
+            out[-1] = (out[-1][0], max(out[-1][1], b))
+        else:
+            out.append((a, b))
+    return out
+
+
+def densify(folder, files, log=print):
+    """Read every second of each file's hot windows (cached in the analysis with "dense": True)."""
+    from agents.lib import llm
+    import time
+    budget, fails = MAX_DENSE, 0
+    # shootings first: their windows matter most if the budget runs out
+    for f in sorted(files, key=lambda f: -len(shot_times(f))):
+        if not f.get("vision_ok"):
+            continue
+        got = {v["t"]: v for v in f.get("vision") or []}
+        dense_t = {round(t) for t, v in got.items() if v.get("dense")}
+        want = []
+        for a, b in hot_windows(f):
+            want += [float(t) for t in range(int(a), int(min(b, f["duration"] - 0.5)) + 1) if t not in dense_t]
+        want = sorted(set(want))[:budget]
+        done = True
+        for k in range(0, len(want), SHEET):
+            chunk = want[k:k + SHEET]
+            if fails >= 5:
+                done = False
+                break
+            try:
+                time.sleep(VISION_GAP)
+                img = media.contact_sheet(Path(folder) / f["path"], chunk)
+                j = llm.see(LOOK_PROMPT.format(n=len(chunk)), img,
+                            check=lambda r, c=len(chunk): len(frames_of(r, c)) >= max(1, c // 2))
+                for n, fr in frames_of(j, len(chunk)).items():
+                    got[chunk[n]] = {"t": chunk[n], "view": str(fr.get("view", ""))[:12],
+                                     "action": _int03(fr.get("action")),
+                                     "child": _true(fr.get("child")), "gore": _true(fr.get("gore")),
+                                     "desc": str(fr.get("desc", ""))[:80], "dense": True}
+                fails = 0
+            except Exception as e:
+                fails += 1
+                done = False
+                log(f"dense vision error: {str(e)[:300]}")
+                time.sleep(20 * fails)
+        budget -= len(want)
+        f["vision"] = sorted(got.values(), key=lambda v: v["t"])
+        if done and budget >= 0:
+            f["dense_v"] = DENSE_V          # unread hot seconds stay unsafe (gore_secs) until a later run reads them
+        log(f"dense vision {f['path']}: {len(want)} frames around {len(hot_windows(f))} hot moment(s)")
+        _VA.clear()
+    return files
+
+
+def gore_secs(f, n=None):
+    """Per-second 0/1: 1 where a downed / injured person may be on screen. Conservative on purpose:
+    - a gore frame marks its neighbours too (dense frame: +-1s; sampled frame: +-half the sample step + 1s)
+    - after shots, every second not read 1 fps (within 1s) counts as gore until the dense pass clears it."""
+    n = n or int(f["duration"]) + 1
+    g = [0] * n
+    fr = f.get("vision") or []
+    half = max(2, int(float(f.get("vision_step") or 5.0) / 2) + 1)
+    dense = [0] * n
+    for v in fr:
+        t = int(round(v["t"]))
+        r = 1 if v.get("dense") else half
+        if v.get("dense") and 0 <= t < n:
+            dense[t] = 1
+        if v.get("gore"):
+            for k in range(max(0, t - r), min(n, t + r + 1)):
+                g[k] = 1
+    for s in shot_times(f):
+        for t in range(max(0, int(s)), min(n, int(s) + SHOT_AFTER + 1)):
+            if not any(dense[k] for k in range(max(0, t - 1), min(n, t + 2))):
+                g[t] = 1
+    return g
+
+
 # Words that only come after someone is down. From AFTERMATH_LEAD s before the first one to the end of that file is
 # treated like gore: vision samples every few seconds and can miss a body; the audio doesn't.
 AFTERMATH = re.compile(r"\bno pulse\b|check (?:the |his |her |for a )?pulse|\bcpr\b|compressions|not breathing|"
@@ -226,6 +343,7 @@ def vis(f):
     # A second with no read frame nearby is unknown, and unknown counts as unsafe: since files may now pass with
     # up to 10% of frames unread (PR #18), a gap must never borrow a neighbour's "no child / no gore" label.
     gap = max(8.0, 1.6 * float(f.get("vision_step") or 5.0))
+    g = gore_secs(f, n)                             # never borrowed from the nearest clean frame (see densify)
     for t in range(n):
         while j + 1 < len(fr) and abs(fr[j + 1]["t"] - t) <= abs(fr[j]["t"] - t):
             j += 1
@@ -238,8 +356,8 @@ def vis(f):
         dull[t] = 1.0 if v["view"] == "screen" or (v["action"] < 2 and (v["view"] in ("inside_car", "black")
                                                                          or v["action"] == 0)) else 0.0
         child[t] = 1.0 if v["child"] else 0.0
-        gore[t] = 1.0 if v["gore"] or (blur_from is not None and t >= blur_from) else 0.0
-        bad[t] = 1.0 if v["child"] or v["gore"] or (after is not None and t >= after) else 0.0
+        gore[t] = 1.0 if g[t] or (blur_from is not None and t >= blur_from) else 0.0
+        bad[t] = 1.0 if v["child"] or g[t] or (after is not None and t >= after) else 0.0
         screen[t] = 1.0 if v["view"] == "screen" else 0.0
     out = {"act": act, "dull": dull, "bad": bad, "screen": screen, "child": child, "gore": gore}
     _VA[key] = out
@@ -256,6 +374,50 @@ def on_screen(f, s, e):
     if n <= 0:
         return None
     return (sum(v["act"][a:b]) / n, sum(v["dull"][a:b]) / n, any(v["bad"][a:b]))
+
+
+def screen_summary(files):
+    """What the footage SHOWS, for Maker to plan from (Oakfield, Nov 21: the lead text said PIT + Taser; the video
+    was 4 minutes of headlights and a hands-up surrender). Clean action seconds only: no child / gore / slates."""
+    secs = tense = peak = 0
+    moments, shots = [], []
+    for f in files:
+        v = vis(f)
+        secs += float(f["duration"])
+        if v:
+            for t in range(len(v["act"])):
+                if v["bad"][t] or v["screen"][t] or v["dull"][t]:
+                    continue
+                tense += v["act"][t] >= 2
+                peak += v["act"][t] >= 3
+        shots += [(f["path"], round(t)) for t in shot_times(f)]
+        for fr in f.get("vision") or []:
+            if fr.get("action", 0) >= 2 and not fr.get("child") and fr.get("view") not in ("screen", "black"):
+                moments.append({"file": f["path"], "t": round(fr["t"]), "action": fr["action"],
+                                "desc": fr.get("desc") or "", "aftermath": bool(fr.get("gore"))})
+    moments.sort(key=lambda m: (-m["action"], m["file"], m["t"]))
+    keep = []
+    for m in moments:                                # one line per moment: frames within 10s are the same moment
+        if not any(k["file"] == m["file"] and abs(k["t"] - m["t"]) < 10 for k in keep):
+            keep.append(m)
+        if len(keep) >= 15:
+            break
+    keep.sort(key=lambda m: (m["file"], m["t"]))
+    return {"secs": round(secs), "tense_secs": int(tense), "peak_secs": int(peak),
+            "n_moments": sum(1 for m in keep if not m["aftermath"]), "moments": keep,
+            "shots": [{"file": p, "t": t} for p, t in shots[:10]],
+            "vision_ok": all(f.get("vision_ok") for f in files)}
+
+
+SCREEN_MIN_PEAK = 3      # clean seconds of PEAK action (struggle, tackle, crash, shots, foot chase in view) a lead
+                         # needs to be made at all. A pursuit that is only taillights ahead (Oakfield) doesn't pass:
+                         # Bobby, Nov 21: "we need good high action content like our competitors".
+
+
+def screen_verdict(s):
+    if not s.get("vision_ok"):
+        return "incomplete"
+    return "action" if s["peak_secs"] >= SCREEN_MIN_PEAK else "no_action"
 
 
 SHORT_BLUR_MAX = 10   # seconds of death / body a Short may keep under a full-frame blur (same cap as Reels)

@@ -65,7 +65,13 @@ NEWS_QUERIES = [
                 "deputies body camera footage shows", "police release video of arrest",
                 # the genres the biggest bodycam channels live on: DUI stops, sovereign citizens, meltdowns, interrogations
                 "DUI arrest bodycam video", "sovereign citizen arrest bodycam", "bodycam shows woman arrested after crash",
-                "bodycam video shows man refuses", "interrogation video released police", "shoplifting arrest bodycam"]
+                "bodycam video shows man refuses", "interrogation video released police", "shoplifting arrest bodycam",
+                # Bobby, Nov 21: shootings and high-action arrests, like the competitors. Maker only plans what the
+                # footage shows on screen (mac/runner.py screen_leads), and the renderer blurs any downed person.
+                "officer-involved shooting bodycam released", "deputy shot at bodycam video released",
+                "armed suspect bodycam video released", "police shootout bodycam", "suspect fires at officers video",
+                "K9 apprehension bodycam", "suspect fights officer bodycam", "pursuit ends in crash dash cam video",
+                "foot chase bodycam video released", "carjacking suspect arrest bodycam"]
 LOOKBACK_DAYS = 7
 
 def _now():
