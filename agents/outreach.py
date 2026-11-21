@@ -194,6 +194,24 @@ def verify(lead, agency):
                   'and the name/case number if known","why":"one line"}', max_tokens=700, temperature=0.1)
     return out if isinstance(out, dict) else {}
 
+
+def keep_if_posted(db, lead, why, who):
+    """A request that can't be sent never throws away a lead the agency already posted itself: that post is a
+    direct release (Nov 20 rule), so the lead goes to Maker instead. Nov 21: the JSO Nov 1 shooting (action 9),
+    a Volusia K-9 catch (action 10) and a Bibb County pursuit were all skipped for "no specific incident date"
+    though each was on the agency's own channel. -> True when kept."""
+    from . import agencypost
+    post = agencypost.url_of(lead)
+    if not post or (lead.get("source_type") != "agency_release" and "agency post:" not in (lead.get("notes") or "")):
+        return False
+    note = (f"agency post: {post} (official channel: {lead.get('agency_name')}). "
+            if "agency post:" not in (lead.get("notes") or "") else "")
+    db.update("leads", {"id": f"eq.{lead['id']}"}, {"status": "obtained", "notes": (
+        note + (lead.get("notes") or "") + f"\n{who} {datetime.now(timezone.utc):%Y-%m-%d}: raw request held "
+        f"({why}); building from the agency's own post").strip()})
+    return True
+
+
 def ready_to_send(chk, agency, lead=None):
     """Agency and state confirmed, a specific date, and one more identifier (name, case number or exact place).
     Case stories: the holder and state confirmed, the case closed, no minor involved, and the defendant's name."""
@@ -374,6 +392,8 @@ def main(db):
             continue
         if not ok:
             held += 1
+            if chk.get("same_agency", True) and keep_if_posted(db, lead, why, "outreach check"):
+                continue
             note = f"outreach check {_now():%Y-%m-%d}: not sent — {why}"
             upd = {"notes": ((lead.get("notes") or "") + "\n" + note).strip()}
             if not chk.get("same_agency") and chk.get("agency"):
