@@ -63,6 +63,7 @@ def seconds(f):
     act, screen, child, gore, unk = [0.0] * n, [0] * n, [0] * n, [0] * n, [0] * n
     gap = max(8.0, 1.6 * float(f.get("vision_step") or 5.0))
     j = 0
+    g = picker.gore_secs(f, n)     # a gore frame marks its neighbours; unread seconds after shots count as gore
     for t in range(n):
         if not fr:
             unk[t] = 1
@@ -76,7 +77,7 @@ def seconds(f):
         act[t] = float(v.get("action") or 0)
         screen[t] = 1 if v.get("view") in ("screen", "black") else 0
         child[t] = 1 if v.get("child") else 0
-        gore[t] = 1 if v.get("gore") else 0
+        gore[t] = 1 if g[t] else 0
     # a child frame poisons its neighbours too (vision samples every few seconds)
     for t in [t for t in range(n) if child[t]]:
         for k in range(max(0, t - 4), min(n, t + 5)):

@@ -145,7 +145,23 @@ def apply_ois(ep, shorts, reels, case, lead):
             r[k] = ois_wording(r.get(k), lead)
     return case
 
-def plan(lead, playbook, rejects=(), facts=None, graded=None, max_reels=None):
+def on_screen_note(screen):
+    """The watched footage, for the planner: what a viewer will actually see (mac/picker.py screen_summary)."""
+    if not screen or not screen.get("moments"):
+        return ""
+    lines = [f"- {m['file']} @{m['t']}s (action {m['action']}/3{', aftermath: blurred' if m.get('aftermath') else ''}): "
+             f"{m['desc']}" for m in screen["moments"]]
+    shots = "; ".join(f"{s['file']} @{s['t']}s" for s in screen.get("shots") or [])
+    return ("\n\nON SCREEN — we watched the footage. These are the moments a viewer will actually see "
+            f"({screen.get('secs')}s of video, {screen.get('peak_secs')}s of peak action):\n" + "\n".join(lines) +
+            (f"\nShots fired at: {shots}" if shots else "") +
+            "\nPromise only what is on this list. A title, cold open, hook, thumbnail text, on-screen text or Reel "
+            "caption may name an action (PIT, crash, Taser, shots fired, fight, K9, foot chase, surrender) ONLY if it "
+            "is on this list. The case file can say how it ended; put that in what_happened_next / outcome_vo, never "
+            "as a promise of footage. Build every Reel around one listed moment and say which in its \"moment\".")
+
+
+def plan(lead, playbook, rejects=(), facts=None, graded=None, max_reels=None, screen=None):
     n_reels = reel_count(lead, facts) if max_reels is None else min(reel_count(lead, facts), max_reels)
     fatal_note = (" Someone died in this case: say so plainly and respectfully; the renderer blurs the moment of death"
                   " and any body full-frame, so never describe injuries or the body in hooks or captions."
@@ -165,7 +181,7 @@ def plan(lead, playbook, rejects=(), facts=None, graded=None, max_reels=None):
          "(captions, hooks, which moment, case type):\n" + json.dumps(graded) if graded else "") +
         "\n\nLead:\n" + json.dumps({k: lead.get(k) for k in ("title", "agency_name", "state", "incident_date",
                                                               "summary", "category", "source_type")}) +
-        "\n\n" + casefacts.narration_rules(facts) + _camera_note(lead) +
+        "\n\n" + casefacts.narration_rules(facts) + _camera_note(lead) + on_screen_note(screen) +
         """
 
 Return JSON:
@@ -506,6 +522,12 @@ def main(db):
     federal = [l for l in pool if l.get("source_type") == "dvids_public_domain"]
     local = [l for l in local if files.get(l["id"])]
     federal = [l for l in federal if files.get(l["id"])]
+    # Watched first (mac/runner.py screen_leads): plan only from footage someone has seen. A lead waits here until
+    # the publisher run has watched it; one with no clean peak action was already skipped there.
+    screens = {l["id"]: db.setting(f"screen:{l['id']}") or {} for l in local + federal}
+    n_wait = sum(1 for l in local + federal if screens[l["id"]].get("verdict") not in ("action", "case"))
+    local = [l for l in local if screens[l["id"]].get("verdict") in ("action", "case")]
+    federal = [l for l in federal if screens[l["id"]].get("verdict") in ("action", "case")]
     # 3 Shorts/day = 1 case/day. Local cases first; federal DVIDS (public domain, no request needed) is capped at 1
     # per run so the channel isn't all Border Patrol — except when no local case is ready, then 2 so it never runs dry.
     # Below the 2-week backlog: up to 5 cases a run instead of 3 (federal still capped so it isn't all Border Patrol)
@@ -525,14 +547,18 @@ def main(db):
         # clear any half-made plan from a failed earlier run of this lead (never touches rendered/posted items)
         db.delete("content", {"lead_id": f"eq.{lead['id']}", "status": "eq.scripted"})
         facts = files.get(lead["id"])
-        # plan only what the footage can carry (length known from Scout for YouTube / DVIDS leads)
-        secs = footage.seconds_from_notes(lead.get("notes"))
+        scr = screens.get(lead["id"]) or {}
+        # plan only what the footage can carry: its real length, measured when it was watched
+        secs = scr.get("secs") or footage.seconds_from_notes(lead.get("notes"))
         fit = footage.budget(secs)
+        if scr.get("verdict") == "action":
+            # one Reel per distinct moment the footage actually shows, never more
+            fit["reels"] = min(fit["reels"], max(1, int(scr.get("n_moments") or 1)))
         if secs is not None and not fit["episode"] and not fit["shorts"] and not fit["reels"]:
             db.update("leads", {"id": f"eq.{lead['id']}"}, {"status": "skipped",
                       "notes": f"too short to make anything: {secs}s of video — " + (lead.get("notes") or "")})
             continue
-        p = plan(lead, playbook, rejects, facts, graded, max_reels=fit["reels"])
+        p = plan(lead, playbook, rejects, facts, graded, max_reels=fit["reels"], screen=scr)
         ep = p.get("episode", {})
         # the lead's own title can hide it ("cutter interdicts vessel"); the plan says it plainly ("240 Migrants")
         if is_people_smuggling({"title": ep.get("title"), "summary": ep.get("description") or ep.get("what_happened_next")}):
@@ -571,7 +597,7 @@ def main(db):
             r["cut_kind"] = "story" if n == 0 and not is_case(lead) else "action"
         # fact check: hooks are screen text (not instructions), no invented facts, the right camera word
         title0 = ep.get("title")
-        checked = factcheck.check({"episode": ep, "shorts": shorts, "reels": reels}, lead, facts)
+        checked = factcheck.check({"episode": ep, "shorts": shorts, "reels": reels}, lead, facts, screen=scr)
         ep, shorts, reels = checked["episode"], checked["shorts"], checked["reels"]
         case = apply_ois(ep, shorts, reels, case, lead)
         if ep.get("title") != title0 and not packaging.title_ok(
@@ -629,6 +655,7 @@ def main(db):
         db.resolve_alerts("maker", "Backlog low")
     return (f"planned {made} cases ({made} episodes + shorts + {n_reel} standalone reels)"
             + (f", skipped {n_dup} already-covered incidents" if n_dup else "")
+            + (f", {n_wait} leads waiting to be watched" if n_wait else "")
             + (f", fact check fixed {n_fixed} lines" if n_fixed else "")
             + (f", {n_re} re-cut reels from top Facebook Reels" if n_re else "")
             + (f" ({re_note})" if re_note else "") + f"; {backlog.line(st)}")

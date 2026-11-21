@@ -186,7 +186,21 @@ def _deep(d, fn, keys):
 
 
 # ---------------- the AI check ----------------
-def ai_check(units, lead, facts, kind):
+def _screen_src(screen):
+    if not screen or not screen.get("moments"):
+        return ""
+    return ("\nOn screen (we watched the footage; this is everything a viewer will see): " +
+            json.dumps([f"{m['file']} @{m['t']}s: {m['desc']}" for m in screen["moments"]])[:2500])
+
+
+SCREEN_RULE = """- a title, cold open, hook, thumbnail text, on-screen text or Reel caption that promises an action viewers
+  won't see: a maneuver, crash, Taser, shots, fight, K9 or chase must be in "On screen". The case file may say it
+  happened, but these lines promise footage (Oakfield: "PIT" and "Taser" in the title, neither on camera). Fix it
+  to name what IS on screen, and move the rest to what_happened_next / outcome_vo
+"""
+
+
+def ai_check(units, lead, facts, kind, screen=None):
     return llm.ask(
         "You are the fact checker for Ten-Four Tapes, a police footage channel. You compare every line a viewer "
         "will see or hear against the SOURCES. The sources are the only facts we have. Be strict about facts, "
@@ -195,7 +209,7 @@ def ai_check(units, lead, facts, kind):
                                                                   "summary", "source_type")}) +
         "\nCase file: " + json.dumps(facts or {})[:3000] +
         f"\nCamera: the footage is {camera_phrase(kind)}" +
-        ("" if kind == "body" else " (NOT bodycam: never call it bodycam or body camera)") +
+        ("" if kind == "body" else " (NOT bodycam: never call it bodycam or body camera)") + _screen_src(screen) +
         "\n\nLINES (path -> text):\n" + json.dumps(dict(units))[:9000] +
         """
 
@@ -205,7 +219,7 @@ Flag a line if it has ANY of these:
 - an outcome or charge worded more strongly than the case file
 - the camera type wrong (calling non-bodycam footage "bodycam", or claiming several officers' cameras without sources)
 - an editing instruction instead of words for the viewer ("First 2s: ...", "show the ...", "cut to ...")
-Do NOT flag: describing generally what a viewer will see in this kind of incident if the lead implies it
+""" + (SCREEN_RULE if _screen_src(screen) else "") + """Do NOT flag: describing generally what a viewer will see in this kind of incident if the lead implies it
 (e.g. "the chase is on" for a pursuit lead), the case name, or hashtags.
 
 For each flagged line give "fix": the same line rewritten so every fact is supported (keep it short and punchy,
@@ -214,7 +228,7 @@ Return JSON {"problems":[{"path":"exact path from LINES","claim":"the unsupporte
         max_tokens=1800, temperature=0.1)
 
 
-def check(plan, lead, facts=None, use_ai=True):
+def check(plan, lead, facts=None, use_ai=True, screen=None):
     """Fix a Maker plan in place. Works on a full plan {"episode","shorts","reels"} or a single re-cut reel dict.
     Returns the plan with plan["factcheck"] (full plan) / plan["factcheck"] (reel) = {camera, fixed:[...], ai}."""
     kind = camera_kind(lead)
@@ -249,7 +263,7 @@ def check(plan, lead, facts=None, use_ai=True):
     if use_ai:
         units = _units(plan)
         try:
-            j = ai_check(units, lead, facts, kind)
+            j = ai_check(units, lead, facts, kind, screen)
             probs = [x for x in (j.get("problems") or []) if isinstance(x, dict) and x.get("path")]
             ai = "ok"
             for pr in probs:
