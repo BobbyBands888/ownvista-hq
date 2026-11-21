@@ -9,7 +9,7 @@ replies like any other request (the portal tracking number is kept in notes so r
 """
 from datetime import datetime, timezone
 
-from .outreach import verify, ready_to_send, compose, compose_case, is_case
+from .outreach import verify, ready_to_send, compose, compose_case, is_case, keep_if_posted
 
 SOURCES = "in.(agency_release,news_tip,prosecutor_release)"
 
@@ -66,6 +66,8 @@ def main(db):
         ok, why = ready_to_send(chk, a, lead)
         if not ok:
             held += 1
+            if chk.get("same_agency", True) and keep_if_posted(db, lead, why, "portal check"):
+                continue
             upd = {"notes": ((lead.get("notes") or "") + f"\nportal check {_now():%Y-%m-%d}: not queued — {why}").strip()}
             if not chk.get("same_agency") and chk.get("agency"):
                 upd.update(agency_name=chk["agency"], state=(chk.get("state") or lead.get("state")))
