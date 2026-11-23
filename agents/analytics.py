@@ -365,6 +365,11 @@ def main(db):
     keys = {k for r in rows for k in r}
     rows = [{k: r.get(k) for k in keys} for r in rows]
     db.insert("metrics", rows, upsert=True, on_conflict="captured_on,platform,external_id")
+    # YouTube API Services policy (and our privacy policy): stored YouTube API data is refreshed or deleted within 30 days
+    try:
+        db.delete("metrics", {"platform": "eq.youtube", "captured_on": f"lt.{(date.today() - timedelta(days=30)).isoformat()}"})
+    except Exception as e:
+        errs.append(f"youtube 30-day cleanup: {e}")
     n = insights(db, rows)
     from . import reports
     try:
