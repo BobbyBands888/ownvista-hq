@@ -204,7 +204,14 @@ def facebook(db):
     rows = []
     page = _fb_get(pid, {**tok, "fields": "followers_count,fan_count"})
     rows.append({"platform": "facebook", "external_id": "page", "followers": page.get("followers_count"), "raw": page})
-    reels = _fb_get(f"{pid}/video_reels", {**tok, "fields": "id,description,created_time", "limit": 50}).get("data", [])
+    # every Reel, not just the newest 50: older posts keep earning views (Laredo bees: 84K plays a month later)
+    reels, page_j = [], _fb_get(f"{pid}/video_reels", {**tok, "fields": "id,description,created_time", "limit": 100})
+    while True:
+        reels += page_j.get("data", [])
+        nxt = (page_j.get("paging") or {}).get("next")
+        if not nxt or len(reels) >= 500:
+            break
+        page_j = requests.get(nxt, timeout=30).json()
     content_by_fb = {c["facebook_id"]: c["id"] for c in db.select("content", {"select": "id,facebook_id", "facebook_id": "not.is.null"})}
     try:
         content_by_fb.update(adopt_hand_reels(db, [r for r in reels if r["id"] not in content_by_fb]))
@@ -213,7 +220,10 @@ def facebook(db):
     for rl in reels:
         ins = requests.get(FB + f"{rl['id']}/video_insights", params=tok, timeout=30).json().get("data", [])
         vals = {m["name"]: (m.get("values") or [{}])[0].get("value") for m in ins}
-        plays = next((v for k, v in vals.items() if "play" in k and isinstance(v, (int, float))), None)
+        # the count Facebook shows on the Page (Nov 23: the Oakfield Reel showed 13K there): total plays incl. replays;
+        # first plays (blue_reels_play_count) is kept in raw for reference
+        plays = next((vals[k] for k in ("fb_reels_total_plays", "post_video_views", "blue_reels_play_count")
+                      if isinstance(vals.get(k), (int, float))), None)
         rows.append({"platform": "facebook", "external_id": rl["id"], "content_id": content_by_fb.get(rl["id"]),
                      "views": plays, "raw": {"caption": (rl.get("description") or "")[:200],
                                              "created": rl.get("created_time"), "insights": vals}})
@@ -264,7 +274,7 @@ def grade_of(v, kind, history):
 def _post_brief(c):
     sc = c.get("script") if isinstance(c.get("script"), dict) else {}
     lead = c.get("leads") or {}
-    cap = (c.get("description") or "").splitlines()[0][:160] if c["kind"] == "reel" else c.get("title")
+    cap = ((c.get("description") or "").splitlines() or [""])[0][:160] if c["kind"] == "reel" else c.get("title")
     et = datetime.fromisoformat(str(c["posted_at"]).replace("Z", "+00:00")).astimezone(
         __import__("zoneinfo").ZoneInfo("America/New_York"))
     return {"grade": c.get("score_grade"), "views_48h": c.get("score_views"), "kind": c["kind"],
