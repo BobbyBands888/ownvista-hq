@@ -49,6 +49,22 @@ def _med(lines, key):
     vals = [l[key] for l in lines if l.get(key) is not None]
     return median(vals) if vals else None
 
+def _fb_week(db, today):
+    """Facebook views gained in the last 7 days across every Reel (cumulative plays now minus a week ago) and the
+    Reel that gained the most. -> (total or None, (caption, gain) or None)"""
+    def snap(d):
+        rows = db.select("metrics", {"platform": "eq.facebook", "captured_on": f"eq.{d}", "external_id": "neq.page",
+                                     "select": "external_id,views,raw", "limit": 1000})
+        return {r["external_id"]: r for r in rows if r.get("views") is not None}
+    now, then = snap(today.isoformat()), snap((today - timedelta(days=7)).isoformat())
+    if not now:
+        return None, None
+    gains = {k: r["views"] - (then.get(k) or {}).get("views", 0) for k, r in now.items()}
+    top = max(gains.items(), key=lambda kv: kv[1], default=None)
+    cap = ((now[top[0]].get("raw") or {}).get("caption") or "").split("\n")[0][:60] if top else ""
+    return sum(max(0, g) for g in gains.values()), ((cap, top[1]) if top and top[1] > 0 else None)
+
+
 # ---------------- weekly (Fridays) ----------------
 def weekly(db):
     today = date.today()
@@ -64,6 +80,7 @@ def weekly(db):
     except Exception:
         watch_h = None
     fb = db.select("metrics", {"platform": "eq.facebook", "external_id": "eq.page", "order": "captured_on.desc", "limit": 1})
+    fb_wk, fb_top = _fb_week(db, today)
     trend = ("up" if views_wk > views_prev * 1.1 else "down" if views_wk < views_prev * 0.9 else "flat") \
         if views_wk is not None and views_prev else "not enough history yet"
     eps = [_line(r) for r in _episodes(now_snap)]
@@ -80,7 +97,9 @@ def weekly(db):
              f"YouTube subscribers: {ch.get('followers') if ch else '—'}",
              f"Watch hours, last 365 days: {watch_h if watch_h is not None else '—'} (Partner Program needs 4,000)",
              f"Views this week: {views_wk if views_wk is not None else '—'} vs last week: {views_prev if views_prev is not None else '—'} — {trend}",
-             f"Facebook followers: {fb[0].get('followers') if fb else '—'}", "",
+             f"Facebook followers: {fb[0].get('followers') if fb else '—'}",
+             f"Facebook views this week: {fb_wk if fb_wk is not None else '—'}"
+             + (f" (top: {fb_top[0]} — {fb_top[1]:,})" if fb_top else ""), "",
              "New episodes at 48 hours (vs our median):"]
     for e in new or []:
         lines.append(f"- {e['title']}: CTR {_pct(e['ctr'])}{_vs(e['ctr'], med['ctr'])}, 0:30 retention {_pct(e['ret30'])}"
