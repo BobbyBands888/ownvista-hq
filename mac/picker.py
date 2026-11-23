@@ -744,17 +744,17 @@ def pick_reel(files, plan, cache):
                       f"{sc.get('fallback_moment') or 'the most visible action left'}. Never overlap the taken windows.\n")
     pick = None
     try:
-        j = ask_llm("You cut 25-30 second Facebook Reels from police bodycam footage. " + RULES,
+        j = ask_llm("You cut 60-90 second Facebook Reels from police bodycam footage. " + RULES,
                     describe(files) + f"\n\nThe Reel is for this moment: {sc.get('moment') or plan.get('title')}\n"
                     f"Hook text: {sc.get('hook_text', '')}\n" + recut_note + redo(plan) +
                     (f"Windows other Reels of this case already use (do NOT overlap them, pick a different moment): "
                      f"{[(i, round(a), round(b)) for i, a, b in taken]}\n" if taken else "") +
-                    ("Pick ONE continuous 25-30s window of the police interview that opens on a line that hooks "
+                    ("Pick ONE continuous 60-90s window of the police interview that opens on a line that hooks "
                      "(a lie, a denial, the detective putting evidence to them) and doesn't give away how the case ended. "
                      if talk else
-                     "Pick ONE continuous 25-30s window where visible action starts within the first 2 seconds. ") +
+                     "Pick ONE continuous 60-90s window where visible action starts within the first 2 seconds. ") +
                     'Return JSON {"file":0,"start":12.0,"end":40.0,"why":"..."}')
-        pick = clamp(files, j, 24, 30)
+        pick = clamp(files, j, 60, 90)            # Bobby, Nov 23: every video at least a minute
     except Exception:
         pass
     if pick and talk:
@@ -769,9 +769,11 @@ def pick_reel(files, plan, cache):
                  or not _clear(pick, taken)):
         pick = None                             # nothing to see, or it reuses a sibling Reel's moment
     if not pick:
-        long_enough = [f for f in files if f["duration"] >= 30] or files
+        long_enough = [f for f in files if f["duration"] >= 60]
+        if not long_enough:
+            return None                         # under a minute of footage: no Reel
         used = [(long_enough.index(files[i]), s, e) for i, s, e in taken if files[i] in long_enough]
-        for c in best_windows(long_enough, 27, 4, used=used):
+        for c in best_windows(long_enough, 70, 4, used=used):
             c["file"] = files.index(long_enough[c["file"]])
             if not looks_bad(files[c["file"]], c["start"], c["end"], min_action=1.0, max_dull=0.5) or not taken:
                 pick = c
@@ -779,7 +781,7 @@ def pick_reel(files, plan, cache):
     if not pick:
         return None
     f = files[pick["file"]]
-    pick = trim_open(f, pick, 24)
+    pick = trim_open(f, pick, 60)
     s = action_start(f["rms"], pick["start"], pick["end"], f)
     pick.update(start=float(s), end=float(min(f["duration"], s + (pick["end"] - pick["start"]))))
     if taken and not _clear(pick, taken):       # action_start nudged it into a sibling's window

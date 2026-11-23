@@ -10,8 +10,8 @@ LEN_RE = re.compile(r"\[len:(\d+)s\]")
 EPISODE_MIN = 180          # same floor render.py uses: no 1-minute "episodes"
 SHORT_EACH = 40            # (old Part Shorts) Part p needed p*40s
 SHORTS_ON = False          # Bobby, Nov 20: no Part 1/2/3 Shorts; each Reel goes to YouTube as a standalone Short
-REEL_EACH = 30             # each Reel is its own 25-30s moment
-REEL_MIN = 20              # below this there is no standalone moment at all
+REEL_EACH = 75             # each Reel is its own 60-90s stretch (Bobby, Nov 23: every video at least a minute)
+REEL_MIN = 60              # below this there is no Reel at all
 
 
 def budget(secs):

@@ -7,7 +7,7 @@ comment question -> subscribe end card. Narrator never talks over bodycam audio.
 Short / Reel (1080x1920): action from the first second with the narrator setting it up over the opening seconds
 (bodycam audio low underneath), case badge (+ PART n on Shorts only), hook text, credit, narrated "how it ended",
 "Follow for Part n" end card on Shorts.
-Reel (Nov 18 rebuild, mac/reelcut.py): multi-segment bodycam cut (60-95s story or 20-30s action), timed captions,
+Reel (Nov 18 rebuild, mac/reelcut.py): multi-segment bodycam cut (60s+ story or 60-90s action; nothing under a minute), timed captions,
 "CITY, STATE" pill, am_adam narrator with the camera ducked under each line, full-frame blur over any death / body."""
 import json
 import re
