@@ -378,7 +378,10 @@ def on_screen(f, s, e):
 
 def screen_summary(files):
     """What the footage SHOWS, for Maker to plan from (Oakfield, Nov 21: the lead text said PIT + Taser; the video
-    was 4 minutes of headlights and a hands-up surrender). Clean action seconds only: no child / gore / slates."""
+    was 4 minutes of headlights and a hands-up surrender). Action seconds with no child, slate or dead air.
+    Seconds that get blurred (a downed person after shots) still count: the action around them is what the page
+    wants, and the renderer blurs them (Nov 23: the Newport sailboat shootout and the Bradenton officers-hit clip
+    were skipped because every second after the shots was flagged aftermath)."""
     secs = tense = peak = 0
     moments, shots = [], []
     for f in files:
@@ -386,7 +389,7 @@ def screen_summary(files):
         secs += float(f["duration"])
         if v:
             for t in range(len(v["act"])):
-                if v["bad"][t] or v["screen"][t] or v["dull"][t]:
+                if v["child"][t] or v["screen"][t] or v["dull"][t]:
                     continue
                 tense += v["act"][t] >= 2
                 peak += v["act"][t] >= 3
@@ -417,7 +420,11 @@ SCREEN_MIN_PEAK = 3      # clean seconds of PEAK action (struggle, tackle, crash
 def screen_verdict(s):
     if not s.get("vision_ok"):
         return "incomplete"
-    return "action" if s["peak_secs"] >= SCREEN_MIN_PEAK else "no_action"
+    if s["peak_secs"] >= SCREEN_MIN_PEAK:
+        return "action"
+    # shots fired on camera with a tense build-up is the content the page wants even if vision rated it 2/3
+    # (dark boat cabin, night stairwell)
+    return "action" if s.get("shots") and s["tense_secs"] >= SCREEN_MIN_PEAK + 2 else "no_action"
 
 
 SHORT_BLUR_MAX = 10   # seconds of death / body a Short may keep under a full-frame blur (same cap as Reels)
