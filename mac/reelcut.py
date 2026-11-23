@@ -2,7 +2,8 @@
 
 Two cuts per strong case (Meta: 10-30s drives reach, 30s-3min drives engagement):
   story  60s-8min: the FULL clip (Nov 20). hook (big yellow text, first 4s) -> dash / approach -> bodycam action -> arrest -> 3s "How it ended"
-  action 20-30s: the same incident, nothing but the action, one narrator line, same end card
+  action 60-90s: the same incident, nothing but the action, one narrator line, same end card
+  (Bobby, Nov 23: every video at least a minute. A Reel that can't reach 60s of clean footage is not made.)
 Every second of action is kept; slates, maps, text screens are cut. A second officer's angle of the key moment
 stays in when it shows it better (one per Reel, Bobby Nov 19); every camera is tagged BODY CAM 1 / 2, DASH CAM.
 
@@ -32,8 +33,10 @@ import media  # noqa: E402
 import picker  # noqa: E402
 
 STORY = (60.0, 480.0)     # Bobby, Nov 20: the full clip, as long as the action runs (4 min+ is fine)
-STORY_CODE_MAX = 150.0    # cutting by code (no model): stop at the strong beats, never pad to 8 min
-ACTION = (20.0, 30.0)
+STORY_CODE_MAX = 300.0    # cutting by code (no model): up to 5 min of beats (Nov 23: long full clips), never padded
+ACTION = (60.0, 90.0)      # Bobby, Nov 23: every video at least a minute, longer is better
+MIN_VIDEO = 60.0           # hard floor for every Reel: shorter footage never becomes a Reel
+ACTION_BEAT = 20.0         # action cut: each beat kept as ~20s around its peak (was 12s for 20-30s cuts)
 END_SECS = 3.2            # "How it ended" card, frozen last frame under it
 HOOK_SECS = 4.0           # big yellow hook text
 DUCK = 0.25               # camera level under a narrator line (ducks 75%)
@@ -324,12 +327,12 @@ def pick(files, plan, cache):
         for c in cands:
             if _total(chosen) >= cap:
                 break
-            if kind == "action":                    # tightest version of each beat: 12s around its peak
+            if kind == "action":                    # each beat as ~20s around its peak
                 S = S_of(c["file"])
-                if c["end"] - c["start"] > 12:
+                if c["end"] - c["start"] > ACTION_BEAT:
                     pk = max(range(int(c["start"]), int(c["end"])), key=lambda t: S["act"][t] + 2 * S["peak"][t])
-                    s = max(c["start"], pk - 4.0)
-                    c = dict(c, start=s, end=min(c["end"], s + 12.0))
+                    s = max(c["start"], pk - 6.0)
+                    c = dict(c, start=s, end=min(c["end"], s + ACTION_BEAT))
             chosen.append(c)
         segs = _clean(files, sorted(chosen, key=lambda c: (c["file"], c["start"])), S_of, taken)
         if kind == "story" and segs:                # lead in with the approach: up to 8s before the first beat
@@ -341,9 +344,9 @@ def pick(files, plan, cache):
                 f0["start"] = pre[-1][0]
     segs = _fit(segs, hi, S_of)
     total = _total(segs)
-    if total < lo * (0.75 if kind == "story" else 0.8):
-        if kind == "story":                     # the action can't carry a long cut: make the short one instead
-            print(f"reelcut: only {total:.0f}s of clean action, cutting the 20-30s action Reel instead")
+    if total + END_SECS < MIN_VIDEO:
+        if kind == "story":                     # the story can't carry a minute: try the action-only cut
+            print(f"reelcut: only {total:.0f}s of clean footage for the story cut, trying the 60-90s action cut")
             alt = dict(plan, script={**sc, "cut_kind": "action"})
             got = pick(files, alt, cache)
             if got:

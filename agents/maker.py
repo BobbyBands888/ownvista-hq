@@ -31,13 +31,13 @@ FORMAT = """Ten-Four Tapes format:
 - FACEBOOK REELS ARE BODYCAM-FIRST (Nov 18 rebuild, mac/reelcut.py): agency-released bodycam / dash with real action
   (rams, foot chases, Tasers, window punches, felony stops, shots fired) beats aerial / thermal / vessel B-roll.
   Each strong case gets TWO cuts of the same incident: a 60-95s narrated STORY cut (hook in big yellow text for the
-  first 4s -> dash / approach -> bodycam action -> arrest -> 3s "How it ended") and a 20-30s all-ACTION cut. The
+  first 4s -> dash / approach -> bodycam action -> arrest -> 3s "How it ended") and a 60-90s all-ACTION cut. The
   renderer picks the segments and writes the captions + narrator lines from the agency's own statement.
 - NARRATOR ON VERTICALS: every Reel and Part 1 Short opens with the narrator setting it up over the first seconds
   (place, who, why police were there) while the bodycam plays underneath; every Reel and Part 3 ends with a narrated
   "how it ended" line. Same voice as the episodes.
 - SHORTS: 3 vertical Shorts per episode labeled "<Case Name> Part 1/2/3", each ends "Follow for Part 2/3".
-- FACEBOOK REELS: standalone enforcement-action Reels (story cut 60-95s, action cuts 20-30s) (never "Part 1/2/3" — Facebook doesn't show Part 2 to
+- FACEBOOK REELS: standalone enforcement-action Reels (story cut 60s+, action cuts 60-90s; Bobby Nov 23: every video at least a minute) (never "Part 1/2/3" — Facebook doesn't show Part 2 to
   Part 1's viewers), real audio, action in the first 2 seconds. When a case gets 2-3 Reels, each one is a DIFFERENT
   single moment of the incident (e.g. the stop, the run, the takedown) and stands on its own: a viewer who sees only
   that Reel understands it. No "part", "continued", "what happens next" or references to the other Reels. Caption line 1 = PLACE + STAKES in under 10 words
@@ -90,12 +90,10 @@ def reel_count(lead, facts=None):
         return 0
     if is_case(lead):
         return 1                    # one interview teaser; long-form doesn't belong on FB (Boone 13-min: 402 views)
-    if is_fatal(facts):
-        return 2                    # blurred death is OK now (Nov 18): the story cut + one action cut
-    strong = (lead.get("action_score") or 0) >= STRONG
-    if lead.get("source_type") != "dvids_public_domain":
-        return 5 if strong else 4
-    return 3 if strong else 2
+    # Bobby, Nov 23: "we want to get away from short reels on facebook and post the long full clips". Every case gets
+    # ONE Facebook video: the full clip, start to finish, at least a minute and as long as the action runs
+    # (mac/reelcut.py story cut). No extra short action cuts.
+    return 1
 
 def _standalone(r):
     txt = " ".join(str(r.get(k) or "") for k in ("moment", "hook_text", "caption")).lower()
@@ -195,8 +193,8 @@ Return JSON:
    "analysis_tags":{"pillar":"Case File|Pursuit|Border|Update","title_formula":"Person + action + twist|Situation + realization|Place + incident + bodycam|Outcome tease|Number + stakes","thumbnail_type":"weapon|crash|face|scene","case_type":"pursuit|shooting|standoff|rescue|death in story|other"}},
  "shorts":[{"part":1,"title":"<Case Name> Part 1","moment":"which moment to cut","on_screen_text":"",
    "intro_vo":"Part 1 only: 1-2 spoken sentences (max 24 words): place, who, why police were there","outcome_vo":"Part 3 only: how it ended (max 25 words) or \"\""}],
- "reels":[{"moment":"reel 1: the whole incident start to finish; later reels: one single 20-30s action moment each, all different","hook_text":"the exact words shown on screen in the first 2 seconds (max 9 words; the text itself, never an instruction like 'First 2s: ...')","caption":"PLACE. STAKES of THIS moment (under 10 words) + optional one concrete visible detail; no question","hashtags":["#bodycam"],"intro_vo":"1-2 spoken sentences (max 24 words) the narrator reads over the opening seconds: place, who, why police were there","outcome_vo":"how it ended (max 25 words) or \"\""}]}
-"shorts":[] (no Part Shorts: every Reel also goes to YouTube as a standalone Short) and """ + (f"exactly {n_reels} reels, each standalone, in story order. Reel 1 is the FULL clip: the whole incident start to finish (approach, the action, the arrest / how it ended), as long as the real action runs, several minutes is fine. The other reels are each one different single 20-30s action moment." + fatal_note
+ "reels":[{"moment":"reel 1: the whole incident start to finish; later reels: a different 60-90s stretch of action each, all different","hook_text":"the exact words shown on screen in the first 2 seconds (max 9 words; the text itself, never an instruction like 'First 2s: ...')","caption":"PLACE. STAKES of THIS moment (under 10 words) + optional one concrete visible detail; no question","hashtags":["#bodycam"],"intro_vo":"1-2 spoken sentences (max 24 words) the narrator reads over the opening seconds: place, who, why police were there","outcome_vo":"how it ended (max 25 words) or \"\""}]}
+"shorts":[] (no Part Shorts: every Reel also goes to YouTube as a standalone Short) and """ + (f"exactly {n_reels} reels, each standalone, in story order. Reel 1 is the FULL clip (Facebook gets the long full clip, never a short cut): the whole incident start to finish (approach, the action, the arrest / how it ended), as long as the real action runs, several minutes is fine. The other reels are each a different 60-90s stretch of action (every video is at least a minute)." + fatal_note
                     if n_reels else "no reels (\"reels\":[])."), max_tokens=2800, temperature=0.6)
 
 def scorecard_examples(db):
@@ -409,7 +407,7 @@ def recut_plan(lead, winner, facts, playbook, rejects=()):
         "\n\n" + casefacts.narration_rules(facts) + _camera_note(lead) +
         """
 
-Write ONE new standalone 25-30s Facebook Reel from this same incident's footage. It is a RE-CUT, not a repost:
+Write ONE new standalone 60-90s Facebook Reel from this same incident's footage. It is a RE-CUT, not a repost:
 - The cutter will first look for the SAME moment from ANOTHER officer's camera (a different angle is new footage);
   if there isn't one it takes the next strongest DIFFERENT moment of the incident. Describe both in "moment" and
   "fallback_moment". It never reuses the winner's clip.
@@ -591,7 +589,7 @@ def main(db):
             if len(reels) < want:
                 db.alert("maker", f"{case}: planned {len(reels)} of {want} Reels", "info")
         reels = reels[:want]
-        # Reel 1 is the 60-95s narrated story cut, the rest are 20-30s action cuts (mac/reelcut.py picks the
+        # Reel 1 is the 60s+ narrated story cut, the rest are 60-90s action cuts (mac/reelcut.py picks the
         # segments; a case whose action can't carry 60s gets the short cut instead). Case-story teasers stay single.
         for n, r in enumerate(reels):
             r["cut_kind"] = "story" if n == 0 and not is_case(lead) else "action"
