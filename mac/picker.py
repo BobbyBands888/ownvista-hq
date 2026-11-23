@@ -81,6 +81,22 @@ VISION_V = 2                                         # bump when LOOK_PROMPT cha
 SHEET = 9                                            # frames per vision call (3x3 grid)
 VISION_GAP = float(os.environ.get("TFT_VISION_GAP", "4"))     # seconds between vision calls
 MAX_SHEETS = int(os.environ.get("TFT_VISION_SHEETS", "70"))   # per case, keeps us inside the free tier
+# Stop vision once llm.vision_calls reaches this (None = no cap). Screening new leads sets it so one long video
+# (the 38-min SF town hall, Nov 23) can't use the whole day's free allowance before approved clips render. Frames
+# already read are kept, so a long video is finished over the next runs instead of skipped.
+CALL_CAP = None
+
+
+def _stop_vision(log):
+    """True when this run must not make another vision call (daily allowance gone, or the screening share used)."""
+    from agents.lib import llm
+    if llm.vision_exhausted():
+        log("vision: free daily allowance used up; the rest is read after the reset")
+        return True
+    if CALL_CAP is not None and llm.vision_calls >= CALL_CAP:
+        log("vision: this run's screening share is used; continuing next run")
+        return True
+    return False
 LOOK_PROMPT = """This grid shows {n} numbered frames (red labels), in time order, from police body-camera / dash-camera footage.
 For EACH numbered frame judge ONLY what is visible in the picture (there is no audio):
 - view: "outside" (officer on foot outdoors), "road_ahead" (dash/windshield view of the road), "inside_car" (cruiser
@@ -151,7 +167,7 @@ def look(folder, files, log=print):
             chunk = times[k:k + SHEET]
             if all(t in got for t in chunk):
                 continue
-            if fails >= 5:                      # vision is down this run — stop burning time, retry next run
+            if fails >= 5 or _stop_vision(log):  # vision is down / out for now: keep what was read, retry next run
                 ok = False
                 break
             try:
@@ -251,7 +267,7 @@ def densify(folder, files, log=print):
         done = True
         for k in range(0, len(want), SHEET):
             chunk = want[k:k + SHEET]
-            if fails >= 5:
+            if fails >= 5 or _stop_vision(log):
                 done = False
                 break
             try:

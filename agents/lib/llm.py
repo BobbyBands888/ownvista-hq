@@ -119,6 +119,16 @@ def ask(system, user, json_mode=True, max_tokens=2000, temperature=0.4):
 # Free vision models change often, so try a list. GROQ_VISION_MODEL overrides the first choice.
 VISION_MODELS = ["qwen/qwen3.8-27b"]   # Llama 4 Scout/Maverick were retired on Groq (404, Nov 2026)
 _dead_vision = set()
+vision_calls = 0          # successful vision calls this process (screening uses it to stay inside its daily share)
+
+
+def vision_exhausted():
+    """True when every free vision model has hit its DAILY cap this run (nothing left until the reset)."""
+    import os
+    groq_left = config.GROQ_API_KEY and any(m not in _dead_vision for m in
+                                            [x for x in [os.environ.get("GROQ_VISION_MODEL") or ""] + VISION_MODELS if x])
+    cf_left = os.environ.get("CF_ACCOUNT_ID") and os.environ.get("CF_API_TOKEN") and "cf" not in _dead_vision
+    return not (groq_left or cf_left)
 
 
 def _json_any(text):
@@ -147,6 +157,11 @@ def _json_any(text):
         if isinstance(o, dict) and "n" in o:
             frames.append(o)
     return {"frames": frames} if frames else None
+
+
+def _count():
+    global vision_calls
+    vision_calls += 1
 
 
 def see(prompt, jpeg, max_tokens=1500, check=None):
@@ -194,6 +209,7 @@ def see(prompt, jpeg, max_tokens=1500, check=None):
                 text = r.json()["choices"][0]["message"]["content"] or ""
                 v = _json_any(text)
                 if v is not None and (check is None or check(v)):
+                    _count()
                     return v
                 errs.append(f"{model}: {'unusable' if v is not None else 'bad JSON'}: {text[:160]!r}")
                 break
@@ -221,10 +237,13 @@ def see(prompt, jpeg, max_tokens=1500, check=None):
                     continue
                 if r.status_code >= 300:
                     errs.append(f"cf vision: {r.status_code} {r.text[:120]}")
+                    if r.status_code == 429 and "daily" in r.text.lower():
+                        _dead_vision.add("cf")               # free daily allocation used up: stop asking until tomorrow
                     break
                 out = r.json().get("result", {}).get("response")
                 v = out if isinstance(out, dict) else _json_any(out if isinstance(out, str) else json.dumps(out))
                 if v is not None and (check is None or check(v)):
+                    _count()
                     return v
                 if v is None and isinstance(out, str) and out.strip():
                     # Llama 3.2 vision often answers in prose ("The image presents a grid of 9 frames..."). When the
@@ -240,6 +259,7 @@ def see(prompt, jpeg, max_tokens=1500, check=None):
                         errs.append(f"cf vision prose->json: {type(e).__name__} {str(e)[:80]}")
                         v = None
                     if v is not None and (check is None or check(v)):
+                        _count()
                         return v
                 errs.append(f"cf vision: {'unusable' if v is not None else 'no JSON'}: {str(out)[:160]!r}")
                 break

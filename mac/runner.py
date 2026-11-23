@@ -1039,7 +1039,11 @@ def _save_tries(db, tries):
         pass
 
 SCREEN_PER_RUN = int(os.environ.get("TFT_SCREEN_PER_RUN", "2"))
-SCREEN_TRIES = 3
+SCREEN_TRIES = 3            # runs in a row with NO new frames read before a lead is given up on
+# Vision calls per day (UTC) that screening new leads may use. The free tiers are shared with rendering, and the
+# renders of approved clips come first (Nov 23: one 38-min video used the whole day and 9 approved clips sat
+# unrendered). A long video isn't skipped: it is read a share at a time over several runs.
+SCREEN_CALLS_DAY = int(os.environ.get("TFT_SCREEN_CALLS_DAY", "40"))
 
 
 def _save_setting(db, key, value):
@@ -1056,6 +1060,14 @@ def screen_leads(db):
         return "no vision key"
     sys.path.insert(0, str(REPO / "mac"))
     import picker
+    from agents.lib import llm
+    if llm.vision_exhausted():
+        return "vision allowance used up for today (renders went first); screening resumes after the reset"
+    day_key = f"screen_calls:{_now():%Y-%m-%d}"
+    got = db.setting(day_key)
+    used = int(got.get("n", 0)) if isinstance(got, dict) else 0
+    if used >= SCREEN_CALLS_DAY:
+        return f"today's screening share ({SCREEN_CALLS_DAY} vision calls) is used; resumes tomorrow"
     from agents import danger
     from agents.lib.sources import is_military_op, is_people_smuggling
     pool = db.select("leads", {"status": "eq.obtained", "order": "action_score.desc", "limit": 60})
@@ -1080,20 +1092,32 @@ def screen_leads(db):
             _save_setting(db, key, {"verdict": "no_footage", "tries": prev.get("tries", 0) + 1, "at": _now().isoformat()})
             out.append(f"{name[:30]}: no footage")
             continue
+        start = llm.vision_calls
+        picker.CALL_CAP = start + max(0, SCREEN_CALLS_DAY - used)
         try:
             files = picker.analyse(dest, config.GROQ_API_KEY, log=lambda m: print(m, flush=True))
             s = picker.screen_summary(files)
         except Exception as e:
+            picker.CALL_CAP = None
+            used += llm.vision_calls - start
+            _save_setting(db, day_key, {"n": used})
             _save_setting(db, key, {"verdict": "error", "tries": prev.get("tries", 0) + 1, "error": str(e)[:300],
                                     "at": _now().isoformat()})
             out.append(f"{name[:30]}: error")
             _free_footage(dest)
             continue
+        picker.CALL_CAP = None
+        used += llm.vision_calls - start
+        _save_setting(db, day_key, {"n": used})
         verdict = picker.screen_verdict(s)
         if lead.get("category") == "case_story" and verdict == "no_action":
             verdict = "case"                        # interview / 911 case stories are calm by nature: Maker decides
-        s.update(verdict=verdict, at=_now().isoformat(),
-                 tries=prev.get("tries", 0) + (1 if verdict == "incomplete" else 0))
+        frames = sum(len(f.get("vision") or []) for f in files)
+        out_of_calls = used >= SCREEN_CALLS_DAY or llm.vision_exhausted()
+        # a long video still being read (or paused by today's allowance) isn't a failed try
+        stuck = verdict == "incomplete" and frames <= prev.get("frames", 0) and not out_of_calls
+        s.update(verdict=verdict, at=_now().isoformat(), frames=frames,
+                 tries=(prev.get("tries", 0) + 1) if stuck else (0 if verdict == "incomplete" else prev.get("tries", 0)))
         _save_setting(db, key, s)
         notes = footage.tag(lead.get("notes"), s["secs"])
         if verdict == "no_action":
@@ -1103,7 +1127,10 @@ def screen_leads(db):
         else:
             db.update("leads", {"id": f"eq.{lead['id']}"}, {"notes": notes})
         _free_footage(dest)                         # keeps the .tft_*.json analysis: renders reuse it
-        out.append(f"{name[:30]}: {verdict} ({s['peak_secs']}s peak / {s['secs']}s)")
+        out.append(f"{name[:30]}: {verdict} ({s['peak_secs']}s peak / {s['secs']}s"
+                   + (f", {frames} frames read so far" if verdict == "incomplete" else "") + ")")
+        if out_of_calls:
+            break
     return "; ".join(out) or "nothing to watch"
 
 
