@@ -694,7 +694,8 @@ def _taken(files, plan, cache):
         by_name.setdefault(Path(str(f["path"])).name, i)
     out = []
     sc = plan.get("script") if isinstance(plan.get("script"), dict) else {}
-    cuts = list(plan.get("sibling_cuts") or [])
+    full = (sc.get("cut_kind") or "story") == "story" and not (sc.get("recut") or {}).get("winner_cut")
+    cuts = [] if full else list(plan.get("sibling_cuts") or [])
     if (sc.get("recut") or {}).get("winner_cut"):       # a re-cut never reuses the winning Reel's seconds
         cuts.append(sc["recut"]["winner_cut"])
     flat = []
@@ -714,6 +715,11 @@ def _taken(files, plan, cache):
         if i is not None:
             out.append((i, float(c["start"]) - REEL_PAD, float(c["end"]) + REEL_PAD))
     parent = plan.get("parent_id")
+    if full:
+        # Nov 23: Facebook gets ONE full clip per case, start to finish. It may use every second of the incident,
+        # whatever older short action cuts of the case picked (Backyard Knives' full clip failed "not enough
+        # footage" because 5 short cuts had claimed its seconds).
+        return out
     for k, v in cache.items():
         if k.startswith("reel:") and k != f"reel:{plan['id']}" and isinstance(v, dict) and parent \
                 and v.get("parent") == parent and v.get("file") is not None:
