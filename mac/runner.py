@@ -757,6 +757,36 @@ def set_thumbnail(db, it, vid):
 YT_UPLOADS_PER_DAY = 6     # YouTube API: 10,000 units/day, an upload costs 1,600
 YT_SHORT_MAX = 180         # a YouTube Short is 3 min max; a longer full-clip Reel stays Facebook-only
 
+_HASHTAG = re.compile(r"(^|\s)#\w+")
+
+
+def yt_title(cap, hook, case_name, short):
+    """YouTube title written like the Facebook captions that work (Laredo bees 84K, Oakfield 13K on Facebook): what
+    happens, then the place. The old titles were the bare hook ("Coast Guard boards vessel #shorts") or
+    "<Case> Part 2" and got 0-10 views. -> "<what happens> | <Place> Bodycam" (+ " #shorts" on a Short)."""
+    first = _HASHTAG.sub(" ", (cap or "").splitlines()[0] if (cap or "").strip() else "").strip()
+    place, _, rest = first.partition(". ")
+    rest = rest.strip().rstrip(".")
+    if rest and 2 <= len(place) <= 40 and not re.search(r"\d{3,}", place):
+        what = rest.split(". ")[0].rstrip(".")
+        if len(what) > 64:                          # keep the place on screen: trim what-happens cleanly
+            cut = what[:64]
+            clause = max(cut.rfind(","), cut.rfind(" and "), cut.rfind(" for "), cut.rfind(" at "), cut.rfind(" on "))
+            what = cut[:clause] if clause >= 30 else cut.rsplit(" ", 1)[0]
+            while what.rsplit(" ", 1)[-1].lower() in ("at", "by", "the", "a", "an", "of", "on", "in", "to", "for",
+                                                         "from", "with", "and", "into"):
+                what = what.rsplit(" ", 1)[0]
+            what = what.rstrip(",;:-")
+        title = f"{what} | {place.split(',')[0].strip()} Bodycam"
+    else:
+        title = (first or hook or case_name or "Police bodycam").rstrip(".")
+    title = re.sub(r"\s+", " ", title).strip()
+    tail = " #shorts" if short else ""
+    if len(title) + len(tail) > 100:
+        title = title[:100 - len(tail) - 1].rsplit(" ", 1)[0].rstrip(",;:-|")
+    return title + tail
+
+
 def reel_to_youtube(db, it, cap, ep_yt):
     """Cross-post a standalone Reel as a YouTube Short, inside the API's daily upload budget."""
     since = (_now() - timedelta(hours=24)).isoformat()
@@ -765,15 +795,17 @@ def reel_to_youtube(db, it, cap, ep_yt):
         return None
     sc = it.get("script") if isinstance(it.get("script"), dict) else {}
     secs = _seconds(it["media_path"]) or float((sc.get("cut") or {}).get("total") or 0)
-    if secs > YT_SHORT_MAX - 1:
-        return None
-    first = (cap.splitlines() or [""])[0]
-    title = (sc.get("hook_text") or first or it["case_name"]).strip()
-    title = (title[:88].rstrip() + " #shorts")[:100]
+    # Nov 23: Facebook now gets long full clips. Up to 3 min it's a YouTube Short; longer goes up as a regular video
+    # (it used to be skipped, so YouTube got nothing from those cases)
+    short = secs <= YT_SHORT_MAX - 1
+    title = yt_title(cap, sc.get("hook_text"), it.get("case_name"), short)
     lines = [l for l in cap.splitlines() if "full episode" not in l.lower()]
     desc = "\n".join(([f"Full episode: https://youtu.be/{ep_yt}"] if ep_yt else []) + lines)
     try:
-        vid, _ = youtube_upload(it["media_path"], title, desc, it.get("tags"), short=True)
+        vid, locked = youtube_upload(it["media_path"], title, desc, it.get("tags"), short=short)
+        if locked:
+            db.alert("publisher", f"'{title}' uploaded to YouTube as PRIVATE (API audit pending) — set Public in Studio",
+                     "warn")
         return vid
     except Exception as e:
         db.alert("publisher", f"Reel posted to Facebook but not YouTube ('{it['title']}'): {str(e)[:200]}", "info")
