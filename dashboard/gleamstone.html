@@ -594,7 +594,9 @@ $("out").onclick=async()=>{await sb.auth.signOut();location.reload();};
 (async()=>{const {data:{session}}=await sb.auth.getSession();
   if(!session){$("login").hidden=false;return;}
   for(const id of ["out","logreply","tabs","app"]) $(id).hidden=false;
-  show(TAB); load(); setInterval(()=>{ if(!document.querySelector("dialog[open]") && !document.activeElement?.matches("textarea,input")) load(); },60000);})();
+  show(TAB); load(); setInterval(()=>{ if(!document.hidden && !document.querySelector("dialog[open]") && !document.activeElement?.matches("textarea,input")) load(); },300000);
+  // only refresh while visible, every 5 min: this page pulls ~800 KB per load (Supabase free egress)
+  document.addEventListener("visibilitychange",()=>{ if(!document.hidden && !document.querySelector("dialog[open]")) load(); });})();
 </script>
 </body>
 </html>
