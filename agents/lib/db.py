@@ -23,8 +23,10 @@ class DB:
         """params: PostgREST query dict, e.g. {"status": "eq.new", "order": "created_at.desc", "limit": 20}"""
         return self._check(requests.get(self.base + table, headers=self.h, params=params or {}, timeout=30))
 
-    def insert(self, table, rows, upsert=False, on_conflict=None):
-        h = dict(self.h, Prefer="return=representation" + (",resolution=merge-duplicates" if upsert else ""))
+    def insert(self, table, rows, upsert=False, on_conflict=None, returning=True):
+        # returning=False: don't echo the written rows back (saves Supabase egress on big writes)
+        h = dict(self.h, Prefer=("return=representation" if returning else "return=minimal")
+                 + (",resolution=merge-duplicates" if upsert else ""))
         params = {"on_conflict": on_conflict} if on_conflict else {}
         rows = rows if isinstance(rows, list) else [rows]
         if not rows:

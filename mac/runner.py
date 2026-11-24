@@ -500,7 +500,7 @@ def run_autocheck(db, it, out):
             db.insert("settings", {"key": f"review_sheets:{it['id']}", "updated_at": _now().isoformat(),
                                    "value": {"checked_at": ac["checked_at"], "sheets": [
                                        {"times": s["times"], "jpg": autocheck.small_jpeg_b64(s["jpeg"])} for s in sheets]}},
-                      upsert=True, on_conflict="key")
+                      upsert=True, on_conflict="key", returning=False)
         except Exception as e:
             print(f"review sheets not saved: {e}", flush=True)
     print(f"autocheck {it['case_name']} {it['kind']}{it.get('part') or ''}: {ac['verdict']} "
