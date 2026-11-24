@@ -584,6 +584,23 @@ def build_thumbnails(job, out_base):
     return paths
 
 
+# The planner's drafts are a poor stand-in for the Writer: Nov 23 they burned a cut-off hook ("KNIFE-WIELDING SUSPECT
+# HOLDS"), a half outcome card ("He was") and a wrong DASH CAM label into three videos. When the writing AI is only out
+# of its free daily quota (or returned broken JSON), wait for the next run like vision does. A lasting error (prompt
+# too long for every model) still falls back, or that item would never render.
+WRITER_WAIT = re.compile(r"rate limit|\b429\b|per day|\bTPD\b|\bRPD\b|daily|neurons|json_validate_failed|"
+                         r"Failed to generate JSON|bad JSON|empty reply|timed? ?out|\b5\d\d\b", re.I)
+
+
+def writer_down(why):
+    return bool(why) and bool(WRITER_WAIT.search(why))
+
+
+def writer_wait(why):
+    print(f"WRITER NOT READY: the writing AI is out of quota or failing ({str(why)[:160]}); will retry next run")
+    sys.exit(5)
+
+
 def render(plan_path, footage, out):
     plan = json.loads(Path(plan_path).read_text())
     if isinstance(plan.get("script"), str):
@@ -621,10 +638,16 @@ def render(plan_path, footage, out):
                 written = reelcut.write(job, log=LOG)   # captions + narrator lines, fact-checked against the agency text
             except Exception as e:
                 LOG(f"reel writer: {str(e)[:200]} — using the planner's drafts")
-                written = {}
+                written, why = {}, str(e)
+            else:
+                why = "" if written else "empty reply"
+            if not written and writer_down(why):
+                writer_wait(why)
             reelcut.apply(job, written or reelcut.fallback_words(job))
         else:
             written = writer.write(job, log=LOG)        # words are written from the locked cut, not the plan
+            if not written and writer_down(writer.LAST_ERROR):
+                writer_wait(writer.LAST_ERROR)
         LOG(f"{plan['kind']} '{plan.get('title')}' picks: {json.dumps(job.pick)[:400]}")
         Path(out).parent.mkdir(parents=True, exist_ok=True)
         thumb, thumbs = None, []

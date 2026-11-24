@@ -258,14 +258,20 @@ def check(job, written):
     return {**written, **fixed, "problems": j.get("problems") or []}
 
 
+LAST_ERROR = ""          # why the last write() fell back to the planner's text ("" = it didn't)
+
+
 def write(job, log=print):
     """Rewrites job.sc in place. Returns what it wrote (also saved next to the video for the dashboard)."""
     if not any(f.get("vision") for f in job.files):
         log("writer: no vision for this footage — keeping the planner's text")
         return {}
+    global LAST_ERROR
+    LAST_ERROR = ""
     try:
         w = write_episode(job, log) if job.plan["kind"] == "episode" else write_vertical(job, log)
     except Exception as e:
+        LAST_ERROR = str(e)
         log(f"writer: {str(e)[:200]} — keeping the planner's text")
         return {}
     try:
