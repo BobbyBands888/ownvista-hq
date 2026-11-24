@@ -209,9 +209,16 @@ def check(path, it, lead, facts, script=None, log=print, see=None, ask=None):
     if sampled and read < sampled * MIN_READ:
         problems.append(f"vision read only {read}/{sampled} frames, so the video wasn't fully checked")
     bad = lambda key: [f["t"] for f in frames if f[key]]
-    for key, what in (("body", "a person who looks dead/limp/badly hurt, not blurred"),
-                      ("gore", "blood or a wound, not blurred"),
-                      ("child", "a child's face, not blurred")):
+    # Bobby, Nov 24: blur only for a dead body. In a case where nobody died, injuries and blood may be shown.
+    try:
+        import picker
+        fatal = picker.is_fatal(script or it.get("script"), lead, facts)
+    except Exception:
+        fatal = True
+    checks = ((("body", "a person who looks dead/limp/badly hurt, not blurred"),
+               ("gore", "blood or a wound, not blurred")) if fatal else ()) + \
+             (("child", "a child's face, not blurred"),)
+    for key, what in checks:
         ts = bad(key)
         if ts:
             problems.append(f"{what} at {', '.join(f'{t:.0f}s' for t in ts[:6])}")

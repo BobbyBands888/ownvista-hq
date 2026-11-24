@@ -303,6 +303,8 @@ def gore_secs(f, n=None):
     - after shots, every second not read 1 fps (within 1s) counts as gore until the dense pass clears it."""
     n = n or int(f["duration"]) + 1
     g = [0] * n
+    if not FATAL:
+        return g                                    # nobody died: injuries are shown, not blurred (Bobby, Nov 24)
     fr = f.get("vision") or []
     half = max(2, int(float(f.get("vision_step") or 5.0) / 2) + 1)
     dense = [0] * n
@@ -335,6 +337,25 @@ AFTERMATH_LEAD = 60
 # episodes end the clear footage there and add a blurred tail, Reels blur from there, Shorts stop before it.
 SHOT_GRACE = 2
 
+# Bobby, Nov 24: blur only when there's a dead body. Injured / wounded people who survive are shown as they are; a
+# death on camera is shown only fully blurred. FATAL is set per render from the case (render.Job); it defaults to True
+# so any caller that doesn't know the case stays on the safe side.
+FATAL = True
+FATAL_RX = re.compile(r"\b(?:died|dies|dead|death|fatal(?:ly)?|killed|pronounced|deceased|homicide)\b", re.I)
+NOT_FATAL_RX = re.compile(r"\bdeadly force\b|\bdeath threats?\b|\bthreat(?:ened|s)? to kill\b", re.I)
+
+
+def is_fatal(*sources):
+    """True when the case text (plan script, lead, case facts — dicts or strings) says someone died."""
+    def text(x):
+        if isinstance(x, dict):
+            return " ".join(text(v) for v in x.values())
+        if isinstance(x, (list, tuple)):
+            return " ".join(text(v) for v in x)
+        return str(x) if x is not None else ""
+    t = NOT_FATAL_RX.sub(" ", " ".join(text(x) for x in sources))
+    return bool(FATAL_RX.search(t))
+
 
 # Only live-event evidence starts the aftermath: briefings and slates say "officer-involved shooting" in their first
 # seconds, and an officer yelling "I'll shoot" comes before any shots, so neither may cut the footage there.
@@ -351,7 +372,10 @@ def shot_aftermath(f):
 
 
 def aftermath_from(f):
-    """Second from which this file shows the aftermath of force (by its audio, or right after shots), or None."""
+    """Second from which this file shows the aftermath of force (by its audio, or right after shots), or None.
+    None when nobody died in this case (FATAL False): survivors aren't blurred or cut."""
+    if not FATAL:
+        return None
     hits = [s.get("start", 0) for s in f.get("transcript") or [] if AFTERMATH.search(s.get("text") or "")]
     a = max(0, int(min(hits)) - AFTERMATH_LEAD) if hits else None
     sa = shot_aftermath(f)
