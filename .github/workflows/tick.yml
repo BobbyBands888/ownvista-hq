@@ -5,7 +5,7 @@ on:
   workflow_dispatch:
     inputs:
       agent:
-        description: "Run one agent now (research, scout, outreach, portal_filer, tracker, maker, compliance, analytics, overseer) or 'tick'. Gleamstone: gs:scout, gs:map, gs:enrich, gs:writer, gs:sender, gs:brief, gs:recruit"
+        description: "Run one agent now (research, scout, outreach, portal_filer, tracker, maker, compliance, analytics, overseer) or 'tick'. Gleamstone: gs:scout, gs:map, gs:enrich, gs:inbox, gs:writer, gs:sender, gs:brief, gs:recruit"
         default: "tick"
 permissions:
   contents: read
@@ -55,5 +55,7 @@ jobs:
           CF_API_TOKEN: ${{ secrets.CF_API_TOKEN }}
           BREVO_API_KEY: ${{ secrets.BREVO_API_KEY }}
           TAVILY_API_KEY: ${{ secrets.TAVILY_API_KEY }}
+          ZOHO_IMAP_USER: ${{ secrets.ZOHO_IMAP_USER }}
+          ZOHO_IMAP_PASSWORD: ${{ secrets.ZOHO_IMAP_PASSWORD }}
           PYTHONUNBUFFERED: "1"
           DRY_RUN: ${{ vars.DRY_RUN || '0' }}

@@ -1,17 +1,17 @@
 """Gleamstone agents entry point (runs inside the same hourly HQ tick, after Ten-Four Tapes).
   python -m gleamstone.run tick        -> whatever is due
-  python -m gleamstone.run <agent>     -> scout | map | enrich | writer | sender | brief | recruit
+  python -m gleamstone.run <agent>     -> scout | map | enrich | inbox | writer | sender | brief | recruit
 Agent runs are logged as gs_<name> so they only show in the Gleamstone workspace."""
 import sys
 from datetime import datetime, timezone
 
 from agents.lib.runner import run_agent
-from . import scout, enrich, writer, sender, brief
+from . import scout, enrich, writer, sender, brief, inbox
 
 AGENTS = {"scout": scout.main, "map": scout.main_map, "enrich": enrich.main, "writer": writer.main,
-          "sender": sender.main, "brief": brief.main, "recruit": brief.recruit}
-EVERY_H = {"scout": 6, "map": 168, "enrich": 2, "writer": 2, "sender": 1, "brief": 1, "recruit": 168}
-ORDER = ["map", "scout", "enrich", "writer", "sender", "recruit", "brief"]
+          "sender": sender.main, "inbox": inbox.main, "brief": brief.main, "recruit": brief.recruit}
+EVERY_H = {"scout": 6, "map": 168, "enrich": 2, "writer": 2, "sender": 1, "inbox": 1, "brief": 1, "recruit": 168}
+ORDER = ["map", "scout", "enrich", "inbox", "writer", "sender", "recruit", "brief"]
 
 
 def _last_runs():
