@@ -41,7 +41,14 @@ def _date(s):
 
 
 def _known(db):
-    rows = db.select("gs_prospects", {"select": "name,town", "limit": 10000})
+    # Supabase returns at most 1,000 rows per request, so page through all of them
+    rows, off = [], 0
+    while True:
+        page = db.select("gs_prospects", {"select": "name,town", "order": "id", "limit": 1000, "offset": off})
+        rows += page
+        if len(page) < 1000:
+            break
+        off += 1000
     return {((r["name"] or "").lower().strip(), (r.get("town") or "").lower()) for r in rows}
 
 
@@ -90,9 +97,23 @@ def _add(db, rows, limit=None):
         out.append(r)
         if limit and len(out) >= limit:
             break
+    added = 0
     for i in range(0, len(out), 50):
-        db.insert("gs_prospects", out[i:i + 50])
-    return len(out)
+        chunk = out[i:i + 50]
+        try:
+            db.insert("gs_prospects", chunk, returning=False)
+            added += len(chunk)
+        except RuntimeError as e:
+            if "409" not in str(e):
+                raise
+            for r in chunk:                      # one already exists: add the rest one by one
+                try:
+                    db.insert("gs_prospects", r, returning=False)
+                    added += 1
+                except RuntimeError as e2:
+                    if "409" not in str(e2):
+                        raise
+    return added
 
 
 def lease_news(db):
@@ -241,6 +262,13 @@ def map_lane(db):
         sweep["complete"] = False                # new kinds were added: fetch just those, keep the finished ones
     elif sweep.get("key") != key or sweep.get("complete"):
         sweep = {"key": key, "done": [], "complete": False, "started": c.now().isoformat()}
+    if not db.setting("gs_map_newkinds_v1", False):
+        # Nov 24 run fetched the builder/property-manager/cleaning-firm pieces, then failed saving them:
+        # fetch those pieces again once
+        first_new = 7 * len(_boxes(h, rad))
+        sweep["done"] = [i for i in (sweep.get("done") or []) if i < first_new]
+        sweep["complete"] = False
+        db.insert("settings", {"key": "gs_map_newkinds_v1", "value": True}, upsert=True, on_conflict="key")
     done_set = set(sweep.get("done") or [])
     elements, fails = [], []
     for i, f, b in pieces:
