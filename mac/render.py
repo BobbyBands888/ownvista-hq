@@ -277,13 +277,21 @@ class Job:
         self.n = 0
         from agents.lib import config
         self.files = picker.analyse(folder, config.GROQ_API_KEY, log=LOG)
+        self.credit = (plan.get("source_credit") or "").strip()
+        # Ready only when vision read the footage AND the 1-fps pass around shots / takedowns finished. Nov 23: both
+        # free vision caps were spent, the dense pass read 0 of 153 frames, and the Glendale reel still rendered with
+        # the shot suspect unblurred. Don't pick (or cache picks) until vision has seen the danger frames.
+        self.ready = bool(self.files) and all(f.get("vision_ok") and f.get("dense_v") == picker.DENSE_V
+                                              for f in self.files)
+        if not self.ready:
+            self.pick = None
+            return
         if plan["kind"] == "reel":              # Nov 18 rebuild: multi-segment narrated bodycam Reel (mac/reelcut.py)
             cache = media.load_json(Path(folder) / picker.PICKS, {})
             self.pick = reelcut.pick(self.files, plan, cache)
             media.save_json(Path(folder) / picker.PICKS, cache)
         else:
             self.pick = picker.picks_for(folder, self.files, plan)
-        self.credit = (plan.get("source_credit") or "").strip()
 
     def p(self, ext):
         self.n += 1
@@ -594,8 +602,11 @@ def render(plan_path, footage, out):
             sys.exit(3)
         # Never cut blind: without vision HQ can't see slates, maps, gore or the body, and the fallback is the raw
         # file (Las Cruces re-cut, Nov 16: 14 min of briefing + unblurred aftermath). Wait for vision instead.
-        if not job.files or not all(f.get("vision_ok") for f in job.files):
-            print("VISION NOT READY: frames couldn't be read this run; will retry next run")
+        # The dense pass (every second around shots / takedowns) must be finished too: Nov 23 it read 0 frames and
+        # four renders went out of the picker with downed suspects unblurred or the key moment missing.
+        if not job.ready:
+            print("VISION NOT READY: frames (or the frame-by-frame pass around the action) couldn't be read this run; "
+                  "will retry next run")
             sys.exit(4)
         if plan["kind"] == "reel" and not job.pick:
             # not enough clean action for this cut (or every action second is already in another Reel of this case)
