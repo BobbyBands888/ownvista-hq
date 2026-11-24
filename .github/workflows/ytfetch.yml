@@ -32,4 +32,4 @@ jobs:
           SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
           GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
           # age-gated YouTube posts: browser on the Mac that's signed into YouTube (chrome / firefox / safari)
-          YT_COOKIES_BROWSER: ${{ vars.YT_COOKIES_BROWSER }}
+          YT_COOKIES_BROWSER: ${{ vars.YT_COOKIES_BROWSER || 'chrome' }}
