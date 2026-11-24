@@ -148,6 +148,8 @@ def main(db):
     approve = bool(db.setting("gs_approvals", True))
     cap = c.daily_cap(db)
     out = []
+    # prospects parked until this writer knew how to pitch them (builders, property managers, cleaning firms)
+    db.update("gs_prospects", {"status": "eq.hold", "category": f"in.({','.join(c.PITCH)})"}, {"status": "new"})
     # replies first
     inbound = db.select("gs_emails", {"direction": "eq.in", "note": "is.null", "limit": 10})
     for m in inbound:
