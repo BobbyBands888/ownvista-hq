@@ -178,7 +178,7 @@ dialog .actions{justify-content:flex-end;margin-top:14px}
       <div class="form">
         <label>Business name<input id="np-name"></label>
         <label>Town<input id="np-town" placeholder="Woburn"></label>
-        <label>Type<select id="np-cat"><option>office</option><option>medical</option><option>dealership</option><option>showroom</option><option>retail</option><option>gym</option><option>warehouse</option><option>other</option></select></label>
+        <label>Type<select id="np-cat"><option>office</option><option>medical</option><option>dealership</option><option>showroom</option><option>retail</option><option>gym</option><option>warehouse</option><option value="contractor">builder / contractor</option><option value="property_manager">property manager</option><option value="janitorial">cleaning company (overflow)</option><option>other</option></select></label>
         <label>Email<input id="np-email" type="email"></label>
         <label style="grid-column:1/-1">Why now / notes<input id="np-signal" placeholder="Just signed a lease at 300 Trade Center"></label>
         <button class="primary" id="np-save">Add prospect</button>
@@ -200,7 +200,7 @@ dialog .actions{justify-content:flex-end;margin-top:14px}
       <div class="card"><div class="kicker">Build a quote</div>
         <div class="form">
           <label style="grid-column:1/-1">Business<select id="q-prospect"></select></label>
-          <label>Type<select id="q-type"><option>office</option><option>medical</option><option>dealership</option><option>showroom</option><option>retail</option><option>gym</option><option>warehouse</option><option>other</option></select></label>
+          <label>Type<select id="q-type"><option>office</option><option>medical</option><option>dealership</option><option>showroom</option><option>retail</option><option>gym</option><option>warehouse</option><option value="contractor">builder / contractor</option><option value="property_manager">property manager</option><option value="janitorial">cleaning company (overflow)</option><option>other</option></select></label>
           <label>Square feet<input id="q-sqft" type="number" min="0" step="100" value="3000"></label>
           <label>Visits per week<select id="q-visits"><option>1</option><option>2</option><option selected>3</option><option>4</option><option>5</option><option>6</option><option>7</option></select></label>
           <label>Restrooms<input id="q-rest" type="number" min="0" value="2"></label>
@@ -266,7 +266,7 @@ const stripFoot = b => (b||"").split("\n\nBobby\nGleamstone Commercial Cleaning"
 
 const AGENTS = {
   gs_scout:["Prospect Scout","Leases, openings and moves in range · every 6h"],
-  gs_map:["Map Scout","Dealerships, medical, gyms, offices · weekly"],
+  gs_map:["Map Scout","Dealerships, medical, gyms, offices, builders, property managers, cleaning firms · weekly"],
   gs_enrich:["Contact Finder","Finds real emails on their own sites · every 2h"],
   gs_writer:["Writer","Drafts intros and answers to replies · every 2h"],
   gs_sender:["Sender","Sends approved email, weekdays 8–5 · hourly"],
@@ -306,7 +306,7 @@ async function setSetting(key, value){
 
 // ---------- pricing ----------
 // Hours-based: how long a visit takes (sq ft ÷ how fast a cleaner covers that kind of space, plus restrooms) × hourly rate.
-const RATE_DEFAULTS={hourly:45,min_visit:85,restroom_min:15,disc3:5,disc5:10,office:2500,medical:1800,dealership:3500,showroom:3500,retail:2500,gym:2000,warehouse:5000,other:2500};
+const RATE_DEFAULTS={hourly:45,min_visit:85,restroom_min:15,disc3:5,disc5:10,office:2500,medical:1800,dealership:3500,showroom:3500,retail:2500,gym:2000,warehouse:5000,contractor:1500,property_manager:2500,janitorial:2500,other:2500};
 const RATE_LABELS={hourly:"$ per cleaning hour",min_visit:"minimum visit $",restroom_min:"minutes per restroom",disc3:"3×/wk % off",disc5:"5×/wk % off"};
 function priceQuote({type,sqft,visits,rest}){
   const R = Object.assign({}, RATE_DEFAULTS, S("gs_rates")||{});

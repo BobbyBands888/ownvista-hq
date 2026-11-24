@@ -157,8 +157,26 @@ MAP_KINDS = [  # (osm filter, category, base fit)
     ('["healthcare"="physiotherapist"]', "medical", 6),
     ('["leisure"="fitness_centre"]', "gym", 6),
     ('["office"~"insurance|lawyer|accountant|financial|consulting|it|company|architect|engineer"]', "office", 5),
+    # added Nov 24, 2026 — faster jobs: final cleans for builders, buildings for property managers,
+    # overflow from other cleaning companies. Keep new kinds at the END so finished map pieces keep their numbers.
+    ('["office"="construction_company"]', "contractor", 8),
+    ('["craft"~"^(builder|construction|carpenter)$"]', "contractor", 8),
+    ('["office"="property_management"]', "property_manager", 8),
+    ('["name"~"janitor|custodial|commercial clean|office clean|cleaning (service|company|co|solution|group|pro)|'
+     'facility services|building maintenance|maid",i]', "janitorial", 7),
 ]
+JANITORIAL_NAME = r"janitor|custodial|clean|maid|facility services|building maintenance"
+NOT_JANITORIAL = r"dry ?clean|laundr|cleaners$|tailor|car ?wash|auto|detail|carpet|chimney|duct|gutter|septic|pool"
+
 def _classify(tg):
+    import re
+    name = (tg.get("name") or "").lower()
+    if re.search(JANITORIAL_NAME, name) and not tg.get("shop") and not tg.get("amenity"):
+        return ("janitorial", 7) if not re.search(NOT_JANITORIAL, name) else (None, 0)
+    if tg.get("office") == "construction_company" or tg.get("craft") in ("builder", "construction", "carpenter"):
+        return "contractor", 8
+    if tg.get("office") == "property_management":
+        return "property_manager", 8
     if tg.get("shop") == "car":
         return "dealership", 7
     if tg.get("amenity") in ("dentist", "doctors"):
@@ -218,11 +236,13 @@ def map_lane(db):
     # pieces finished this sweep are remembered, so each run only asks for the ones still missing
     sweep = db.setting("gs_map_sweep", {}) or {}
     key = f"{h[0]:.3f},{h[1]:.3f},{rad}"
-    if sweep.get("key") != key or sweep.get("complete"):
+    pieces = [(i, f, b) for i, (f, b) in enumerate((f, b) for f, _, _ in MAP_KINDS for b in _boxes(h, rad))]
+    if sweep.get("key") == key and sweep.get("complete") and len(sweep.get("done") or []) < len(pieces):
+        sweep["complete"] = False                # new kinds were added: fetch just those, keep the finished ones
+    elif sweep.get("key") != key or sweep.get("complete"):
         sweep = {"key": key, "done": [], "complete": False, "started": c.now().isoformat()}
     done_set = set(sweep.get("done") or [])
     elements, fails = [], []
-    pieces = [(i, f, b) for i, (f, b) in enumerate((f, b) for f, _, _ in MAP_KINDS for b in _boxes(h, rad))]
     for i, f, b in pieces:
         if i in done_set:
             continue
@@ -253,6 +273,8 @@ def map_lane(db):
         if lat is None or c.miles(h, (lat, lon)) > rad:
             continue
         cat, fit = _classify(tg)
+        if not cat or "gleamstone" in name.lower():
+            continue
         town = c.match_town(tg.get("addr:city") or "") or min(c.TOWNS, key=lambda t: c.miles((lat, lon), c.TOWNS[t]))
         addr = " ".join(x for x in [tg.get("addr:housenumber"), tg.get("addr:street")] if x) or None
         email = (tg.get("email") or tg.get("contact:email") or "").split(";")[0].strip().lower() or None
