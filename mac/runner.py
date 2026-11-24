@@ -991,6 +991,58 @@ def publish(db):
             db.alert("publisher", f"Post failed for {it['title']}: {e}", "warn")
     return f"posted {len(out)}" + (f": {out}" if out else "")
 
+FB_LONG_PER_DAY = 1   # Bobby, Nov 24: longer action videos on Facebook too — each episode as a Page video, 1 a day
+
+
+def publish_fb_long(db):
+    """Each approved, frame-checked episode also goes up on Facebook as a regular Page video (Bobby, Nov 24), at most
+    FB_LONG_PER_DAY a day, 11am-10pm ET, on top of the Reels. Only episodes whose review note says "video checked"
+    (someone watched the finished render). It never touches posted_at / status, which track the YouTube upload and
+    the 2-a-week episode cap; the Facebook post is recorded as facebook_id + script.fb_posted_at."""
+    if db.setting("posting_paused", False):
+        return "posting paused"
+    from zoneinfo import ZoneInfo
+    if not (11 <= _now().astimezone(ZoneInfo("America/New_York")).hour < 22):
+        return "fb long: outside 11am-10pm ET"
+    eps = db.select("content", {"kind": "eq.episode", "compliance_status": "eq.pass",
+                                "approval_status": "in.(approved,not_required)", "status": "in.(rendered,posted)",
+                                "select": "id,title,case_name,description,media_path,publish_note,script,facebook_id",
+                                "order": "created_at.asc"})
+    since = _now() - timedelta(hours=24)
+    def fb_at(it):
+        sc = it.get("script") if isinstance(it.get("script"), dict) else {}
+        try:
+            return datetime.fromisoformat(str(sc.get("fb_posted_at")))
+        except Exception:
+            return None
+    recent = sum(1 for it in eps if it.get("facebook_id") and (fb_at(it) or since) > since)
+    room = FB_LONG_PER_DAY - recent
+    out = []
+    for it in eps:
+        if room <= 0:
+            break
+        if it.get("facebook_id") or not it.get("media_path") or "video checked" not in (it.get("publish_note") or ""):
+            continue
+        path = local_media(it)
+        if not path:
+            continue
+        cap = "\n".join(l for l in (it.get("description") or it["title"]).splitlines() if "full episode" not in l.lower())
+        if config.DRY_RUN:
+            out.append(f"[dry] fb long {it['case_name']}")
+            room -= 1
+            continue
+        try:
+            fid = facebook_video(path, f"{it['title']}\n\n{cap}".strip())
+            sc = it.get("script") if isinstance(it.get("script"), dict) else {}
+            db.update("content", {"id": f"eq.{it['id']}"},
+                      {"facebook_id": fid, "script": {**sc, "fb_posted_at": _now().isoformat()}})
+            room -= 1
+            out.append(f"fb long: {it['title']}")
+        except Exception as e:
+            db.alert("publisher", f"Facebook long-video post failed for {it['title']}: {e}", "warn")
+    return f"fb long posted {len(out)}" + (f": {out}" if out else "")
+
+
 KEEP_DAYS = 14   # agency links usually expire 7-14 days after delivery
 
 def keep_copies(db):
@@ -1149,6 +1201,10 @@ def main(db):
     except Exception as e:
         rc = f"error {e}"
     p = publish(db)
+    try:
+        p += "; " + publish_fb_long(db)
+    except Exception as e:
+        p += f"; fb long error {str(e)[:200]}"
     try:
         sc = screen_leads(db)
     except Exception as e:
