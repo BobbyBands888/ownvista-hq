@@ -148,8 +148,17 @@ def _ytdlp(url, dest_dir):
     opts = {"outtmpl": str(Path(dest_dir) / "post_%(id)s.%(ext)s"), "quiet": True, "noprogress": True,
             "format": "bv*[height<=1080]+ba/b[height<=1080]/b", "merge_output_format": "mp4",
             "ffmpeg_location": _ffmpeg_exe()}
-    with yt_dlp.YoutubeDL(opts) as y:
-        info = y.extract_info(url, download=True)
+    try:
+        with yt_dlp.YoutubeDL(opts) as y:
+            info = y.extract_info(url, download=True)
+    except Exception as e:
+        # Age-gated agency OIS releases (Greensboro, Nov 24): on Bobby's Mac, retry with the cookies of a browser he's
+        # signed into YouTube with. Set the repo variable YT_COOKIES_BROWSER (e.g. "chrome", "firefox", "safari").
+        browser = (os.environ.get("YT_COOKIES_BROWSER") or "").strip()
+        if not (browser and "confirm your age" in str(e)):
+            raise
+        with yt_dlp.YoutubeDL({**opts, "cookiesfrombrowser": (browser,)}) as y:
+            info = y.extract_info(url, download=True)
     print(f"pulled agency post {info.get('id')} by {info.get('uploader')} ({info.get('duration')}s)", flush=True)
     return info.get("uploader") or ""
 
