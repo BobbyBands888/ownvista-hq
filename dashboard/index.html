@@ -291,7 +291,9 @@ async function load(){
     sb.from("agencies").select("*").is("records_email",null).is("portal_url",null).limit(25),
     sb.from("playbook").select("*").eq("active",true).order("created_at",{ascending:false}).limit(16),
     sb.from("metrics").select("*").in("external_id",["channel","page"]).order("captured_on",{ascending:false}).limit(4),
-    sb.from("settings").select("key,value"),
+    // review_sheets:* are ~8 MB of base64 frame grids the dashboard never shows; loading them every minute blew
+    // through Supabase's free 5.5 GB egress (16 GB by Nov 21, projects restricted after Nov 24)
+    sb.from("settings").select("key,value").not("key","like","review_sheets:%"),
   ]);
   // separate call: before the Scorecard SQL is run this errors and the card just says so
   sb.from("content").select("kind,case_name,title,description,part,posted_at,score_grade,score_views,score_note")
@@ -493,7 +495,8 @@ $("out").onclick=async()=>{await sb.auth.signOut();location.reload();};
 (async()=>{const {data:{session}}=await sb.auth.getSession();
   if(!session){$("login").hidden=false;return;}
   for(const id of ["out","refresh","tabs","app"]) $(id).hidden=false;
-  show(TAB); load(); setInterval(load,60000);})();
+  show(TAB); load(); setInterval(()=>{ if(!document.hidden) load(); },60000);
+  document.addEventListener("visibilitychange",()=>{ if(!document.hidden) load(); });})();
 </script>
 </body>
 </html>
