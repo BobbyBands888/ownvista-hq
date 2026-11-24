@@ -57,7 +57,7 @@ def ask(system, user, json_mode=True, max_tokens=2000, temperature=0.4):
             if r.status_code >= 300:
                 last_err = f"{r.status_code} {r.text[:200]}"
                 errs.append(f"{model}: {r.status_code}")
-                if r.status_code == 400 and "response_format" in r.text and json_mode:
+                if r.status_code == 400 and json_mode and ("response_format" in r.text or "json_validate_failed" in r.text):
                     body.pop("response_format", None)
                     r = requests.post(URL, headers={"Authorization": f"Bearer {config.GROQ_API_KEY}"},
                                       json={**body, "messages": [{"role": "system", "content": system +

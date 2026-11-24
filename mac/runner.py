@@ -698,6 +698,13 @@ def render(db):
                 fails[key] = 1
                 db.alert("mac_runner", f"Waiting to render {it['case_name']}: the frame-reading AI is down or capped "
                          "right now. It retries automatically every run; nothing renders blind.", "info")
+        elif res.returncode == 5:
+            # writing AI out of quota: keep it queued (no broken on-screen words), say so once per case per day
+            key = f"writer_wait:{it['lead_id']}:{_now():%Y-%m-%d}"
+            if not fails.get(key):
+                fails[key] = 1
+                db.alert("mac_runner", f"Waiting to render {it['case_name']}: the writing AI is out of its free quota "
+                         "right now. It retries automatically every run; no video goes out with draft text.", "info")
         elif res.returncode == 3:
             db.update("content", {"id": f"eq.{it['id']}"}, {"status": "failed",
                       "publish_note": "Skipped: not enough footage for this format (avoids repeating the same clip)"})
