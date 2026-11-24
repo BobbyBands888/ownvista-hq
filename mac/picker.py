@@ -220,13 +220,15 @@ MAX_DENSE = int(os.environ.get("TFT_DENSE_FRAMES", "270"))     # per case (30 vi
 SHOT_WORDS = re.compile(r"\bshots? fired\b|\bshoot(?:ing)?\b|\bshots\b|\bhe'?s (?:been )?shot\b|\bi'?m hit\b|"
                         r"\bman down\b|\bofficer down\b", re.I)
 SHOT_DESC = re.compile(r"\bshoot|\bshots?\b|\bfir(?:es|ing|ed)\b|muzzle", re.I)
+LESS_LETHAL = re.compile(r"taser|stun|less.lethal|bean ?bag|pepper|40 ?mm", re.I)
 HOT_DESC = re.compile(r"\bgun\b|\bknife\b|weapon|taser|tackl|struggl|crash|on the ground|\bdown\b|lying|fight", re.I)
 
 
 def shot_times(f):
     """Seconds where shots are fired in this file: transcript lines and vision captions. [] if none."""
     ts = [float(s.get("start", 0)) for s in f.get("transcript") or [] if SHOT_WORDS.search(s.get("text") or "")]
-    ts += [float(v["t"]) for v in f.get("vision") or [] if SHOT_DESC.search(v.get("desc") or "")]
+    ts += [float(v["t"]) for v in f.get("vision") or []
+           if SHOT_DESC.search(v.get("desc") or "") and not LESS_LETHAL.search(v.get("desc") or "")]
     return sorted(ts)
 
 
@@ -327,10 +329,35 @@ AFTERMATH = re.compile(r"\bno pulse\b|check (?:the |his |her |for a )?pulse|\bcp
 AFTERMATH_LEAD = 60
 
 
+# Nov 23-24: vision read the frames after the Glendale shots (dense pass done) and still called the downed, wounded man
+# "no gore", so the episode re-cut showed him being treated, unblurred. A person shot on camera is on the ground right
+# after the shots, so from SHOT_GRACE s after the first shot on, a file counts as aftermath whatever vision says:
+# episodes end the clear footage there and add a blurred tail, Reels blur from there, Shorts stop before it.
+SHOT_GRACE = 2
+
+
+# Only live-event evidence starts the aftermath: briefings and slates say "officer-involved shooting" in their first
+# seconds, and an officer yelling "I'll shoot" comes before any shots, so neither may cut the footage there.
+SHOTS_LIVE = re.compile(r"\bshots? fired\b|\bhe'?s (?:been )?shot\b|\bi'?m hit\b|\bman down\b|\bofficer down\b", re.I)
+
+
+def shot_aftermath(f):
+    """Second just after the first shot seen in this file's live footage (SHOT_GRACE s on), or None."""
+    ts = [float(x.get("start", 0)) for x in f.get("transcript") or [] if SHOTS_LIVE.search(x.get("text") or "")]
+    ts += [float(v["t"]) for v in f.get("vision") or []
+           if v.get("view") not in ("screen", "black") and SHOT_DESC.search(v.get("desc") or "")
+           and not LESS_LETHAL.search(v.get("desc") or "")]
+    return int(min(ts)) + SHOT_GRACE if ts else None
+
+
 def aftermath_from(f):
-    """Second from which this file shows the aftermath of force (by its audio), or None."""
+    """Second from which this file shows the aftermath of force (by its audio, or right after shots), or None."""
     hits = [s.get("start", 0) for s in f.get("transcript") or [] if AFTERMATH.search(s.get("text") or "")]
-    return max(0, int(min(hits)) - AFTERMATH_LEAD) if hits else None
+    a = max(0, int(min(hits)) - AFTERMATH_LEAD) if hits else None
+    sa = shot_aftermath(f)
+    if sa is not None:
+        a = sa if a is None else min(a, sa)
+    return a
 
 
 def hits_aftermath(f, s, e):

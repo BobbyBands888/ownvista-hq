@@ -88,8 +88,10 @@ def seconds(f):
     a = picker.aftermath_from(f)
     if a is not None:
         hits = [s.get("start", 0) for s in f.get("transcript") or [] if picker.AFTERMATH.search(s.get("text") or "")]
-        first = int(min(hits)) if hits else a
-        for t in range(max(0, first - 3), n):        # from the first CPR / "no pulse" line on: blurred
+        firsts = ([int(min(hits)) - 3] if hits else []) + \
+                 ([picker.shot_aftermath(f)] if picker.shot_aftermath(f) is not None else [])
+        first = min(firsts) if firsts else a
+        for t in range(max(0, first), n):            # from the first CPR / "no pulse" line, or just after shots: blurred
             gore[t] = 1
     rms = list(f.get("rms") or [])[:n] + [-90.0] * max(0, n - len(f.get("rms") or []))
     med = statistics.median(rms) if rms else -90.0
