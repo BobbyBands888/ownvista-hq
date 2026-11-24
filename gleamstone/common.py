@@ -18,6 +18,8 @@ SITE = "https://gleamstonecleaning.com"
 RULES = """Gleamstone Commercial Cleaning rules (never break these):
 - Gleamstone cleans offices, medical and dental suites, car dealerships and showrooms, and other small commercial
   spaces within 20 miles of Winchester, MA (01890). Evenings or early mornings, month-to-month, flat monthly price.
+  It also does one-time post-construction, move-in and turnover cleans (flat price per job) for builders and
+  property managers, and takes overflow or hard-to-staff accounts from other cleaning companies.
 - Email only. Never offer a phone call, never ask anyone to call Bobby, never include a phone number.
 - Never promise "the same crew" or the same cleaners every visit.
 - Prices are competitive, but never quote a number in a first email. A quote comes after square footage and schedule.
@@ -52,6 +54,55 @@ TOWNS = {
     "Winthrop": (42.375, -70.983), "Nahant": (42.426, -70.927), "Topsfield": (42.637, -70.950),
     "Wenham": (42.604, -70.891), "Hamilton": (42.618, -70.857),
 }
+# What each kind of prospect is offered. Anything not listed gets the regular recurring-cleaning pitch.
+PITCH = {
+    "contractor": "They are a builder / general contractor. Offer one-time post-construction (final) cleans and "
+                  "move-in cleans when a job wraps up: dust, debris, windows, floors, fixtures, ready for the owner "
+                  "walkthrough. Flat price per job. Ask if they have a project finishing in the next month or two.",
+    "property_manager": "They manage commercial or mixed-use buildings. Offer cleaning for common areas and tenant "
+                        "suites, plus one-time move-in / turnover cleans when a space changes hands. Flat price. "
+                        "Ask if any of their buildings or vacant suites need a cleaner right now.",
+    "janitorial": "They are another cleaning company, not a customer. Offer to take overflow work: accounts they "
+                  "can't staff, towns north of Boston they don't like driving to, or one-time jobs they'd rather "
+                  "pass along. Gleamstone works under their name or its own, whichever they prefer. Never criticise "
+                  "them. Ask if they ever turn down work north of Boston.",
+}
+
+FOLLOW_PITCH = {
+    "contractor": ("If you have a job wrapping up in the next month or two, send me the address, rough square footage "
+                   "and target date and I'll send a flat price for the final clean. Would that help?"),
+    "property_manager": ("If one of your buildings needs a cleaner, or a suite needs a move-in or turnover clean, "
+                         "send me the address and rough square footage and I'll send a flat price. Would that help?"),
+    "janitorial": ("If you ever have an account north of Boston you can't staff, or a one-time job you'd rather "
+                   "pass along, I'm glad to take it. Is it worth keeping my email on file?"),
+}
+
+
+def daily_cap(db):
+    return int(db.setting("gs_daily_cap", 15) or 15)
+
+
+def ramp_cap(db):
+    """Grow gs_daily_cap a little each week so a young sending domain warms up slowly.
+    gs_ramp = {"to": 40, "per_week": 5, "last": "YYYY-MM-DD", "hold": false}. "hold" (set when bounces or
+    complaints come in) stops the growth; Bobby can still change the cap by hand in Settings."""
+    ramp = db.setting("gs_ramp", None)
+    if not isinstance(ramp, dict) or ramp.get("hold"):
+        return None
+    try:
+        last = datetime.fromisoformat(ramp.get("last") or "2000-01-01").replace(tzinfo=timezone.utc)
+    except Exception:
+        return None
+    cap, to = daily_cap(db), int(ramp.get("to", 40))
+    if (now() - last).days < 7 or cap >= to:
+        return None
+    new = min(to, cap + int(ramp.get("per_week", 5)))
+    db.insert("settings", {"key": "gs_daily_cap", "value": new}, upsert=True, on_conflict="key")
+    db.insert("settings", {"key": "gs_ramp", "value": {**ramp, "last": now().date().isoformat()}},
+              upsert=True, on_conflict="key")
+    return new
+
+
 STOP_STATUSES = {"replied", "interested", "quoted", "won", "lost", "do_not_contact"}
 
 

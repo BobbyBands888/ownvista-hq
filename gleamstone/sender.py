@@ -10,7 +10,7 @@ from zoneinfo import ZoneInfo
 from . import common as c
 
 ET = ZoneInfo("America/New_York")
-PER_RUN = 4
+PER_RUN = 5
 
 FOLLOW = {
     1: "Hi{name},\n\nJust following up on my note about cleaning for {biz}. If you send me the rough square footage "
@@ -47,6 +47,26 @@ def _bounces(db):
     return hit
 
 
+def _hold_ramp(db, hits):
+    """Bad-address or spam signals: stop growing the daily cap where it is and tell Bobby."""
+    ramp = db.setting("gs_ramp", None)
+    if hits < 2 or not isinstance(ramp, dict) or ramp.get("hold"):
+        return
+    db.insert("settings", {"key": "gs_ramp", "value": {**ramp, "hold": True}}, upsert=True, on_conflict="key")
+    db.alert("gs_sender", f"{hits} bounces/complaints just came in, so the daily email cap stopped growing "
+                          f"(holding at {c.daily_cap(db)}/day).", "warn")
+
+
+def _body_for(step, first, prospect):
+    cat = prospect.get("category")
+    if step == 1 and cat in c.FOLLOW_PITCH:
+        return f"Hi{first},\n\nJust following up on my note. " + c.FOLLOW_PITCH[cat]
+    if step == 2 and cat == "janitorial":
+        return (f"Hi{first},\n\nLast note from me on this. If you ever need a hand covering a job north of Boston, "
+                "this is the best address to reach me. Is there someone else there who handles subcontracting?")
+    return FOLLOW[step].format(name=first, biz=prospect["name"])
+
+
 def _queue_followup(db, sent, prospect):
     step = sent["step"] + 1
     if sent["kind"] not in ("intro", "followup") or step > 2:
@@ -57,7 +77,7 @@ def _queue_followup(db, sent, prospect):
     subj = sent["subject"] if sent["subject"].lower().startswith("re:") else "Re: " + sent["subject"]
     db.insert("gs_emails", {"prospect_id": prospect["id"], "kind": "followup", "step": step,
                             "to_email": sent["to_email"], "subject": subj,
-                            "body": FOLLOW[step].format(name=(" " + first) if first else " there", biz=prospect["name"]),
+                            "body": _body_for(step, (" " + first) if first else " there", prospect),
                             "approval_status": sent["approval_status"],
                             "send_after": (c.now() + timedelta(days=gap)).isoformat(),
                             "note": f"in-reply-to:{sent.get('provider_id') or ''}"})
@@ -65,6 +85,10 @@ def _queue_followup(db, sent, prospect):
 
 def main(db):
     bounced = _bounces(db)
+    _hold_ramp(db, bounced)
+    grown = c.ramp_cap(db)
+    if grown:
+        db.alert("gs_sender", f"Daily email cap raised to {grown}/day (weekly warm-up).", "info")
     now_et = datetime.now(ET)
     if db.setting("gs_sending_paused", False):
         return f"sending paused; {bounced} bounces/opt-outs handled"
@@ -80,7 +104,7 @@ def main(db):
         if not last:
             db.alert("gs_sender", "Add a business mailing address in Gleamstone Settings. Cold emails legally need one, so nothing sends until it's there.", "warn")
         return "waiting on a mailing address"
-    cap = int(db.setting("gs_daily_cap", 15) or 15)
+    cap = c.daily_cap(db)
     room = min(PER_RUN, cap - _sent_today(db))
     if room <= 0:
         return f"daily cap of {cap} reached"

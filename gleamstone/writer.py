@@ -18,6 +18,7 @@ Write a first cold email from Bobby, owner of Gleamstone Commercial Cleaning, to
 - Say what Gleamstone does for a space like theirs in one or two sentences (after-hours cleaning, written checklist,
   flat monthly price, month-to-month, Bobby answers emails directly).
 - Offer a free walkthrough or a quote from rough square footage and schedule.
+- If the facts include "what_to_offer", that replaces the regular pitch: follow it, and ask the question it suggests.
 - End with ONE simple question.
 - Greeting: "Hi {contact first name}," if a contact name is given, otherwise "Hi there,". Never write a placeholder
   like [contact_name] or {name} anywhere.
@@ -94,6 +95,8 @@ def _problem(subj, body, p):
 
 def draft_intro(db, p):
     facts = {k: p.get(k) for k in ("name", "town", "category", "address", "signal", "sqft", "contact_name", "website")}
+    if p.get("category") in c.PITCH:
+        facts["what_to_offer"] = c.PITCH[p["category"]]
     why = None
     for attempt in range(3):
         res = llm.ask(INTRO, str(facts) + (f"\nYour last draft broke a rule ({why}). Follow every rule." if why else ""),
@@ -143,8 +146,10 @@ def handle_reply(db, inbound, approve):
 
 def main(db):
     approve = bool(db.setting("gs_approvals", True))
-    cap = int(db.setting("gs_daily_cap", 15) or 15)
+    cap = c.daily_cap(db)
     out = []
+    # prospects parked until this writer knew how to pitch them (builders, property managers, cleaning firms)
+    db.update("gs_prospects", {"status": "eq.hold", "category": f"in.({','.join(c.PITCH)})"}, {"status": "new"})
     # replies first
     inbound = db.select("gs_emails", {"direction": "eq.in", "note": "is.null", "limit": 10})
     for m in inbound:
