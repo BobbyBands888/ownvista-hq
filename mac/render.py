@@ -276,6 +276,8 @@ class Job:
         self.sc = plan.get("script") or {}
         self.n = 0
         from agents.lib import config
+        picker.FATAL = picker.is_fatal(plan.get("script"), plan.get("lead"), plan.get("case_facts"))
+        LOG(f"case is {'FATAL: deaths fully blurred' if picker.FATAL else 'not fatal: no injury blur'}")
         self.files = picker.analyse(folder, config.GROQ_API_KEY, log=LOG)
         self.credit = (plan.get("source_credit") or "").strip()
         # Ready only when vision read the footage AND the 1-fps pass around shots / takedowns finished. Nov 23: both
