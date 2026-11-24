@@ -128,7 +128,34 @@ def vision_exhausted():
     groq_left = config.GROQ_API_KEY and any(m not in _dead_vision for m in
                                             [x for x in [os.environ.get("GROQ_VISION_MODEL") or ""] + VISION_MODELS if x])
     cf_left = os.environ.get("CF_ACCOUNT_ID") and os.environ.get("CF_API_TOKEN") and "cf" not in _dead_vision
-    return not (groq_left or cf_left)
+    gem_left = os.environ.get("GEMINI_API_KEY") and "gemini" not in _dead_vision
+    return not (groq_left or cf_left or gem_left)
+
+
+GEMINI = "https://generativelanguage.googleapis.com/v1beta"
+_gemini_models = None
+
+
+def _gemini_pick(key):
+    """Gemini models to try, cheapest Flash first. Read from the API (names change), GEMINI_VISION_MODEL overrides."""
+    import os
+    global _gemini_models
+    if _gemini_models is None:
+        names = []
+        try:
+            r = requests.get(f"{GEMINI}/models", params={"key": key, "pageSize": 200}, timeout=30)
+            for m in r.json().get("models", []):
+                n = m.get("name", "").split("/")[-1]
+                if "generateContent" in m.get("supportedGenerationMethods", []) and "flash" in n \
+                        and not any(x in n for x in ("image", "tts", "audio", "live", "thinking", "exp")):
+                    names.append(n)
+        except Exception:
+            pass
+        names.sort(key=lambda n: (0 if "lite" in n else 1, "preview" in n, -len(n)))
+        _gemini_models = list(dict.fromkeys([os.environ.get("GEMINI_VISION_MODEL") or ""] + names[:4]
+                                            + ["gemini-2.5-flash-lite", "gemini-2.5-flash"]))
+        _gemini_models = [m for m in _gemini_models if m]
+    return _gemini_models
 
 
 def _json_any(text):
@@ -213,6 +240,55 @@ def see(prompt, jpeg, max_tokens=1500, check=None):
                     return v
                 errs.append(f"{model}: {'unusable' if v is not None else 'bad JSON'}: {text[:160]!r}")
                 break
+    gkey = os.environ.get("GEMINI_API_KEY")
+    if gkey and "gemini" not in _dead_vision:
+        # Google AI Studio free tier: far more images a day than Groq + Cloudflare (Nov 23: both capped after
+        # ~1 long video and nothing rendered). No card needed for the key.
+        capped = 0
+        models = _gemini_pick(gkey)
+        for model in models:
+            if model in _dead_vision:
+                capped += 1
+                continue
+            body = {"contents": [{"parts": [{"text": prompt + "\nRespond with ONLY a JSON object."},
+                                            {"inline_data": {"mime_type": "image/jpeg", "data": b64}}]}],
+                    "generationConfig": {"temperature": 0.1, "maxOutputTokens": max_tokens,
+                                         "responseMimeType": "application/json"}}
+            for attempt in range(3):
+                try:
+                    r = requests.post(f"{GEMINI}/models/{model}:generateContent", params={"key": gkey},
+                                      json=body, timeout=120)
+                except Exception as e:
+                    errs.append(f"gemini {model}: {type(e).__name__}")
+                    break
+                if r.status_code == 429:
+                    if "PerDay" in r.text or "per day" in r.text.lower():
+                        errs.append(f"gemini {model}: daily cap")
+                        _dead_vision.add(model)
+                        capped += 1
+                        break
+                    errs.append(f"gemini {model}: 429 per-minute")
+                    time.sleep(20 * (attempt + 1))
+                    continue
+                if r.status_code >= 300:
+                    errs.append(f"gemini {model}: {r.status_code} {r.text[:120]}")
+                    if r.status_code in (400, 404) and "model" in r.text.lower():
+                        _dead_vision.add(model)
+                        capped += 1
+                    break
+                try:
+                    text = "".join(p.get("text", "") for p in
+                                   r.json()["candidates"][0]["content"].get("parts", []))
+                except Exception:
+                    text = ""
+                v = _json_any(text)
+                if v is not None and (check is None or check(v)):
+                    _count()
+                    return v
+                errs.append(f"gemini {model}: {'unusable' if v is not None else 'bad JSON'}: {text[:120]!r}")
+                break
+        if models and capped >= len(models):
+            _dead_vision.add("gemini")
     acct, tok = os.environ.get("CF_ACCOUNT_ID"), os.environ.get("CF_API_TOKEN")
     if acct and tok and "cf" not in _dead_vision:
         cf = f"https://api.cloudflare.com/client/v4/accounts/{acct}/ai/run/@cf/meta/llama-3.2-11b-vision-instruct"
