@@ -34,9 +34,10 @@ class DB:
         return self._check(requests.post(self.base + table, headers=h, params=params,
                                          data=json.dumps(rows, default=str), timeout=30))
 
-    def update(self, table, match, values):
-        """match: PostgREST filter dict, e.g. {"id": "eq.<uuid>"}"""
-        h = dict(self.h, Prefer="return=representation")
+    def update(self, table, match, values, returning=False):
+        """match: PostgREST filter dict, e.g. {"id": "eq.<uuid>"}. Doesn't echo the updated rows back unless
+        returning=True: every content update was re-downloading the whole row, script and all (Supabase egress)."""
+        h = dict(self.h, Prefer="return=representation" if returning else "return=minimal")
         return self._check(requests.patch(self.base + table, headers=h, params=match,
                                           data=json.dumps(values, default=str), timeout=30))
 

@@ -283,9 +283,10 @@ function ask(title, text, def="", {input=true, ok="Save"}={}){
 
 async function load(){
   const [runs, alerts, content, leads, reqs, agencies, playbook, metrics, settings] = await Promise.all([
-    sb.from("agent_runs").select("*").not("agent","like","gs_%").order("started_at",{ascending:false}).limit(300),
+    sb.from("agent_runs").select("agent,status,started_at,summary,error").not("agent","like","gs_%").order("started_at",{ascending:false}).limit(300),
     sb.from("alerts").select("*").eq("resolved",false).not("agent","like","gs_%").order("created_at",{ascending:false}).limit(40),
-    sb.from("content").select("*").neq("status","posted").order("created_at",{ascending:false}).limit(60),
+    // only the columns this page shows: full scripts/descriptions are the bulk of each row (Supabase free egress)
+    sb.from("content").select("id,kind,part,case_name,title,status,approval_status,compliance_status,compliance_notes,publish_note,source_credit,lead_id,reel_no:script->reel_no,thumbnails:script->thumbnails,thumbnail:script->>thumbnail").neq("status","posted").order("created_at",{ascending:false}).limit(60),
     sb.from("leads").select("*").in("status",["new","obtained","requested"]).order("action_score",{ascending:false}).limit(80),
     sb.from("records_requests").select("*").order("created_at",{ascending:false}).limit(25),
     sb.from("agencies").select("*").is("records_email",null).is("portal_url",null).limit(25),
@@ -307,7 +308,7 @@ async function load(){
         || `<div class="empty">Posts get graded 48h after they go up. Nothing graded yet.</div>`;
     });
   const S = Object.fromEntries((settings.data||[]).filter(s=>!s.key.startsWith("case_facts:")&&s.key!=="portal_seen").map(s=>[s.key,s.value]));
-  const C = content.data||[];
+  const C = (content.data||[]).map(({reel_no,thumbnails,thumbnail,...c})=>({...c, script:{reel_no,thumbnails,thumbnail}}));
   window._content = C;
 
   // ---- reports
@@ -496,8 +497,10 @@ $("out").onclick=async()=>{await sb.auth.signOut();location.reload();};
 (async()=>{const {data:{session}}=await sb.auth.getSession();
   if(!session){$("login").hidden=false;return;}
   for(const id of ["out","refresh","tabs","app"]) $(id).hidden=false;
-  show(TAB); load(); setInterval(()=>{ if(!document.hidden) load(); },300000); // 5 min: Supabase free egress
-  document.addEventListener("visibilitychange",()=>{ if(!document.hidden) load(); });})();
+  // Supabase free egress: refresh every 15 min while visible; coming back to the tab reloads only if the data is 5+ min old
+  let lastLoad=Date.now(); const reload=()=>{ lastLoad=Date.now(); load(); };
+  show(TAB); load(); setInterval(()=>{ if(!document.hidden) reload(); },900000);
+  document.addEventListener("visibilitychange",()=>{ if(!document.hidden && Date.now()-lastLoad>300000) reload(); });})();
 </script>
 </body>
 </html>

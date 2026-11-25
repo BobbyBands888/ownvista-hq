@@ -329,11 +329,12 @@ function renderPrice(){
 
 async function load(){
   const [runs, alerts, drafts, prospects, emails, quotes, cleaners, settings] = await Promise.all([
-    sb.from("agent_runs").select("*").like("agent","gs_%").order("started_at",{ascending:false}).limit(200),
+    sb.from("agent_runs").select("agent,status,started_at,summary,error").like("agent","gs_%").order("started_at",{ascending:false}).limit(200),
     sb.from("alerts").select("*").eq("resolved",false).like("agent","gs_%").order("created_at",{ascending:false}).limit(40),
     sb.from("gs_emails").select("*").eq("approval_status","pending").eq("status","draft").eq("direction","out").order("created_at",{ascending:true}).limit(40),
     sb.from("gs_prospects").select("*").order("created_at",{ascending:false}).limit(1500),
-    sb.from("gs_emails").select("*").order("created_at",{ascending:false}).limit(300),
+    // no body here: 300 email bodies every refresh was most of this page's egress; "Read" fetches one on demand
+    sb.from("gs_emails").select("id,created_at,prospect_id,direction,kind,step,to_email,subject,approval_status,status,send_after,sent_at,note").order("created_at",{ascending:false}).limit(300),
     sb.from("gs_quotes").select("*").order("created_at",{ascending:false}).limit(50),
     sb.from("gs_cleaners").select("*").order("created_at",{ascending:false}).limit(100),
     sb.from("settings").select("key,value").like("key","gs_%"),
@@ -438,7 +439,7 @@ function renderOutreach(){
     const when = e.status==="sent"?`sent ${ago(e.sent_at)}`:e.direction==="in"?`logged ${ago(e.created_at)}`:e.send_after?`sends ${inDays(e.send_after)}`:e.status==="draft"?"sends next window":e.status;
     return `<div class="row"><div class="main"><div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap"><span class="chip ${e.direction==="in"?"gold":""}">${esc(KIND(e))}</span><span class="t">${esc(p.name||e.to_email)}</span><span class="m" style="margin:0">${esc(when)}</span></div>
       <div class="m">${esc(e.subject||"")}${e.note&&!/^in-reply-to/.test(e.note)?` · ${esc(e.note)}`:""}</div>
-      <details><summary>Read</summary><pre class="body">${esc(e.body||"")}</pre></details></div>
+      <details data-ebody="${e.id}"><summary>Read</summary><pre class="body">Loading…</pre></details></div>
       ${e.status==="draft"&&e.approval_status==="approved"?`<button class="sm danger" data-cancel="${e.id}">Stop</button>`:""}</div>`;}).join("") || `<div class="empty">Nothing here yet.</div>`;
 }
 
@@ -594,9 +595,14 @@ $("out").onclick=async()=>{await sb.auth.signOut();location.reload();};
 (async()=>{const {data:{session}}=await sb.auth.getSession();
   if(!session){$("login").hidden=false;return;}
   for(const id of ["out","logreply","tabs","app"]) $(id).hidden=false;
-  show(TAB); load(); setInterval(()=>{ if(!document.hidden && !document.querySelector("dialog[open]") && !document.activeElement?.matches("textarea,input")) load(); },300000);
+  // Supabase free egress: refresh every 15 min while visible; coming back to the tab reloads only if the data is 5+ min old
+  let lastLoad=Date.now(); const reload=()=>{ lastLoad=Date.now(); load(); };
+  document.addEventListener("toggle",async ev=>{ const d=ev.target; if(!d.open||!d.dataset?.ebody||d.dataset.got) return;
+    d.dataset.got=1; const {data}=await sb.from("gs_emails").select("body").eq("id",d.dataset.ebody).single();
+    d.querySelector("pre").textContent=data?.body||""; },true);
+  show(TAB); load(); setInterval(()=>{ if(!document.hidden && !document.querySelector("dialog[open]") && !document.activeElement?.matches("textarea,input")) reload(); },900000);
   // only refresh while visible, every 5 min: this page pulls ~800 KB per load (Supabase free egress)
-  document.addEventListener("visibilitychange",()=>{ if(!document.hidden && !document.querySelector("dialog[open]")) load(); });})();
+  document.addEventListener("visibilitychange",()=>{ if(!document.hidden && !document.querySelector("dialog[open]") && Date.now()-lastLoad>300000) reload(); });})();
 </script>
 </body>
 </html>
